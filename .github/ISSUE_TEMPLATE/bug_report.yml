@@ -1,0 +1,66 @@
+name: Bug report
+description: Report a reproducible software or interface defect.
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Do not report security vulnerabilities here. Use the private security
+        reporting link shown on the new-issue page.
+
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: Give the package version or exact Git commit.
+      placeholder: "1.0.0 or a full commit SHA"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: interface
+    attributes:
+      label: Interface
+      options:
+        - Command line
+        - Python API
+        - Notebook
+        - Saved-result validation or plotting
+        - Installation or packaging
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the observed behavior and the behavior you expected.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: >-
+        Provide the smallest passive command, configuration, or code example
+        that demonstrates the problem. Do not upload large result packets.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include the operating system, Python version, and installation method.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety check
+      options:
+        - label: I removed credentials, private paths, and sensitive data from this report.
+          required: true

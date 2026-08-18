@@ -1,0 +1,144 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/PapathanasiouIoannis/EoS-generation/main/configs/schema.json",
+  "title": "BSk24 experiment settings",
+  "description": "Public settings for a controlled BSk24 sound-speed deformation experiment. Runtime semantic validation remains authoritative.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "amplitudes",
+    "epsilon_match",
+    "center",
+    "width",
+    "ramp_width",
+    "calculation",
+    "precision",
+    "fixed_masses",
+    "diagnostics"
+  ],
+  "$defs": {
+    "positiveNumber": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "positiveScalarOrArray": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/positiveNumber"
+        },
+        {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "items": {
+            "$ref": "#/$defs/positiveNumber"
+          }
+        }
+      ]
+    }
+  },
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Required editor annotation; it is removed before scientific settings are normalized and hashed."
+    },
+    "amplitudes": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 4096,
+      "items": {
+        "type": "number"
+      },
+      "description": "Finite additive amplitudes applied to dimensionless c_s^2. A zero-amplitude identity case is added internally when absent.",
+      "x-unit": "dimensionless"
+    },
+    "epsilon_match": {
+      "oneOf": [
+        {
+          "const": "standard"
+        },
+        {
+          "type": "number",
+          "exclusiveMinimum": 76.5591451931,
+          "exclusiveMaximum": 1508.9793344234
+        }
+      ],
+      "description": "Use the standard BSk24 reconstruction anchor or choose a total-energy-density anchor within the retained homogeneous-core interval.",
+      "x-unit": "MeV fm^-3 when numeric"
+    },
+    "center": {
+      "$ref": "#/$defs/positiveScalarOrArray",
+      "description": "Gaussian center or centers in total energy density.",
+      "x-unit": "MeV fm^-3"
+    },
+    "width": {
+      "$ref": "#/$defs/positiveScalarOrArray",
+      "description": "Gaussian standard deviation or deviations in total energy density.",
+      "x-unit": "MeV fm^-3"
+    },
+    "ramp_width": {
+      "$ref": "#/$defs/positiveScalarOrArray",
+      "description": "Width or widths of the quintic smootherstep rise from the reconstruction anchor.",
+      "x-unit": "MeV fm^-3"
+    },
+    "calculation": {
+      "type": "string",
+      "enum": [
+        "thermodynamics",
+        "stellar"
+      ],
+      "description": "Run thermodynamic construction only, or include the governed background, fixed-mass, and tidal stellar calculations."
+    },
+    "precision": {
+      "type": "string",
+      "enum": [
+        "quick",
+        "strict"
+      ],
+      "description": "Named governed numerical profile. The expanded internal settings are planned, hashed, and saved."
+    },
+    "fixed_masses": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "items": {
+        "type": "number",
+        "exclusiveMinimum": 0,
+        "exclusiveMaximum": 10
+      },
+      "description": "Requested fixed gravitational masses for stellar calculations.",
+      "x-unit": "solar masses"
+    },
+    "diagnostics": {
+      "type": "string",
+      "enum": [
+        "off",
+        "on"
+      ],
+      "description": "When on, retain the governed endpoint extended stellar diagnostics."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "diagnostics": {
+            "const": "on"
+          }
+        },
+        "required": [
+          "diagnostics"
+        ]
+      },
+      "then": {
+        "properties": {
+          "calculation": {
+            "const": "stellar"
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+# Python caches and bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.venv/
+venv/
+env/
+.conda/
+
+# Test and coverage caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Packaging products
+build/
+dist/
+*.egg-info/
+
+# Notebook-generated state
+.ipynb_checkpoints/
+*.executed.ipynb
+*-executed.ipynb
+
+# Local scientific results
+runs/
+
+# Scratch files
+scratch/
+.scratch/
+tmp/
+temp/
+*.tmp
+*.bak
+
+# Editor and operating-system metadata
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

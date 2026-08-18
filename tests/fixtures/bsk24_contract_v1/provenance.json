@@ -1,0 +1,36 @@
+{
+  "schema_id": "eos_generation_public_regression_provenance_v1",
+  "fixture_version": "bsk24_contract_v1",
+  "not_a_runtime_or_result_packet": true,
+  "independence_statement": "Expected values were selected from source-pinned, previously validated artifacts and were not evaluated with the implementation under test.",
+  "sources": [
+    {
+      "source_id": "archived_v5_thermodynamic_figure_input",
+      "sha256": "f88448317e4c7ccc6f8320a442d26eb71045f957d830e7bbb0d6f3393bedeac5",
+      "used_by": "thermodynamic_rows.csv",
+      "selection": "The three direct rows at retained source indices 39, 77, and 190; only case ID, total energy density, pressure, and sound-speed squared are retained.",
+      "units": {
+        "epsilon_mev_fm3": "MeV/fm^3 total energy density including rest mass",
+        "pressure_mev_fm3": "MeV/fm^3",
+        "cs2": "dimensionless, c=1"
+      }
+    },
+    {
+      "source_id": "archived_quickstart_smoke_plan",
+      "sha256": "d73b01cb5b52cfc5e00a5f6a0aee9811f8cfc63ccbb2bec920076d03f1ccb6ef",
+      "used_by": "lifecycle_contract.json",
+      "selection": "Exact quickstart configuration hash, ordered case IDs, and passive work estimates."
+    }
+  ],
+  "comparison_policy": {
+    "pressure": {
+      "relative_tolerance": 5e-13,
+      "absolute_tolerance": 0.0
+    },
+    "sound_speed_squared": {
+      "relative_tolerance": 5e-13,
+      "absolute_tolerance": 5e-14
+    },
+    "planning_identity_and_counts": "exact"
+  }
+}

@@ -1,0 +1,64 @@
+name: Scientific change proposal
+description: Propose a change to physical assumptions, numerics, or validation.
+title: "[Scientific proposal] "
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Scientific correctness takes precedence over convenience or runtime.
+        Proposals need independent support and explicit impact analysis.
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: State exactly what should change and why.
+    validations:
+      required: true
+
+  - type: textarea
+    id: physical_contract
+    attributes:
+      label: Physical contract
+      description: >-
+        Identify every affected quantity, unit, normalization, total-energy
+        convention, and valid domain.
+    validations:
+      required: true
+
+  - type: textarea
+    id: numerical_contract
+    attributes:
+      label: Numerical and acceptance impact
+      description: >-
+        List affected equations, coefficients, constants, grids, brackets,
+        tolerances, solver settings, and acceptance predicates. Write "none"
+        only when none are affected.
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Independent evidence
+      description: Cite publications, source tables, analytical benchmarks, or independent implementations.
+    validations:
+      required: true
+
+  - type: textarea
+    id: validation
+    attributes:
+      label: Proposed validation
+      description: Describe independent tests, convergence studies, or reference comparisons.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: safeguards
+    attributes:
+      label: Scientific safeguards
+      options:
+        - label: I will not regenerate a reference fixture from the implementation under test.
+          required: true
+        - label: I will not weaken a predicate or tolerance merely to obtain a passing result.
+          required: true

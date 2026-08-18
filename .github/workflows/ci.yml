@@ -1,0 +1,326 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+      - "codex/**"
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Installed package and scientific contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+      MPLBACKEND: Agg
+
+    steps:
+      - name: Check out the reviewed revision
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.12.3
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12.3"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Check the compact tracked tree
+        shell: bash
+        run: |
+          python - <<'PY'
+          import subprocess
+          from pathlib import PurePosixPath
+
+          tracked = subprocess.check_output(
+              ["git", "ls-files", "-z"], text=False
+          ).decode("utf-8").split("\0")
+          tracked = [path for path in tracked if path]
+
+          root_files = {
+              ".gitattributes",
+              ".gitignore",
+              "AGENTS.md",
+              "CHANGELOG.md",
+              "CITATION.cff",
+              "CODE_OF_CONDUCT.md",
+              "CONTRIBUTING.md",
+              "LICENSE",
+              "README.md",
+              "SECURITY.md",
+              "environment.yml",
+              "pyproject.toml",
+          }
+          root_directories = {
+              ".github",
+              "configs",
+              "docs",
+              "notebooks",
+              "src",
+              "tests",
+          }
+          unexpected = []
+          for path in tracked:
+              parsed = PurePosixPath(path)
+              if len(parsed.parts) == 1:
+                  if path not in root_files:
+                      unexpected.append(path)
+              elif parsed.parts[0] not in root_directories:
+                  unexpected.append(path)
+          if unexpected:
+              raise SystemExit(f"unexpected tracked paths: {unexpected}")
+
+          exact_public_files = {
+              ".github/ISSUE_TEMPLATE/bug_report.yml",
+              ".github/ISSUE_TEMPLATE/config.yml",
+              ".github/ISSUE_TEMPLATE/scientific_change.yml",
+              ".github/PULL_REQUEST_TEMPLATE.md",
+              ".github/dependabot.yml",
+              ".github/workflows/ci.yml",
+              "configs/custom_experiment.json",
+              "configs/quickstart.json",
+              "configs/schema.json",
+              "configs/stellar_example.json",
+              "docs/developer.md",
+              "docs/method.md",
+              "docs/parameters.md",
+              "docs/quickstart.md",
+              "docs/results.md",
+              "docs/troubleshooting.md",
+              "notebooks/bsk24_experiment.ipynb",
+              "tests/test_experiment_results.py",
+              "tests/test_notebook.py",
+              "tests/test_provenance.py",
+              "tests/test_public_workflow.py",
+              "tests/test_scientific_workflow_contracts.py",
+              "tests/test_stellar.py",
+              "tests/test_thermodynamics.py",
+              "tests/fixtures/bsk24_contract_v1/README.md",
+              "tests/fixtures/bsk24_contract_v1/SHA256SUMS.txt",
+              "tests/fixtures/bsk24_contract_v1/lifecycle_contract.json",
+              "tests/fixtures/bsk24_contract_v1/provenance.json",
+              "tests/fixtures/bsk24_contract_v1/thermodynamic_rows.csv",
+          }
+          bounded_roots = {".github", "configs", "docs", "notebooks", "tests"}
+          stale = [
+              path
+              for path in tracked
+              if PurePosixPath(path).parts[0] in bounded_roots
+              and path not in exact_public_files
+          ]
+          if stale:
+              raise SystemExit(f"legacy or unexpected public-tree paths: {stale}")
+
+          unexpected_source = [
+              path
+              for path in tracked
+              if PurePosixPath(path).parts[0] == "src"
+              and not path.startswith("src/eos_generation/")
+          ]
+          if unexpected_source:
+              raise SystemExit(f"unexpected source-package paths: {unexpected_source}")
+
+          notebooks = sorted(
+              path for path in tracked if path.endswith(".ipynb")
+          )
+          expected_notebooks = ["notebooks/bsk24_experiment.ipynb"]
+          if notebooks != expected_notebooks:
+              raise SystemExit(
+                  f"tracked notebooks are {notebooks}, expected {expected_notebooks}"
+              )
+
+          if any(path == "runs" or path.startswith("runs/") for path in tracked):
+              raise SystemExit("local runs must not be tracked")
+
+          forbidden_parts = {
+              "__pycache__",
+              ".ipynb_checkpoints",
+              ".pytest_cache",
+              ".mypy_cache",
+              ".ruff_cache",
+              "build",
+              "dist",
+          }
+          generated = [
+              path
+              for path in tracked
+              if forbidden_parts.intersection(PurePosixPath(path).parts)
+              or path.endswith((".pyc", ".pyo", ".executed.ipynb"))
+          ]
+          if generated:
+              raise SystemExit(f"generated files are tracked: {generated}")
+          PY
+
+      - name: Validate metadata, configurations, and local links
+        shell: bash
+        run: |
+          python -m pip install --disable-pip-version-check jsonschema pyyaml
+          python - <<'PY'
+          import json
+          import re
+          import tomllib
+          from pathlib import Path
+
+          import jsonschema
+          import yaml
+
+          root = Path.cwd()
+          tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+          yaml.safe_load((root / "environment.yml").read_text(encoding="utf-8"))
+          yaml.safe_load((root / "CITATION.cff").read_text(encoding="utf-8"))
+          for path in sorted((root / ".github").rglob("*.yml")):
+              yaml.safe_load(path.read_text(encoding="utf-8"))
+
+          schema = json.loads((root / "configs/schema.json").read_text(encoding="utf-8"))
+          jsonschema.Draft202012Validator.check_schema(schema)
+          validator = jsonschema.Draft202012Validator(schema)
+          for name in ("quickstart.json", "custom_experiment.json", "stellar_example.json"):
+              payload = json.loads((root / "configs" / name).read_text(encoding="utf-8"))
+              errors = sorted(validator.iter_errors(payload), key=lambda item: list(item.path))
+              if errors:
+                  raise SystemExit(f"{name}: {errors}")
+
+          link_pattern = re.compile(r"(?<!!)\[[^]]+\]\(([^)]+)\)")
+          missing = []
+          markdown_files = [
+              root / "README.md",
+              root / "CODE_OF_CONDUCT.md",
+              root / "CONTRIBUTING.md",
+              root / "SECURITY.md",
+              root / ".github" / "PULL_REQUEST_TEMPLATE.md",
+              *sorted((root / "docs").glob("*.md")),
+          ]
+          for source in markdown_files:
+              for target in link_pattern.findall(source.read_text(encoding="utf-8")):
+                  target = target.strip().split("#", 1)[0]
+                  if not target or "://" in target or target.startswith("mailto:"):
+                      continue
+                  resolved = (source.parent / target).resolve()
+                  if not resolved.exists():
+                      missing.append((source.relative_to(root).as_posix(), target))
+          if missing:
+              raise SystemExit(f"missing local Markdown links: {missing}")
+          PY
+
+      - name: Build and install the wheel
+        shell: bash
+        run: |
+          python -m pip install --disable-pip-version-check build
+          python -m build --wheel
+          python -m pip install --force-reinstall dist/*.whl
+          python -m pip install --disable-pip-version-check pytest nbformat nbclient ipykernel
+
+      - name: Check installed public surfaces outside the checkout
+        shell: bash
+        run: |
+          outside="$RUNNER_TEMP/installed-surface"
+          mkdir -p "$outside"
+          cd "$outside"
+          python - <<'PY'
+          from importlib.metadata import version
+
+          import eos_generation
+          from eos_generation import (
+              Experiment,
+              ExperimentPlan,
+              ExperimentResult,
+              ExperimentSettings,
+              load_experiment,
+              plan_experiment,
+              run_experiment,
+              validate_experiment,
+          )
+
+          assert version("eos-generation") == eos_generation.__version__ == "1.0.0"
+          PY
+          bsk24-trial --help
+
+      - name: Check installed saved-packet portability outside the checkout
+        shell: bash
+        run: |
+          outside="$RUNNER_TEMP/installed-packet-portability"
+          mkdir -p "$outside"
+          cd "$outside"
+          python - "$GITHUB_WORKSPACE" <<'PY'
+          import sys
+          from pathlib import Path
+
+          import eos_generation
+
+          checkout = Path(sys.argv[1]).resolve()
+          installed = Path(eos_generation.__file__).resolve()
+          assert not installed.is_relative_to(checkout), installed
+          PY
+          python -m pytest -q \
+            "$GITHUB_WORKSPACE/tests/test_experiment_results.py" \
+            -k "portable_paths or nested_runs or moved_packet or foreign_cwd_validation"
+
+      - name: Confirm passive installed planning makes no writes
+        shell: bash
+        run: |
+          plan_directory="$RUNNER_TEMP/passive-plan-working-directory"
+          plan_output="$RUNNER_TEMP/passive-plan.json"
+          mkdir -p "$plan_directory"
+          cd "$plan_directory"
+          bsk24-trial plan \
+            --config "$GITHUB_WORKSPACE/configs/quickstart.json" \
+            --json \
+            > "$plan_output"
+          test -z "$(find . -mindepth 1 -print -quit)"
+          python - "$plan_output" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          plan = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          assert plan["planning_is_passive"] is True
+          assert plan["scientific_solver_calls"] == 0
+          assert plan["filesystem_writes"] == 0
+          PY
+
+          missing_hash_log="$RUNNER_TEMP/missing-plan-hash.log"
+          if bsk24-trial run \
+            --config "$GITHUB_WORKSPACE/configs/quickstart.json" \
+            --output-root "$RUNNER_TEMP/unreviewed-run" \
+            --execute \
+            > "$missing_hash_log" 2>&1; then
+            echo "run unexpectedly accepted execution without --plan-hash"
+            exit 1
+          fi
+          grep -F -- "--plan-hash" "$missing_hash_log"
+          test ! -e "$RUNNER_TEMP/unreviewed-run"
+
+      - name: Check notebook passivity
+        shell: bash
+        run: |
+          python -m pytest -q tests/test_notebook.py
+
+      - name: Run focused regression suite
+        shell: bash
+        run: |
+          python -m pytest -q
+
+      - name: Confirm the checkout is unchanged
+        shell: bash
+        run: |
+          changes="$(git status --porcelain=v1 --untracked-files=all)"
+          if [[ -n "$changes" ]]; then
+            printf '%s\n' "$changes"
+            exit 1
+          fi

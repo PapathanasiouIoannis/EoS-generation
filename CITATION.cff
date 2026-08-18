@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+message: >-
+  If you use this software, please cite the software release.
+title: "EoS Generation: controlled BSk24 sound-speed deformations"
+type: software
+version: 1.0.0
+license: MIT
+authors:
+  - family-names: Papathanasiou
+    given-names: Ioannis
+    affiliation: Department of Theoretical Physics, Aristotle University of Thessaloniki
+repository-code: https://github.com/PapathanasiouIoannis/EoS-generation
+url: https://github.com/PapathanasiouIoannis/EoS-generation
+keywords:
+  - neutron stars
+  - equation of state
+  - BSk24
+  - sound speed

@@ -1,0 +1,53 @@
+{
+  "schema_version": "bsk24_source_manifest_v1",
+  "model_identifier": "BSK24_ANALYTIC_PEARSON2018_CORR2019",
+  "retrieval_date": "2026-07-22",
+  "production_authority": {
+    "publication": "Pearson et al., MNRAS 481, 2994-3026 (2018), Appendix C equations C1 and C4, tables C1 and C2",
+    "url": "https://academic.oup.com/mnras/article/481/3/2994/5090419",
+    "erratum": "Pearson et al., MNRAS 486, 768 (2019)",
+    "erratum_url": "https://academic.oup.com/mnras/article/486/1/768/5382069",
+    "erratum_effect_on_appendix_c": "none"
+  },
+  "independent_implementation_oracle": {
+    "artifact": "bskfit18.f",
+    "revision": "2023-02-13",
+    "selection": "KEOS=24",
+    "url": "https://www.ioffe.ru/astro/NSG/BSk/bskfit18.f",
+    "size_bytes": 36095,
+    "sha256": "4bd3b716f04e40c69165fa83b5cd8ecb03c30aa1f2b45342fb070cef09a3a99c"
+  },
+  "underlying_tabulated_oracle": {
+    "artifact": "CompOSE PCP(BSK24), EoS ID 253, eos.zip",
+    "url": "https://compose.obspm.fr/download/1D/NS/Skyrme/BSK24/eos.zip",
+    "checksum_url": "https://compose.obspm.fr/download/1D/NS/Skyrme/BSK24/eos.zip_checksum.txt",
+    "size_bytes": 180015,
+    "sha256": "5db3e010372805f065f04676982c4127203a4bb7b4dc15d25090e9f34bed6582",
+    "checksum_sidecar_matches": true,
+    "archive_members_sha256": {
+      "README": "241f94462c14c2e773d29787565a13ecf3a562752b32b03f572d844091eec18b",
+      "eos.compo": "49b70ef8607a6247727e57e28f761397bec2fafceb8bd57f7b6531f70f1b1329",
+      "eos.init": "0c27ef50cb4b28b68f7be01dca7a3129c041f6fc5671464837a34bbed13107b7",
+      "eos.micro": "6a82ac2fdc0ab28ddc47bb698a86a571370d6c1c30ab745823bc56258d02c3c1",
+      "eos.mr": "b6e07a39752e6c27123172f739ab2f1ff81e0cef84e7cbef314f85b9d58b6e80",
+      "eos.nb": "d56a3af98f16382c412767df8a880f88066376e725f8a75f11646a2f054cd02b",
+      "eos.pdf": "58063a30a755b55442168ddf79749a0304ba25cbb56f6b522ee2f9eaf3e3773c",
+      "eos.t": "5fa22f861097c3aa7becf2480adfe981726144c8e4029df34751e2802e7e3835",
+      "eos.thermo": "ea95e62793fb89d8841ede86858d73586383cb28f00057ffac0fbac8d45afdd5",
+      "eos.yq": "6d94b4b46e6a9ce1c02b581166cda0e13681bbdc31d7ab340bba5cec53075554"
+    }
+  },
+  "compose_format_authority": {
+    "manual": "CompOSE Reference Manual v3.01 (served at the historical manual_v3.00.pdf URL)",
+    "url": "https://compose.obspm.fr/download/pdf/manual_v3.00.pdf",
+    "thermo_columns_used": {
+      "Q1": "pressure divided by baryon density, MeV",
+      "Q7": "total energy per baryon divided by neutron mass minus one"
+    }
+  },
+  "source_storage_policy": {
+    "raw_third_party_artifacts_committed": false,
+    "reason": "Full third-party source archives and PDFs remain external. This package records their provenance and checksums; independent validation evidence is represented by source-pinned compact fixtures and tests.",
+    "runtime_external_source_lookup": false
+  }
+}
