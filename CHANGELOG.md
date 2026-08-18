@@ -2,7 +2,7 @@
 
 All notable changes to the supported package are recorded here.
 
-## 1.0.0 - 2026-08-16
+## 1.0.0 - 2026-08-18
 
 This is the first release of the compact public interface.
 
