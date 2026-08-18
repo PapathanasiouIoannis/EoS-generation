@@ -10,7 +10,8 @@ public issue.
 
 ## Before changing code
 
-1. Read [`AGENTS.md`](AGENTS.md) and the relevant guide under [`docs/`](docs/).
+1. Read the [scientific boundary](README.md#scientific-boundary) and the
+   relevant guide under [`docs/`](docs/).
 2. Trace the public entry point, private implementation, configuration
    expansion, and focused tests involved in the change.
 3. Start from a clean, current `main` and create one focused branch.
