@@ -324,6 +324,16 @@ class NotebookArtifactTests(unittest.TestCase):
         self.assertIn("Student result locations", locked_source)
         self.assertNotIn("ipywidgets", locked_source)
         self.assertNotIn("framework.", locked_source)
+        markdown_source = "\n".join(
+            "".join(cell.get("source", []))
+            for cell in notebook["cells"]
+            if cell["cell_type"] == "markdown"
+        )
+        self.assertIn(
+            "experiment -> geometry_NNN -> case_id -> sampled row",
+            markdown_source,
+        )
+        self.assertIn("Student result locations > Read me first", markdown_source)
         for cell in code_cells:
             compile("".join(cell["source"]), f"{NOTEBOOK}:{cell['id']}", "exec")
 

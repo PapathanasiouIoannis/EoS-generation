@@ -121,3 +121,128 @@ experiment packet, is not included in the packet manifest, and is created
 from saved artifacts without rerunning thermodynamics, stellar structure,
 tidal work, or plotting. An existing student-view destination is rejected
 rather than overwritten.
+
+Its student-facing structure is:
+
+```text
+STUDENT_VIEW/
+├── 01_READ_ME_FIRST.md
+├── 02_PLOTS/
+│   └── geometry_NNN/
+├── 03_PRIMARY_DATA/
+│   └── geometry_NNN/
+├── 04_OPTIONAL_DIAGNOSTICS/
+│   └── geometry_NNN/
+├── DATA_DICTIONARY.md
+└── SHA256SUMS.txt
+```
+
+The PNG and CSV files are byte-for-byte copies of saved artifacts. The two
+Markdown guides and `SHA256SUMS.txt` describe and checksum this derived view;
+they do not become part of the authoritative experiment.
+
+## From an experiment to one CSV row
+
+The result hierarchy is:
+
+```text
+experiment -> geometry_NNN -> case_id -> sampled row
+```
+
+The experiment is one canonical settings hash. A `geometry_NNN` child is one
+deterministically expanded combination of matching anchor, Gaussian center,
+Gaussian width, and activation-ramp width. Inside it, a `case_id` identifies
+one baseline or one deformation proposal. The rows for that case are samples
+of that EoS or stellar sequence; each row is not a new deformation.
+
+`case_id = direct` is the undeformed analytical BSk24 baseline saved for
+comparison. The amplitude-zero case has its own deterministic case ID because
+it passes through the same proposal and reconstruction route as the nonzero
+cases. It is the governed identity control and is expected to reproduce the
+direct baseline under the saved identity policy. Every accepted nonzero
+amplitude case is a distinct deformed EoS.
+
+A readable case ID can resemble `dp20_am0p2_<digest>`: the readable prefixes
+encode ramp width and amplitude, while the final hexadecimal suffix is a
+collision-resistant digest of the complete deformation coordinates. Do not
+decode a case ID as a substitute for the ledger. `case_ledger.csv` is the
+saved mapping from `case_id` to amplitude, geometry, anchor, and lifecycle
+status.
+
+Case IDs are useful grouping keys inside an experiment, but they are not
+complete provenance identities. When combining separate experiments, retain
+the canonical configuration hash and authoritative packet location as well.
+
+## What one row means in each primary table
+
+| File | Row meaning | Main grouping or coordinate |
+|---|---|---|
+| `case_ledger.csv` | One declared deformation proposal and its accepted/rejected outcome | `case_id` |
+| `thermodynamic_profiles.csv` | One sampled total-energy-density point for the direct baseline or one reconstructed case | `case_id`, `epsilon_mev_fm3` |
+| `stellar_sequences.csv` | One stellar-model attempt at a saved central coordinate | `case_id`, stage, central pressure/energy density, calculation status |
+| `fixed_mass_observables.csv` | One requested fixed-mass result when a true stable-branch bracket exists | `case_id`, stage, `target_mass_msun`, status |
+| `maximum_mass_screening.csv` | One maximum-mass/turning-point assessment | `case_id`, stage, saved resolution status |
+
+The physical row coordinate matters. Do not compare “row 100” between two
+cases merely because the spreadsheet positions match. Filter or group by
+`case_id`, then use the saved energy density, central pressure, target mass,
+stage, and status columns appropriate to that table. Empty or unavailable
+values are not zero.
+
+A rejected proposal remains in `case_ledger.csv` with its exact reason but
+has no reconstructed profile or stellar sequence. That downstream absence is
+intentional.
+
+## Which CSV files a student should copy
+
+For EoS work, keep these two files from the same geometry directory together:
+
+- `case_ledger.csv` supplies deformation coordinates and lifecycle status;
+- `thermodynamic_profiles.csv` supplies the sampled EoS quantities.
+
+For stellar work, keep that ledger together with whichever of
+`stellar_sequences.csv`, `fixed_mass_observables.csv`, and
+`maximum_mass_screening.csv` applies to the run. A thermodynamics-only run
+correctly has no stellar tables.
+
+If several `geometry_NNN` directories are combined, add the geometry folder
+name as a column in the user's analysis table. Do not concatenate rows and
+discard their original geometry or experiment identity.
+
+### Excel or LibreOffice
+
+Open `case_ledger.csv` first, choose an accepted `case_id`, then filter the
+same column in `thermodynamic_profiles.csv`. For a conventional EoS curve,
+make an XY plot with `epsilon_mev_fm3` on the horizontal axis and
+`pressure_mev_fm3` or `cs2` on the vertical axis. Use `direct` as the baseline
+series.
+
+### pandas
+
+Run this from the `STUDENT_VIEW` directory, changing the geometry directory
+when required:
+
+```python
+from pathlib import Path
+
+import pandas as pd
+
+data = Path("03_PRIMARY_DATA/geometry_001")
+ledger = pd.read_csv(data / "case_ledger.csv")
+profiles = pd.read_csv(data / "thermodynamic_profiles.csv")
+
+accepted = ledger.loc[ledger["status"] == "accepted", "case_id"]
+case_id = accepted.iloc[0]
+eos = (
+    profiles.loc[profiles["case_id"] == case_id]
+    .sort_values("epsilon_mev_fm3")
+)
+baseline = (
+    profiles.loc[profiles["case_id"] == "direct"]
+    .sort_values("epsilon_mev_fm3")
+)
+```
+
+Plot `eos` and `baseline` as separate series against their saved
+`epsilon_mev_fm3` coordinates. The same standard CSV files can be used in R,
+Julia, MATLAB, Mathematica, or any other CSV-capable tool.

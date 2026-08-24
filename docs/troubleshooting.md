@@ -1,5 +1,73 @@
 # Troubleshooting
 
+## The terminal opened in the wrong folder
+
+The terminal must be at the repository root: the folder containing
+`environment.yml`, `pyproject.toml`, `configs/`, and `notebooks/`. In VS Code,
+right-click that top-level folder in the Explorer and choose **Open in
+Integrated Terminal**. Then check:
+
+```powershell
+Test-Path .\environment.yml
+Test-Path .\pyproject.toml
+Test-Path .\notebooks\bsk24_experiment.ipynb
+```
+
+All three results must be `True`. If they are not, the wrong folder was opened
+in VS Code or the terminal belongs to its parent directory.
+
+Do not type documentation placeholders such as `<path>` or the angle brackets
+themselves into `cd`. To use Anaconda Prompt without manually typing a path,
+type `cd /d ` including the trailing space, drag the repository folder from
+File Explorer onto the prompt, and press Enter.
+
+## `conda` is not recognized
+
+This is not caused by the location of the notebook. It means that the current
+terminal does not know where Conda is installed.
+
+On Windows, open **Anaconda Prompt** or **Miniconda Prompt** from the Start
+menu. Move to the repository root using the drag-and-drop method above, then
+run:
+
+```text
+conda env create -f environment.yml
+conda activate eos-generation
+python -m pip install -e . --no-deps
+python -m pip install -e ".[notebook]"
+```
+
+If `conda env create` reports that `eos-generation` already exists, keep that
+environment, run `conda activate eos-generation`, and continue with the two
+install commands. Return to VS Code and select it through the interpreter and
+notebook-kernel menus.
+
+## The `eos-generation` notebook kernel is missing
+
+First install the notebook tools in the declared environment. If the kernel
+still does not appear, register that interpreter explicitly:
+
+```powershell
+conda activate eos-generation
+python -m ipykernel install --user --name eos-generation --display-name "Python (eos-generation)"
+```
+
+Then reload the VS Code window or refresh Jupyter's kernel list and choose
+**Python (eos-generation)**. Verify the interpreter in a temporary notebook
+cell if necessary:
+
+```python
+import sys
+print(sys.executable)
+```
+
+The path should name the `eos-generation` environment and the interpreter
+must be Python 3.12. Selecting `base`, a system Python, or an old environment
+can produce missing-package errors or inconsistent worker behavior.
+
+VS Code and Jupyter Lab are only different notebook interfaces. They run the
+same project correctly when they use the same kernel.
+
 ## `bsk24-trial` is not found
 
 Activate the declared environment and install the checkout:
@@ -57,6 +125,17 @@ The executable and prefix must identify `envs\eos-generation`. A missing
 `CONDA_PREFIX` is acceptable when VS Code launches the interpreter directly;
 if present, it must identify the same environment. Shut down old notebook
 kernels after changing the selection.
+
+After correcting the environment, restart the kernel. A restart discards the
+reviewed notebook authorization, so run all once with
+`EXECUTE_REVIEWED_PLAN = False`, review the new plan, then change only that
+flag to `True` and run all again. Confirm that the new passive plan selects a
+new destination; never reuse an incomplete packet as a write target.
+
+If the same plan succeeds in VS Code with the declared kernel but fails in a
+browser notebook, use the working VS Code route and report the failing
+kernel's `sys.executable`, configuration hash, and traceback. Do not change
+scientific settings or tolerances merely to hide a worker crash.
 
 ## The configuration is rejected
 

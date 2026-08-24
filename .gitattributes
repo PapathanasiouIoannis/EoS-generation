@@ -10,6 +10,7 @@ LICENSE text eol=lf
 *.yaml text eol=lf
 *.cff text eol=lf
 *.ipynb text eol=lf
+*.csv text eol=lf
 *.png binary
 *.jpg binary
 *.jpeg binary
