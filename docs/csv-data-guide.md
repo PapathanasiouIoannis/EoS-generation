@@ -1,0 +1,556 @@
+# CSV data guide
+
+This guide explains how the saved CSV files relate to one another, what one
+row represents, how rows are ordered, and how to prepare the data for plots or
+machine learning. It describes saved results; it does not introduce a second
+calculation or reinterpret the physical model.
+
+Use CSV files only from an experiment that has completed and passed
+validation. The notebook's `STUDENT_VIEW/` is the easiest place to find the
+main tables. Its CSV files are byte-for-byte copies of artifacts in the
+authoritative geometry packets, and its generated `DATA_DICTIONARY.md` lists
+the exact headers present in that particular run.
+
+## Start with the primary tables
+
+Each `geometry_NNN/` directory in `STUDENT_VIEW/03_PRIMARY_DATA/` contains the
+tables applicable to that geometry and calculation:
+
+| File | What it answers |
+|---|---|
+| `case_ledger.csv` | Which deformation does a `case_id` represent, and was it accepted? |
+| `thermodynamic_profiles.csv` | What are the saved pressure, sound-speed, and reconstructed thermodynamic values along each EoS? |
+| `stellar_sequences.csv` | What stellar models were attempted along each saved central-pressure sequence? |
+| `fixed_mass_observables.csv` | Was each requested gravitational mass bracketed, and what observables were saved? |
+| `maximum_mass_screening.csv` | Was a maximum-mass turning point resolved, and what evidence supports that status? |
+
+A thermodynamics-only run correctly contains only the first two primary
+tables. Keep `case_ledger.csv` with every downstream table copied from the
+same geometry. The profile table alone does not repeat the Gaussian center,
+Gaussian width, anchor, or complete experiment provenance on every row.
+
+## Identity hierarchy
+
+The saved hierarchy is:
+
+```text
+experiment (one canonical settings hash)
+└── geometry_NNN (one anchor, center, width, and ramp-width combination)
+    └── case_id (one baseline or one deformation amplitude)
+        └── sampled rows (thermodynamic points or stellar models)
+```
+
+### Experiment identity
+
+One experiment is bound to canonical settings, source and runtime identities,
+and a reviewed plan. The canonical settings hash is shown in
+`STUDENT_VIEW/01_READ_ME_FIRST.md` and saved in the authoritative experiment
+documents. A `case_id` is not a substitute for that experiment identity.
+
+When combining experiments, retain at least:
+
+- the canonical settings hash;
+- the authoritative experiment location or archival identifier;
+- the `geometry_NNN` name;
+- the `case_id`;
+- the numerical `stage`, when the table has one.
+
+### Geometry order
+
+The public settings form a Cartesian product without numerically sorting the
+declared values. Geometry numbering uses this stable nesting order:
+
+1. `center` in its declared order;
+2. within each center, `width` in its declared order;
+3. within each center and width, `ramp_width` in its declared order.
+
+For example:
+
+```text
+center     = [200, 300]
+width      = [40, 50]
+ramp_width = [20, 30]
+
+geometry_001 = center 200, width 40, ramp width 20
+geometry_002 = center 200, width 40, ramp width 30
+geometry_003 = center 200, width 50, ramp width 20
+geometry_004 = center 200, width 50, ramp width 30
+geometry_005 = center 300, width 40, ramp width 20
+...
+```
+
+Use the numerical coordinates in `case_ledger.csv` rather than inferring a
+geometry solely from its folder number.
+
+### Case identity and order
+
+Inside one geometry, deformation proposals follow the declared amplitude
+order. They are not sorted from negative to positive or by magnitude. If the
+user did not declare zero, the governed `A = 0` identity control is inserted
+before the declared amplitudes.
+
+There are three important case types:
+
+- `case_id = direct` is the undeformed analytical BSk24 baseline. It appears
+  in thermodynamic and stellar result tables, but it is not a deformation
+  proposal and therefore has no row in `case_ledger.csv`.
+- The deterministic case ID with `amplitude = 0` is the reconstructed
+  identity control. It passes through the proposal and reconstruction route
+  and is expected to reproduce `direct` under the saved identity policy.
+- Every accepted nonzero-amplitude `case_id` is one distinct deformed EoS for
+  that geometry.
+
+Rejected proposals remain in `case_ledger.csv` and the applicable raw-gate
+diagnostics. They deliberately have no reconstructed thermodynamic profile or
+stellar sequence.
+
+A readable ID such as `dp20_am0p1_<digest>` includes a ramp-width and amplitude
+prefix, but the final digest is calculated from the complete deformation
+coordinates. Always use the ledger as the mapping authority; do not reverse
+engineer scientific metadata from the filename-like text.
+
+## Row ordering and EoS boundaries
+
+The CSV files preserve deterministic block order, but they are not all
+globally sorted by a physical quantity.
+
+| Table | Outer block order | Order within one block |
+|---|---|---|
+| `case_ledger.csv` | Declared effective amplitude order | One row per proposal |
+| `thermodynamic_profiles.csv` | `direct`, then accepted cases in proposal order | Strictly increasing `epsilon_mev_fm3`; pressure is also strictly increasing within an accepted EoS |
+| `stellar_sequences.csv` | Numerical stage, then `direct`, then accepted cases | Increasing `attempted_index` and central pressure |
+| `fixed_mass_observables.csv` | Numerical stage, then `direct`, then accepted cases | Requested fixed masses in their declared order |
+| `maximum_mass_screening.csv` | Numerical stage, then `direct`, then accepted cases | One assessment per case and stage |
+
+In `thermodynamic_profiles.csv`, all rows for one case are contiguous. The
+first case block is `direct`; when that block ends, the next case restarts at
+the lower energy-density coordinate. The complete CSV is therefore not
+globally pressure-increasing. A new spreadsheet row is not a new EoS—a change
+in `case_id` is the EoS boundary.
+
+Within one thermodynamic case, energy density is the independent saved
+coordinate. The grid is nonuniform: it is logarithmically spaced below the
+reconstruction anchor and linearly spaced from the anchor to the retained
+upper endpoint. Never substitute row number for energy density. Even when two
+cases appear to have aligned rows, join or compare them using the saved
+physical coordinate.
+
+Within one stellar case and stage, central pressure increases. Mass need not
+increase over the complete sequence: models after the sampled mass peak can
+belong to the decreasing-mass branch. Do not sort a stellar sequence by mass
+and then infer stability from the new order.
+
+## Keys and table relationships
+
+Use these logical keys within one geometry:
+
+| Table | Logical key or grouping key |
+|---|---|
+| `case_ledger.csv` | `case_id` |
+| `thermodynamic_profiles.csv` | `case_id`, `epsilon_mev_fm3` |
+| `stellar_sequences.csv` | `case_id`, `stage`, `attempted_index` |
+| `fixed_mass_observables.csv` | `case_id`, `stage`, `target_mass_msun` |
+| `maximum_mass_screening.csv` | `case_id`, `stage` |
+
+Join downstream deformed-case rows to the ledger with `case_id`. A left join
+will correctly leave the `direct` baseline without proposal metadata. Across
+geometries or experiments, first add the geometry name and experiment hash to
+the user's analysis table; `case_id` alone is not the complete provenance
+key.
+
+## `case_ledger.csv`
+
+One row represents one declared or injected deformation proposal and its
+final lifecycle status. The analytical `direct` baseline is the intentional
+exception and has no ledger row.
+
+| Column | Meaning |
+|---|---|
+| `case_id` | Deterministic identifier for the complete deformation coordinates |
+| `amplitude` | Dimensionless additive amplitude `A` applied to `c_s^2` |
+| `epsilon_match_mev_fm3` | Total-energy-density reconstruction anchor in MeV fm^-3 |
+| `anchor_mode` | Saved categorical anchor selection, such as `standard` or `exploratory` |
+| `epsilon0_mev_fm3` | Gaussian center in MeV fm^-3 |
+| `sigma_mev_fm3` | Gaussian standard deviation in MeV fm^-3 |
+| `delta_mev_fm3` | Smootherstep activation-ramp width in MeV fm^-3; this is not a pressure difference |
+| `status` | Final `accepted` or `rejected` lifecycle status |
+| `acceptance_domain` | Domain on which acceptance was established; accepted production cases use the full retained domain |
+| `full_domain_gate_status` | Exact saved outcome of the authoritative raw full-domain gate |
+| `selected_domain_status` | Saved selected-domain or screening status; preserve it rather than using it to override the full-domain result |
+| `rejection_reason` | Blank for accepted cases; strict JSON text describing the first saved failure for rejected cases |
+| `pressure_reconstruction` | Whether reconstruction completed or was skipped after raw-gate rejection |
+| `stellar_calculation` | `disabled`, `completed`, `incomplete_or_failed`, or skipped after rejection, as applicable |
+| `clipping_or_repair` | Records that no failed result was made acceptable by clipping or repair |
+
+Choose EoSs for downstream regression or plotting only from ledger rows whose
+saved status is appropriate for that task. Rejection is a valid labelled
+outcome, not a missing positive example.
+
+## `thermodynamic_profiles.csv`
+
+One row is one sampled total-energy-density point belonging to the EoS named
+by `case_id`. The file contains `direct` plus every accepted reconstructed
+case; rejected cases are absent.
+
+| Column | Meaning |
+|---|---|
+| `case_id` | Baseline or deformation grouping key |
+| `amplitude` | Proposal amplitude; blank for `direct` |
+| `delta_mev_fm3` | Activation-ramp width; blank for `direct` |
+| `epsilon_mev_fm3` | Total energy density including rest-mass energy, in MeV fm^-3 |
+| `pressure_mev_fm3` | Pressure in MeV fm^-3 |
+| `cs2` | Dimensionless `dP/dε = c_s^2` in units with `c = 1` |
+| `delta_cs2` | Saved pointwise deformation contribution to `c_s^2`; zero for `direct` |
+| `baryon_density_fm3` | Effective baryon number density in fm^-3 |
+| `effective_baryon_enthalpy_mev` | Effective `(ε + P) / n_B`, equivalently the reconstructed baryon chemical potential, in MeV |
+| `gamma_eff` | Effective adiabatic index `((ε + P) / P) c_s^2`, dimensionless |
+| `energy_per_baryon_minus_neutron_rest_mev` | `ε / n_B` minus the neutron rest energy, in MeV |
+| `pressure_relative_to_direct` | Fractional `(case - direct) / direct` pressure response at the saved energy density |
+| `baryon_density_relative_to_direct` | Fractional effective baryon-density response relative to `direct` |
+| `enthalpy_relative_to_direct` | Fractional effective baryon-enthalpy response relative to `direct` |
+
+The three relative columns are fractions, not percentages. A value of `0.02`
+means a two-percent relative change. They are zero for `direct`.
+
+The reconstructed state is an effective one-fluid cold barotrope. These
+columns do not establish particle fractions, species chemical potentials, or
+beta equilibrium.
+
+## `stellar_sequences.csv`
+
+This table exists only when stellar work was requested. One row represents
+one attempted stellar model for one EoS and one numerical stage. The table
+retains failed attempts with a reason; fields that require a successful model
+remain blank in those rows.
+
+| Column | Meaning |
+|---|---|
+| `case_id` | Baseline or deformation grouping key |
+| `stage` | Governed numerical stage name |
+| `attempted_index` | Zero-based position in the increasing central-pressure attempt grid |
+| `segment_id` | Counter separating contiguous success segments; it advances after a saved background failure |
+| `calculation_status` | `success` or `failed` for the background stellar model |
+| `failure_category` | Saved failure category for a failed attempt |
+| `failure_reason` | Saved detailed reason for a failed attempt |
+| `Mass` | Gravitational mass in solar masses for a successful model |
+| `Radius` | Radius in kilometres |
+| `Lambda` | Dimensionless tidal deformability |
+| `P_Central` | Central pressure in MeV fm^-3 |
+| `Eps_Central` | Central total energy density in MeV fm^-3 |
+| `CS2_Central` | Dimensionless central sound-speed squared |
+| `eps_surf` | Saved surface energy-density convention in MeV fm^-3 |
+| `central_pressure_mev_fm3` | Explicitly unit-labelled central-pressure coordinate; it duplicates `P_Central` for successful rows and is retained for failed attempts |
+| `is_sampled_peak` | Marks the largest mass on the sampled successful sequence; it is not by itself a resolved maximum mass |
+| `is_domain_end` | Marks the final successful saved sequence model |
+| `k2` | Dimensionless quadrupolar Love number when the tidal calculation is valid |
+| `tidal_status` | Saved tidal capability status |
+| `tidal_failure_reason` | Reason a tidal value is unavailable or failed closed |
+| `amplitude` | Proposal amplitude; blank for `direct` |
+| `delta_mev_fm3` | Activation-ramp width; blank for `direct` |
+| `tov_rtol` | Saved relative ODE solver tolerance |
+| `tov_atol` | Saved absolute ODE solver tolerance |
+| `sequence_points_requested` | Number of central-pressure attempts requested for that stage |
+
+Use only rows with the required background and tidal status. The sampled
+stable prefix ends at the sampled-peak row used by the workflow, but that row
+must not be reported as a resolved maximum mass. Maximum-mass resolution is
+recorded separately in `maximum_mass_screening.csv`.
+
+Strict calculations retain several stellar stages for convergence evidence.
+The final configured stage is the reporting and plotting reference; earlier
+stages are not independent physical EoSs or extra training examples. The
+authoritative configuration and `plot_inventory.csv` identify the final
+population stage for a particular packet.
+
+## `fixed_mass_observables.csv`
+
+One row represents one requested gravitational mass for one EoS and one
+numerical stage. The row is saved whether the target was solved or explicitly
+unavailable. This makes `status` part of the logical data, not an optional
+annotation.
+
+| Column | Meaning |
+|---|---|
+| `case_id` | Baseline or deformation grouping key |
+| `stage` | Governed numerical stage name |
+| `amplitude` | Proposal amplitude; blank for `direct` |
+| `delta_mev_fm3` | Activation-ramp width; blank for `direct` |
+| `status` | `bracketed_and_solved` or an explicit unavailable status |
+| `target_mass_msun` | Requested gravitational mass in solar masses |
+| `reason` | Reason an unavailable row could not be solved; present when applicable |
+| `mass_msun` | Gravitational mass of the solved model |
+| `mass_residual_msun` | `mass_msun - target_mass_msun` |
+| `radius_km` | Radius of the solved model in kilometres |
+| `central_pressure_mev_fm3` | Solved central pressure in MeV fm^-3 |
+| `central_energy_density_mev_fm3` | Solved central total energy density in MeV fm^-3 |
+| `central_sound_speed_squared` | Dimensionless central `c_s^2` |
+| `k2` | Dimensionless quadrupolar Love number when valid |
+| `lambda_dimensionless` | Dimensionless tidal deformability when valid |
+| `tidal_status` | Saved tidal capability status |
+| `tidal_failure_reason` | Reason a tidal observable is unavailable |
+| `bracket_pressure_mev_fm3` | Two saved central-pressure bracket endpoints, serialized as a CSV field |
+| `root_xtol_mev_fm3` | Absolute central-pressure root tolerance in MeV fm^-3 |
+| `root_evaluation_count` | Number of governed root/final evaluations recorded for the solution |
+
+Some result columns can be absent from a run-specific CSV header when no row
+could populate them; the generated `DATA_DICTIONARY.md` is authoritative for
+the columns actually present. Never replace an unavailable observable with
+zero. For tidal analysis, require both a solved background status and the
+saved valid tidal capability status.
+
+## `maximum_mass_screening.csv`
+
+One row represents one maximum-mass assessment for one EoS and numerical
+stage. An unresolved row intentionally does not claim the largest sampled
+mass as the maximum.
+
+| Column | Meaning |
+|---|---|
+| `case_id` | Baseline or deformation grouping key |
+| `stage` | Governed numerical stage name |
+| `status` | Exact turning-point/refinement outcome |
+| `maximum_mass_resolved` | Boolean declaring whether a maximum was validly bracketed and refined |
+| `maximum_mass_msun` | Refined maximum gravitational mass in solar masses; blank when unresolved |
+| `maximum_mass_threshold_msun` | Governed screening threshold in solar masses |
+| `passes_maximum_mass_threshold` | Saved threshold result when assessable |
+| `central_pressure_mev_fm3` | Refined central pressure at the maximum, when resolved |
+| `central_energy_density_mev_fm3` | Refined central total energy density at the maximum, when resolved |
+| `central_sound_speed_squared` | Dimensionless central `c_s^2` at the maximum |
+| `radius_km` | Radius at the resolved maximum in kilometres |
+| `turning_point_count` | Number of admissible sampled turning-point brackets found |
+| `positive_left_secant` | Saved positive-slope evidence on the left of the selected bracket |
+| `negative_right_secant` | Saved negative-slope evidence on the right of the selected bracket |
+| `eos_endpoint_pressure_mev_fm3` | Upper valid EoS pressure relevant to endpoint assessment |
+| `endpoint_limitation` | Saved indication that the EoS domain or sequence endpoint limited resolution |
+| `refinement_status` | Detailed local turning-point refinement status |
+| `sampled_sequence_model_count` | Number of successful sampled models supporting the assessment |
+| `local_background_solver_call_count` | Additional background-only calls used by local refinement |
+| `tidal_solver_calls_for_maximum_mass` | Tidal calls used for maximum-mass refinement; the governed procedure records zero |
+| `amplitude` | Proposal amplitude; blank for `direct` |
+| `delta_mev_fm3` | Activation-ramp width; blank for `direct` |
+
+Use `maximum_mass_msun` only when `maximum_mass_resolved` is true and the
+status is consistent with a bracketed, refined turning point. Use
+`stellar_sequences.csv` to inspect the sampled curve, not to invent a maximum
+for an unresolved row.
+
+## Common analysis tasks
+
+### Plot one EoS against the baseline
+
+In Excel or LibreOffice:
+
+1. Open `case_ledger.csv` and choose a row with `status = accepted`.
+2. Copy its exact `case_id`.
+3. Open `thermodynamic_profiles.csv` and filter `case_id` to that ID.
+4. Create an XY scatter plot with `epsilon_mev_fm3` on the horizontal axis and
+   `pressure_mev_fm3` or `cs2` on the vertical axis.
+5. Add a second series filtered to `case_id = direct`.
+
+Use an XY plot, not spreadsheet row number as the horizontal coordinate.
+
+In pandas:
+
+```python
+from pathlib import Path
+
+import pandas as pd
+
+data = Path("03_PRIMARY_DATA/geometry_001")
+ledger = pd.read_csv(data / "case_ledger.csv")
+profiles = pd.read_csv(data / "thermodynamic_profiles.csv")
+
+accepted_ids = ledger.loc[ledger["status"].eq("accepted"), "case_id"]
+case_id = accepted_ids.iloc[0]
+
+eos = (
+    profiles.loc[profiles["case_id"].eq(case_id)]
+    .sort_values("epsilon_mev_fm3")
+)
+direct = (
+    profiles.loc[profiles["case_id"].eq("direct")]
+    .sort_values("epsilon_mev_fm3")
+)
+```
+
+### Compare fractional thermodynamic responses
+
+For an accepted case, plot the saved `pressure_relative_to_direct`,
+`baryon_density_relative_to_direct`, or `enthalpy_relative_to_direct` against
+`epsilon_mev_fm3`. These are already dimensionless fractional responses. Do
+not multiply them by 100 unless the plot is explicitly labelled percent.
+
+### Make a mass-radius curve
+
+Select one `stage` and `case_id`, retain successful stellar rows in
+`attempted_index` order, and plot `Mass` against `Radius`. If the task requires
+the stable prefix, stop at the sampled-peak marker and retain the separate
+maximum-mass resolution status. Do not use tidal values whose `tidal_status`
+is invalid or unavailable.
+
+### Compare fixed-mass observables
+
+Filter to one target mass and the final reporting stage. Keep rows with
+`status = bracketed_and_solved`, then separately require valid tidal status
+for `k2` or `lambda_dimensionless`. Radius and non-tidal background values can
+be usable even when a tidal value is unavailable, provided the saved statuses
+support that use.
+
+### Compare maximum masses
+
+Filter to the final reporting stage and rows with
+`maximum_mass_resolved = true`. Preserve unresolved rows as labelled missing
+outcomes when studying coverage; do not convert them to zero or replace them
+with the largest sampled mass.
+
+## Preparing data for machine learning
+
+The combined long-format tables are a better ML foundation than thousands of
+separate files, but they are normalized: proposal metadata lives in the
+ledger, while repeated sampled values live in downstream tables.
+
+### Decide what one sample means
+
+Different tasks have different sample identities:
+
+- Pointwise EoS regression: one row may map energy density plus deformation
+  coordinates to pressure or `c_s^2`.
+- Curve-level modelling: one complete `(experiment, geometry, case_id)` group
+  is one sequence sample.
+- Stellar-sequence modelling: one `(experiment, geometry, case_id, stage)`
+  group is one sequence sample.
+- Acceptance classification: one ledger proposal is one labelled sample; raw
+  gate diagnostics may be features, while reconstructed profiles must not be
+  used because rejected cases never receive them.
+
+### Join proposal metadata explicitly
+
+For deformed thermodynamic rows, use a many-to-one join from profile rows to
+the ledger:
+
+```python
+metadata_columns = [
+    "case_id",
+    "epsilon_match_mev_fm3",
+    "epsilon0_mev_fm3",
+    "sigma_mev_fm3",
+    "status",
+]
+
+model_rows = (
+    profiles.loc[~profiles["case_id"].eq("direct")]
+    .merge(
+        ledger[metadata_columns],
+        on="case_id",
+        how="left",
+        validate="many_to_one",
+    )
+)
+model_rows.insert(0, "geometry_name", "geometry_001")
+```
+
+The profile table already contains `amplitude` and `delta_mev_fm3`; the join
+adds the remaining geometry and lifecycle fields. Keep `direct` as an
+explicit baseline case type rather than pretending it is an `A = 0` ledger
+proposal.
+
+### Prevent train/test leakage
+
+Do not randomly split thermodynamic or stellar rows. Neighbouring rows from
+one EoS are highly correlated; putting rows from the same curve in both train
+and test sets measures interpolation within a known EoS rather than
+generalization to a new one.
+
+Create splits at the intended generalization level:
+
+- hold out complete `case_id` groups to test new amplitudes at known geometry;
+- hold out complete geometries to test new centers or widths;
+- hold out complete experiments to test transfer across a different governed
+  configuration;
+- include experiment hash and geometry in the grouping key when data from
+  several runs are combined.
+
+Repeated `direct` baselines and identical `A = 0` controls are especially easy
+to leak across partitions. Deduplicate or group them according to the
+scientific question before assigning folds. Numerical stages are convergence
+views of the same physical case, not independent examples.
+
+### Respect the physical coordinate and missingness
+
+The thermodynamic grid is nonuniform. Include `epsilon_mev_fm3` as a feature
+for pointwise models. For fixed-length curve models, any interpolation or
+resampling is new preprocessing outside the authoritative packet: record the
+target grid, method, domain, masks, and extrapolation policy. Do not
+extrapolate past a case's saved domain.
+
+Keep unavailable values missing and retain status/reason columns or explicit
+masks. Replacing missing radius, tidal, or maximum-mass values with zero gives
+them a false physical meaning.
+
+Finally, prevent target leakage. For example,
+`pressure_relative_to_direct` contains the deformed pressure and should not be
+used as an input feature when pressure is the prediction target. Select
+features and targets from their definitions, not merely from numeric dtype.
+
+## Optional diagnostic CSV files
+
+`STUDENT_VIEW/04_OPTIONAL_DIAGNOSTICS/` contains the remaining saved CSVs for
+each geometry. The exact set depends on the calculation, precision, accepted
+cases, and diagnostics setting.
+
+| File | Main use |
+|---|---|
+| `case_plan.csv` | Planned case identities, identity-control injection, and requested stages |
+| `raw_gate_profiles.csv` | Pointwise raw deformation shape and gate status for accepted and rejected proposals |
+| `thermodynamic_residuals.csv` | Reconstruction and derivative-consistency residuals for accepted cases |
+| `window_characterization.csv` | One-row summaries of nominal and realized deformation geometry |
+| `a0_identity_table.csv` | Saved zero-amplitude identity evidence |
+| `stellar_status_summary.csv` | Background and tidal completeness counts and reasons |
+| `plot_inventory.csv` | Which figures were produced or omitted and why |
+| `radial_profiles.csv` | Saved radial stellar profiles when extended diagnostics apply |
+| `deformation_support_fractions.csv` | Where the deformation support lies within applicable stars |
+| Other extended stellar tables | Governed endpoint, response, pairing, and numerical-error diagnostics when requested |
+
+Use raw-gate data when the question includes why a proposal was rejected. Do
+not mix raw proposal values with reconstructed accepted profiles as if they
+were the same lifecycle stage.
+
+## Combining geometries or experiments
+
+Before concatenating tables, add explicit provenance columns to the user's
+analysis copy:
+
+```text
+experiment_hash
+geometry_name
+authoritative_packet_id_or_location
+```
+
+Then retain the original `case_id`, physical coordinate, `stage`, and status
+columns. Do not depend on directory order, spreadsheet row numbers, or a
+shortened case-ID prefix. Recheck schemas when combining runs: optional or
+status-dependent columns may differ, and an absent column is not a column of
+physical zeros.
+
+## Common mistakes and interpretation boundaries
+
+- The complete profile CSV is not globally pressure-sorted; ordering restarts
+  when `case_id` changes.
+- `delta_mev_fm3` is the activation-ramp width, while `delta_cs2` is the
+  pointwise sound-speed deformation.
+- `direct` and the reconstructed `A = 0` control are related but distinct
+  lifecycle cases.
+- Rejected proposals have no reconstructed or stellar rows by design.
+- Blank and unavailable values are not zero.
+- A sampled stellar peak is not automatically a resolved maximum mass.
+- Background success does not automatically make a tidal result valid.
+- Fixed masses are gravitational masses in solar masses.
+- Energy density includes rest-mass energy.
+- The reconstructed state is an effective one-fluid cold barotrope, not a
+  microscopic composition calculation.
+- CSV convenience does not replace the authoritative packet, validation
+  report, exact manifest, configuration hash, or source provenance.
+
+For the physical construction and acceptance rules, read
+[`method.md`](method.md). For packet validation, figures, and lifecycle
+interpretation, read [`results.md`](results.md).

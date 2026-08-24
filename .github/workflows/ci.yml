@@ -96,6 +96,7 @@ jobs:
               "configs/quickstart.json",
               "configs/schema.json",
               "configs/stellar_example.json",
+              "docs/csv-data-guide.md",
               "docs/developer.md",
               "docs/method.md",
               "docs/parameters.md",
