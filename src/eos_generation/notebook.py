@@ -304,8 +304,8 @@ def _assert_consistent_conda_environment() -> None:
     conda_prefix = os.environ.get("CONDA_PREFIX")
     if not conda_prefix:
         return
-    active_prefix = Path(conda_prefix).expanduser().resolve(strict=False)
-    interpreter_prefix = Path(sys.prefix).expanduser().resolve(strict=False)
+    active_prefix = os.path.normcase(os.path.normpath(conda_prefix))
+    interpreter_prefix = os.path.normcase(os.path.normpath(sys.prefix))
     if active_prefix != interpreter_prefix:
         raise RuntimeError(
             "Jupyter environment mismatch: the kernel interpreter and "
