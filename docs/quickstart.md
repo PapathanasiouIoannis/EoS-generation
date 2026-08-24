@@ -18,7 +18,7 @@ Confirm that Python imports the installed package and that the command is
 available:
 
 ```powershell
-python -c "import eos_generation; print(eos_generation.__version__)"
+python -c "import sys, eos_generation; print(sys.executable); print(eos_generation.__version__)"
 bsk24-trial --help
 ```
 
@@ -93,8 +93,20 @@ Install the optional interface tools and launch Jupyter:
 
 ```powershell
 python -m pip install -e ".[notebook]"
-jupyter lab notebooks/bsk24_experiment.ipynb
+python -m jupyterlab notebooks/bsk24_experiment.ipynb
 ```
+
+On Windows, this explicit alternative also guarantees that both the Jupyter
+server and kernel start from the governed environment:
+
+```powershell
+conda run -n eos-generation --no-capture-output python -m jupyterlab notebooks/bsk24_experiment.ipynb
+```
+
+In VS Code, use **Python: Select Interpreter**, then the notebook's
+**Select Kernel** menu, and choose the same `eos-generation` environment for
+both. Verify `sys.executable` ends with
+`envs\eos-generation\python.exe`, not the base `anaconda3\python.exe`.
 
 In the settings cell, leave:
 
@@ -106,6 +118,11 @@ Run all cells once and inspect the plan. Set the flag to `True` only after the
 settings, work count, and new destination are correct. Authorization is bound
 to that reviewed plan; settings, source, environment, worker, or destination
 drift requires a new passive pass.
+
+On a successful authorized pass, the notebook validates the completed
+experiment and then creates a separate `STUDENT_VIEW/` with obvious links to
+plots, primary CSV data, and the authoritative technical packet. This derived
+view is outside the sealed packet and has its own checksum manifest.
 
 ## Next steps
 

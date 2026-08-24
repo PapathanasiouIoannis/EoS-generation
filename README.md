@@ -109,13 +109,19 @@ Fixed masses are gravitational masses in solar masses.
 Launch the single supported notebook:
 
 ```powershell
-jupyter lab notebooks/bsk24_experiment.ipynb
+python -m jupyterlab notebooks/bsk24_experiment.ipynb
 ```
 
 Edit only the settings cell. Leave `EXECUTE_REVIEWED_PLAN = False`, run all
 cells, and inspect the passive plan. Set it to `True` only after the plan and
 destination are correct. The notebook delegates to the same production API as
-the command line.
+the command line. On completion it validates the sealed experiment and creates
+a separate derived `STUDENT_VIEW/` with links to plots and primary CSV data.
+
+In VS Code, select the interpreter and notebook kernel from the same
+`eos-generation` environment. On Windows the interpreter path normally ends
+with `anaconda3\envs\eos-generation\python.exe`; do not select the base
+`anaconda3\python.exe` interpreter.
 
 ## Python interface
 

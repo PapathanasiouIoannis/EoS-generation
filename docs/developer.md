@@ -97,6 +97,12 @@ Loading and validation are passive. Plotting reads saved tables only. Source
 provenance must include every active calculation and reporting module; update
 the inventory and its test when a source path changes.
 
+The notebook may create a derived student presentation view only after the
+authoritative aggregate and every child packet pass validation. That view must
+remain outside the sealed experiment, copy saved CSV/PNG artifacts only, have
+its own exact checksum manifest, reject overwrite, and never become part of
+the canonical packet or public API.
+
 ## Tests
 
 Install the declared environment and editable package, then run the focused

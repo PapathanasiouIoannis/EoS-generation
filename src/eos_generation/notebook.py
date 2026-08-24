@@ -13,6 +13,7 @@ import json
 import math
 import os
 import platform
+import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -297,6 +298,24 @@ def _default_worker_count() -> int:
     return min(_MAX_WORKERS, max(1, logical // 2))
 
 
+def _assert_consistent_conda_environment() -> None:
+    """Fail before planning when a base Jupyter server contaminates a kernel."""
+
+    conda_prefix = os.environ.get("CONDA_PREFIX")
+    if not conda_prefix:
+        return
+    active_prefix = os.path.normcase(os.path.normpath(conda_prefix))
+    interpreter_prefix = os.path.normcase(os.path.normpath(sys.prefix))
+    if active_prefix != interpreter_prefix:
+        raise RuntimeError(
+            "Jupyter environment mismatch: the kernel interpreter and "
+            "CONDA_PREFIX belong to different environments. Shut down this "
+            "Jupyter server and relaunch with: conda run -n eos-generation "
+            "--no-capture-output python -m jupyterlab "
+            "notebooks/bsk24_experiment.ipynb"
+        )
+
+
 def _repository_root(value: str | Path | None) -> Path:
     if value is not None:
         return Path(value).expanduser().resolve(strict=False)
@@ -420,6 +439,11 @@ class NotebookSession:
         self._runs: dict[str, NotebookRun] = {}
         self._reviewed: dict[str, str] = {}
         self._consumed: set[str] = set()
+        self._student_view: Any | None = None
+        self._uses_production_workflow = all(
+            dependency is None
+            for dependency in (planner, runner, loader, validator)
+        )
 
     def _dependencies(self) -> tuple[Callable[..., Any], Callable[..., Any], Callable[[Path], Any], Callable[[Path], Any]]:
         if all(
@@ -515,6 +539,7 @@ class NotebookSession:
     ) -> NotebookRun:
         """Passively plan, optionally recording the exact plan as reviewed."""
 
+        _assert_consistent_conda_environment()
         if not isinstance(settings, NotebookSettings):
             raise TypeError("settings must be NotebookSettings from the editable cell")
         if not isinstance(record_preview, bool):
@@ -604,7 +629,29 @@ class NotebookSession:
         )
         if status not in (None, "pass", "valid", "complete"):
             raise RuntimeError(f"completed experiment failed validation: {status}")
+        if self._uses_production_workflow:
+            from ._internal.student_view import create_student_view
+
+            self._student_view = create_student_view(
+                run.output_root,
+                validation_report=report,
+                repository_root=self.repository_root,
+                destination=run.planning_root / "STUDENT_VIEW",
+            )
         return result
+
+    def student_view_locations(self) -> dict[str, Path]:
+        """Return the completed view's useful notebook-facing locations."""
+
+        if self._student_view is None:
+            return {}
+        return {
+            "Student view": self._student_view.path,
+            "Read me first": self._student_view.readme,
+            "Plots": self._student_view.plots,
+            "Primary data": self._student_view.primary_data,
+            "Authoritative technical packet": self._student_view.authoritative_experiment,
+        }
 
     def load(self, path: str | Path) -> Any:
         """Passively load an existing experiment through the public facade."""

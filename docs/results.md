@@ -107,3 +107,17 @@ does not rerun thermodynamics or stellar structure.
 Local packets are intentionally ignored by Git. Preserve important runs in
 your own archival or publication workflow together with their manifest; do
 not add large generated results to the source repository.
+
+## Student view from the notebook
+
+After a notebook execution completes and the authoritative experiment passes
+validation, the notebook creates a separate `STUDENT_VIEW/` beside the sealed
+experiment directory. It contains copied PNGs, primary CSV data, optional CSV
+diagnostics, a data dictionary, and its own exact checksum manifest. The
+notebook prints clickable locations for the view and the authoritative packet.
+
+The student view is derived and non-authoritative. It never changes the
+experiment packet, is not included in the packet manifest, and is created
+from saved artifacts without rerunning thermodynamics, stellar structure,
+tidal work, or plotting. An existing student-view destination is rejected
+rather than overwritten.

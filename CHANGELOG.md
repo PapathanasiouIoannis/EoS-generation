@@ -2,6 +2,26 @@
 
 All notable changes to the supported package are recorded here.
 
+## Unreleased
+
+### Added
+
+- A derived, checksum-manifested notebook `STUDENT_VIEW` containing saved
+  plots, primary CSV data, optional diagnostics, and schema-grounded guidance.
+- Passive notebook protection against mixed Conda server/kernel environments.
+- Focused Windows coverage for atomic plot finalization and the notebook
+  presentation workflow.
+
+### Fixed
+
+- Open temporary plot files in a writable mode before `fsync` on Windows.
+
+### Scientific compatibility
+
+- No equation, coefficient, physical constant, numerical profile, tolerance,
+  gate, solver, unit, configuration identity, source table, canonical packet,
+  or manifest rule changed.
+
 ## 1.0.0 - 2026-08-18
 
 This is the first release of the compact public interface.

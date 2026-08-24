@@ -105,10 +105,12 @@ jobs:
               "notebooks/bsk24_experiment.ipynb",
               "tests/test_experiment_results.py",
               "tests/test_notebook.py",
+              "tests/test_plot_helpers.py",
               "tests/test_provenance.py",
               "tests/test_public_workflow.py",
               "tests/test_scientific_workflow_contracts.py",
               "tests/test_stellar.py",
+              "tests/test_student_view.py",
               "tests/test_thermodynamics.py",
               "tests/fixtures/bsk24_contract_v1/README.md",
               "tests/fixtures/bsk24_contract_v1/SHA256SUMS.txt",
@@ -323,3 +325,37 @@ jobs:
             printf '%s\n' "$changes"
             exit 1
           fi
+
+  windows-passive:
+    name: Windows notebook and saved-plot workflow
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+      MPLBACKEND: Agg
+
+    steps:
+      - name: Check out the reviewed revision
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.12.3
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12.3"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install the notebook interface
+        shell: pwsh
+        run: |
+          python -m pip install --disable-pip-version-check -e ".[notebook]" pytest
+
+      - name: Check passive Windows workflows
+        shell: pwsh
+        run: |
+          python -m pytest -q `
+            tests/test_plot_helpers.py `
+            tests/test_student_view.py `
+            tests/test_notebook.py
