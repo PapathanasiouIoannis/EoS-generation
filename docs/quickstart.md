@@ -133,7 +133,9 @@ scientific completeness. `status` presents the result summary. The passive
 calculation.
 
 Read [`results.md`](results.md) before interpreting accepted/rejected cases,
-stellar branches, or missing observables.
+stellar branches, or missing observables. Read
+[`csv-data-guide.md`](csv-data-guide.md) for the exact CSV ordering, column
+meanings, analysis recipes, and machine-learning preparation.
 
 ## Notebook route
 
@@ -190,8 +192,9 @@ Start with `STUDENT_VIEW/01_READ_ME_FIRST.md`. For portable EoS analysis,
 keep `case_ledger.csv` and `thermodynamic_profiles.csv` from the same
 `geometry_NNN` directory together. The ledger says which deformation a
 `case_id` represents; the profiles hold its sampled data points. The complete
-row and case logic is documented in [`results.md`](results.md) and repeated
-inside every generated student view.
+row, ordering, column, and machine-learning guidance is documented in
+[`csv-data-guide.md`](csv-data-guide.md); packet validation and lifecycle
+interpretation remain in [`results.md`](results.md).
 
 ## Next steps
 

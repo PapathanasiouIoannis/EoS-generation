@@ -141,6 +141,10 @@ The PNG and CSV files are byte-for-byte copies of saved artifacts. The two
 Markdown guides and `SHA256SUMS.txt` describe and checksum this derived view;
 they do not become part of the authoritative experiment.
 
+For the exact geometry and case ordering, complete primary-column meanings,
+analysis examples, and leakage-safe machine-learning preparation, read the
+dedicated [`csv-data-guide.md`](csv-data-guide.md).
+
 ## From an experiment to one CSV row
 
 The result hierarchy is:
@@ -180,7 +184,7 @@ the canonical configuration hash and authoritative packet location as well.
 | `case_ledger.csv` | One declared deformation proposal and its accepted/rejected outcome | `case_id` |
 | `thermodynamic_profiles.csv` | One sampled total-energy-density point for the direct baseline or one reconstructed case | `case_id`, `epsilon_mev_fm3` |
 | `stellar_sequences.csv` | One stellar-model attempt at a saved central coordinate | `case_id`, stage, central pressure/energy density, calculation status |
-| `fixed_mass_observables.csv` | One requested fixed-mass result when a true stable-branch bracket exists | `case_id`, stage, `target_mass_msun`, status |
+| `fixed_mass_observables.csv` | One requested fixed-mass outcome, either solved from a true stable-branch bracket or explicitly unavailable | `case_id`, stage, `target_mass_msun`, status |
 | `maximum_mass_screening.csv` | One maximum-mass/turning-point assessment | `case_id`, stage, saved resolution status |
 
 The physical row coordinate matters. Do not compare “row 100” between two

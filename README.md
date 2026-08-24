@@ -132,7 +132,9 @@ conda run -n eos-generation --no-capture-output python -m jupyterlab notebooks/b
 After a successful run, use the notebook's **Student result locations** links.
 Start with `STUDENT_VIEW/01_READ_ME_FIRST.md`; primary CSV data is below
 `STUDENT_VIEW/03_PRIMARY_DATA/` and the sealed technical packet remains
-separate.
+separate. [`docs/csv-data-guide.md`](docs/csv-data-guide.md) explains exactly
+which rows belong to each EoS, the saved column meanings, and safe preparation
+for plotting or machine learning.
 
 ## Plan before calculating
 
@@ -256,9 +258,11 @@ stable-branch bracket.
 | [`docs/`](docs/) | Short method and usage guides |
 | [`tests/`](tests/) | Focused scientific and interface regression tests |
 
-See [`docs/method.md`](docs/method.md) for the construction and
-[`docs/results.md`](docs/results.md) for interpreting saved results. Problems
-and contribution requirements are covered by
+See [`docs/method.md`](docs/method.md) for the construction,
+[`docs/results.md`](docs/results.md) for interpreting saved packets, and
+[`docs/csv-data-guide.md`](docs/csv-data-guide.md) for using CSV data in
+spreadsheets, Python, or machine-learning workflows. Problems and contribution
+requirements are covered by
 [`docs/troubleshooting.md`](docs/troubleshooting.md) and
 [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
