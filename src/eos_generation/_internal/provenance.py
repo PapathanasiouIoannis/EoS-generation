@@ -67,6 +67,7 @@ _SOURCE_PATHS = (
     "src/eos_generation/_internal/saved_tables.py",
     "src/eos_generation/_internal/sequence_tables.py",
     "src/eos_generation/_internal/status.py",
+    "src/eos_generation/_internal/student_view.py",
     "src/eos_generation/_internal/stellar.py",
     "src/eos_generation/_internal/_summary_evidence.py",
     "src/eos_generation/_internal/_summary_markdown.py",

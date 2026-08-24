@@ -19,6 +19,45 @@ python -c "import sys, eos_generation; print(sys.executable); print(eos_generati
 The supported Python range and pinned scientific dependencies are defined in
 `pyproject.toml` and `environment.yml`.
 
+## Jupyter reports an environment mismatch or `BrokenProcessPool`
+
+Do not run a base-Anaconda Jupyter server with an `eos-generation` kernel, or
+the reverse. Native numerical libraries and spawned stellar workers inherit
+the server environment on Windows; mixing environments can terminate a worker
+without a Python exception. The notebook now rejects a detected mismatch
+before planning or calculation.
+
+Activate and launch through the governed interpreter:
+
+```powershell
+conda activate eos-generation
+python -m jupyterlab notebooks/bsk24_experiment.ipynb
+```
+
+If shell activation is uncertain, use:
+
+```powershell
+conda run -n eos-generation --no-capture-output python -m jupyterlab notebooks/bsk24_experiment.ipynb
+```
+
+For VS Code, select `eos-generation` with **Python: Select Interpreter** and
+again with the notebook's **Select Kernel** menu. Check the live kernel before
+execution:
+
+```python
+import os
+import sys
+
+print(sys.executable)
+print(sys.prefix)
+print(os.environ.get("CONDA_PREFIX"))
+```
+
+The executable and prefix must identify `envs\eos-generation`. A missing
+`CONDA_PREFIX` is acceptable when VS Code launches the interpreter directly;
+if present, it must identify the same environment. Shut down old notebook
+kernels after changing the selection.
+
 ## The configuration is rejected
 
 Validate the JSON syntax, then compare the fields with

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import sys
 import tempfile
 import unittest
 from dataclasses import dataclass
@@ -9,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import patch
 
 from eos_generation.notebook import (
     NotebookRun,
@@ -213,6 +216,23 @@ class NotebookSessionTests(unittest.TestCase):
             self.assertEqual(0, harness.runner_calls)
             self.assertFalse((root / "runs").exists())
 
+    def test_mixed_conda_server_and_kernel_fail_before_planning(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            harness = _Harness(root)
+            session = harness.session()
+            with (
+                patch.dict(
+                    os.environ,
+                    {"CONDA_PREFIX": str(root / "base-anaconda")},
+                ),
+                patch.object(sys, "prefix", str(root / "envs" / "eos-generation")),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "Jupyter environment mismatch"):
+                    session.prepare(_settings(), record_preview=True)
+            self.assertEqual(0, harness.planner_calls)
+            self.assertFalse((root / "runs").exists())
+
 
 class NotebookArtifactTests(unittest.TestCase):
     def test_saved_notebook_executes_passively_from_repository_root(self) -> None:
@@ -300,6 +320,8 @@ class NotebookArtifactTests(unittest.TestCase):
         self.assertEqual(1, locked_source.count("notebook_session.execute("))
         self.assertIn("record_preview=not EXECUTE_REVIEWED_PLAN", locked_source)
         self.assertIn("execute=EXECUTE_REVIEWED_PLAN", locked_source)
+        self.assertEqual(1, locked_source.count("student_view_locations()"))
+        self.assertIn("Student result locations", locked_source)
         self.assertNotIn("ipywidgets", locked_source)
         self.assertNotIn("framework.", locked_source)
         for cell in code_cells:

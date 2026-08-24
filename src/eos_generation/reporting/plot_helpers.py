@@ -53,7 +53,7 @@ def finalize_figure(
             dpi=dpi,
             bbox_inches=bbox_inches,
         )
-        with temporary.open("rb") as handle:
+        with temporary.open("r+b") as handle:
             os.fsync(handle.fileno())
         os.replace(temporary, output)
     finally:
