@@ -20,68 +20,114 @@ requires an explicit `--execute` gate. Local results go below the ignored
 
 ## Install
 
+Before starting, install either Miniconda or Anaconda. VS Code and JupyterLab
+can use Conda environments, but neither application supplies the `conda`
+command itself.
+
 The governed Python and scientific-library versions are in
-[`environment.yml`](environment.yml):
+[`environment.yml`](environment.yml). Open the repository folder itself—the
+folder containing `environment.yml`, `pyproject.toml`, `configs/`, and
+`notebooks/`—then confirm the terminal is at that repository root:
+
+```powershell
+Test-Path .\environment.yml
+Test-Path .\pyproject.toml
+Test-Path .\notebooks\bsk24_experiment.ipynb
+```
+
+All three commands must print `True`. Next check Conda and the available
+environments:
+
+```powershell
+conda --version
+conda env list
+```
+
+If `conda` is not recognized, stop and follow
+[`docs/troubleshooting.md`](docs/troubleshooting.md); a VS Code extension is
+not the missing component. If `eos-generation` is absent from `conda env
+list`, create it once:
 
 ```powershell
 conda env create -f environment.yml
-conda activate eos-generation
-python -m pip install -e . --no-deps
 ```
 
-For the notebook, install the optional interface tools as well:
+Whether the environment was existing or newly created, install this checkout
+and its notebook tools into it:
 
 ```powershell
+conda activate eos-generation
+python -m pip install -e . --no-deps
 python -m pip install -e ".[notebook]"
+python -c "import sys, eos_generation; print(sys.executable); print(eos_generation.__version__)"
 ```
 
-Conda is not required merely because the project contains an `.ipynb` file.
-It provides the governed Python and scientific-library environment used by
-the command line, VS Code, and browser-based Jupyter alike. A notebook
-*kernel* is simply the Python interpreter that executes its cells; select the
-`eos-generation` environment rather than an unrelated base or system Python.
+The printed executable must identify the `eos-generation` environment. Conda
+provides the governed scientific runtime; a notebook *kernel* is simply the
+Python interpreter selected to execute notebook cells.
 
 See [`docs/quickstart.md`](docs/quickstart.md) for installation checks and a
 complete first run.
 
-## First notebook run in VS Code
+## Run the experiment notebook
+
+VS Code and JupyterLab are two interfaces to the same notebook and production
+workflow. They use the same environment, calculations, validation, result
+packets, and student view.
+
+### Guide A — VS Code
 
 1. Use **File > Open Folder** and select the repository folder itself: the
    folder containing `environment.yml`, `pyproject.toml`, `configs/`, and
    `notebooks/`. Do not open only its parent download directory.
 2. In the Explorer, right-click that top-level folder and select **Open in
-   Integrated Terminal**. This avoids typing a machine-specific path.
-3. Confirm the terminal is at the repository root:
-
-   ```powershell
-   Test-Path .\environment.yml
-   Test-Path .\pyproject.toml
-   Test-Path .\notebooks\bsk24_experiment.ipynb
-   ```
-
-   All three commands must print `True`.
-4. Create the environment once, then install the checkout and notebook tools:
-
-   ```powershell
-   conda env create -f environment.yml
-   conda activate eos-generation
-   python -m pip install -e . --no-deps
-   python -m pip install -e ".[notebook]"
-   ```
-
-   If the environment already exists, skip `conda env create` and activate
-   it. If `conda` is not recognized, use **Anaconda Prompt** for these setup
-   commands; [`docs/troubleshooting.md`](docs/troubleshooting.md) gives a
-   path-free way to get that prompt into the correct folder.
-5. Open `notebooks/bsk24_experiment.ipynb`. Select **Python: Select
+   Integrated Terminal**, then complete the installation block above one line
+   at a time.
+3. Open `notebooks/bsk24_experiment.ipynb`. Select **Python: Select
    Interpreter**, then **Select Kernel**, and choose `eos-generation` in both
    places. The selected interpreter must be Python 3.12 from that environment.
-6. Leave `EXECUTE_REVIEWED_PLAN = False` and choose **Run All**. This first
+4. Leave `EXECUTE_REVIEWED_PLAN = False` and choose **Run All**. This first
    pass only prints the passive plan and writes no result.
-7. Review the settings, work count, cases, and new destination. Change only
+5. Review the settings, work count, cases, and new destination. Change only
    `EXECUTE_REVIEWED_PLAN` to `True`, then choose **Run All** again in the
    same kernel. Restarting the kernel discards the reviewed authorization and
    requires another `False` preview pass.
+6. Open the displayed **Student result locations** and start with **Read me
+   first**.
+
+### Guide B — JupyterLab in a browser
+
+Open PowerShell at the repository root. Run these commands one line at a time;
+they deliberately reuse the environment that worked in VS Code:
+
+```powershell
+conda activate eos-generation
+python -c "import sys; print(sys.executable)"
+python -m pip install -e . --no-deps
+python -m pip install -e ".[notebook]"
+python -m ipykernel install --user --name eos-generation --display-name "Python (eos-generation)"
+python -m jupyterlab notebooks/bsk24_experiment.ipynb
+```
+
+The printed executable must identify the `eos-generation` environment. Keep
+the launching terminal open while JupyterLab is running. In the browser:
+
+1. Use **Kernel > Change Kernel** if necessary and select **Python
+   (eos-generation)**.
+2. Leave `EXECUTE_REVIEWED_PLAN = False` and choose **Run > Run All Cells**.
+3. Review the passive plan, cases, work count, and new destination.
+4. Change only `EXECUTE_REVIEWED_PLAN` to `True`, then choose **Run > Run All
+   Cells** again without restarting or changing the kernel.
+5. Open the displayed **Student result locations** and start with **Read me
+   first**.
+
+Do not launch this workflow from a base-Anaconda Jupyter shortcut or mix a
+base Jupyter server with an `eos-generation` kernel. If activation is
+uncertain, the explicit equivalent is:
+
+```powershell
+conda run -n eos-generation --no-capture-output python -m jupyterlab notebooks/bsk24_experiment.ipynb
+```
 
 After a successful run, use the notebook's **Student result locations** links.
 Start with `STUDENT_VIEW/01_READ_ME_FIRST.md`; primary CSV data is below
@@ -153,32 +199,6 @@ All quantities named `center`, `width`, `ramp_width`, and a numeric
 `epsilon_match` are total-energy-density coordinates in MeV fm^-3.
 Amplitudes add directly to dimensionless `c_s^2` in units with `c = 1`.
 Fixed masses are gravitational masses in solar masses.
-
-## Browser-based Jupyter Lab
-
-The same notebook can be run in a browser instead of VS Code. Activate the
-same environment at the repository root and launch:
-
-```powershell
-python -m jupyterlab notebooks/bsk24_experiment.ipynb
-```
-
-Edit only the settings cell. Leave `EXECUTE_REVIEWED_PLAN = False`, run all
-cells, and inspect the passive plan. Set it to `True` only after the plan and
-destination are correct, then run all again in the same kernel. On completion
-it validates the sealed experiment and creates a separate derived
-`STUDENT_VIEW/` with links to plots and primary CSV data.
-
-If shell activation is uncertain on Windows, launch explicitly through the
-governed environment:
-
-```powershell
-conda run -n eos-generation --no-capture-output python -m jupyterlab notebooks/bsk24_experiment.ipynb
-```
-
-VS Code and Jupyter Lab delegate to the same production API and create the
-same result structure. They are different interfaces, not different
-scientific workflows.
 
 ## Python interface
 
