@@ -159,7 +159,7 @@ class StudentViewTests(unittest.TestCase):
                     destination=destination,
                 )
             self.assertEqual(before, _snapshot(experiment))
-            self.assertEqual(destination, view.path)
+            self.assertEqual(destination.resolve(strict=False), view.path)
             for child in ("geometry_001", "geometry_002"):
                 self.assertTrue(
                     (view.primary_data / child / "thermodynamic_profiles.csv").is_file()
