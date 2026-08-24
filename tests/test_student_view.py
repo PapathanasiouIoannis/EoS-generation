@@ -90,11 +90,15 @@ def _make_experiment(
         packet = experiment / child
         (packet / "plots").mkdir(parents=True)
         (packet / "case_ledger.csv").write_text(
-            "case_id,status,reason\ncase_0001,accepted,\n", encoding="utf-8"
+            "case_id,amplitude,epsilon0_mev_fm3,sigma_mev_fm3,"
+            "delta_mev_fm3,status,reason\n"
+            "case_0001,-0.1,300,50,20,accepted,\n",
+            encoding="utf-8",
         )
         (packet / "thermodynamic_profiles.csv").write_text(
             "case_id,epsilon_mev_fm3,pressure_mev_fm3,cs2\n"
-            f"case_0001,100,{index},0.2\n",
+            f"direct,100,{index},0.2\n"
+            f"case_0001,100,{index + 0.1},0.19\n",
             encoding="utf-8",
         )
         (packet / "raw_gate_profiles.csv").write_text(
@@ -180,9 +184,22 @@ class StudentViewTests(unittest.TestCase):
             self.assertIn("Canonical configuration hash: `" + "a" * 64, readme)
             self.assertIn("thermodynamic_profiles.csv", readme)
             self.assertIn("stellar_sequences.csv", readme)
+            self.assertIn("A CSV row is not a new EoS", readme)
+            self.assertIn("`case_id = direct`", readme)
+            self.assertIn("one distinct deformed EoS", readme)
+            self.assertIn(
+                "copy both `case_ledger.csv` and `thermodynamic_profiles.csv`",
+                readme,
+            )
+            self.assertIn("Do not compare cases by spreadsheet row number", readme)
             dictionary = view.data_dictionary.read_text(encoding="utf-8")
             self.assertIn("`epsilon_mev_fm3`", dictionary)
             self.assertIn("`mass_msun`", dictionary)
+            self.assertIn(
+                "One row represents one sampled energy-density point",
+                dictionary,
+            )
+            self.assertIn("Do not use row numbers as scientific identifiers", dictionary)
 
     def test_rejects_failed_or_incomplete_sources_and_existing_destination(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

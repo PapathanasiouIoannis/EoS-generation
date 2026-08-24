@@ -37,11 +37,41 @@ _PRIMARY_TABLES = (
 _REQUIRED_TABLES = frozenset(_PRIMARY_TABLES[:2])
 _PASS_STATUSES = frozenset({"pass", "complete", "validated"})
 _TABLE_PURPOSES = {
-    "case_ledger.csv": "Saved accepted/rejected lifecycle outcome for every declared case.",
-    "thermodynamic_profiles.csv": "Saved effective one-fluid EoS profiles for reconstructed cases.",
-    "stellar_sequences.csv": "Saved stellar-sequence models when stellar work was requested and available.",
+    "case_ledger.csv": "Saved accepted/rejected lifecycle outcome and deformation coordinates for every declared case.",
+    "thermodynamic_profiles.csv": "Saved effective one-fluid EoS profile samples for the direct baseline and reconstructed cases.",
+    "stellar_sequences.csv": "Saved stellar-sequence model attempts when stellar work was requested and available.",
     "fixed_mass_observables.csv": "Saved observables at requested, truly bracketed gravitational masses when available.",
     "maximum_mass_screening.csv": "Saved maximum-mass screening and turning-point status when available.",
+}
+_TABLE_GUIDANCE = {
+    "case_ledger.csv": (
+        "One row represents one declared deformation proposal. Use `case_id` to "
+        "join its amplitude, geometry, and accepted/rejected status to downstream "
+        "tables. The analytical `direct` baseline is not a deformation proposal "
+        "and therefore need not have a ledger row."
+    ),
+    "thermodynamic_profiles.csv": (
+        "One row represents one sampled energy-density point for one `case_id`; "
+        "all rows with the same `case_id` belong to the same EoS. Use "
+        "`epsilon_mev_fm3` as the physical horizontal coordinate rather than the "
+        "spreadsheet row number."
+    ),
+    "stellar_sequences.csv": (
+        "One row represents one stellar-model attempt for one `case_id` and "
+        "numerical stage at its saved central coordinate. Filter by the saved "
+        "calculation and capability status before using mass, radius, or tidal "
+        "values."
+    ),
+    "fixed_mass_observables.csv": (
+        "One row represents one requested target mass for one `case_id` and "
+        "numerical stage when a true stable-branch bracket was available. Preserve "
+        "the saved status when selecting rows."
+    ),
+    "maximum_mass_screening.csv": (
+        "One row represents one maximum-mass assessment for one `case_id` and "
+        "numerical stage. A largest sampled mass is not a resolved maximum unless "
+        "the saved turning-point and resolution status says so."
+    ),
 }
 
 
@@ -203,6 +233,39 @@ def _render_readme(
         "- `04_OPTIONAL_DIAGNOSTICS/` contains other saved CSV diagnostics, when present.",
         "- Each `geometry_NNN/` directory corresponds exactly to one authoritative geometry child packet; rows are not merged across geometries.",
         "",
+        "## How the data is organized",
+        "",
+        "A CSV row is not a new EoS. The hierarchy is:",
+        "",
+        "```text",
+        "experiment (one canonical configuration hash)",
+        "└── geometry_NNN (one center, width, ramp-width, and anchor combination)",
+        "    └── case_id (one baseline or one deformation amplitude)",
+        "        └── rows (sampled thermodynamic points or stellar models)",
+        "```",
+        "",
+        "- `case_id = direct` is the undeformed analytical BSk24 baseline saved for comparison.",
+        "- A deformation with amplitude `A = 0` is a separate identity-control case. It passes through the reconstruction workflow and is expected to reproduce the baseline under the governed identity policy.",
+        "- Each nonzero-amplitude `case_id` is one distinct deformed EoS within that geometry.",
+        "- Read amplitude and geometry values from `case_ledger.csv`; do not try to recover the complete scientific identity from the readable part of the case-ID text. Its final hexadecimal suffix is a deterministic collision-resistant digest of the deformation coordinates.",
+        "- A rejected ledger row is a completed scientific outcome. It deliberately has no reconstructed thermodynamic profile or stellar sequence.",
+        "",
+        "## Which files to keep together",
+        "",
+        "For portable EoS analysis, copy both `case_ledger.csv` and `thermodynamic_profiles.csv` from the same `geometry_NNN/` directory. The profiles contain the sampled quantities and case IDs; the ledger supplies the complete deformation coordinates and accepted/rejected status. For stellar work, keep that same ledger with the applicable stellar CSVs.",
+        "",
+        "When combining several geometry directories, add the `geometry_NNN` folder name as a column in your own analysis. When combining separate experiments, also retain the canonical configuration hash and authoritative packet location. A `case_id` identifies a deformation proposal, not the complete source-code and runtime provenance of an experiment.",
+        "",
+        "## Minimal analysis workflow",
+        "",
+        "1. Open `case_ledger.csv` and select an accepted `case_id`.",
+        "2. Open the result table needed for the question and filter its `case_id` column to that exact value.",
+        "3. For an EoS curve, plot `epsilon_mev_fm3` on the horizontal axis and a saved quantity such as `pressure_mev_fm3` or `cs2` on the vertical axis.",
+        "4. Treat `direct` as the baseline comparison. Do not compare cases by spreadsheet row number alone; use the saved physical coordinate and status columns.",
+        "5. Blank or unavailable values are not zero. Preserve the saved status and reason columns when exporting or filtering data.",
+        "",
+        "These are ordinary UTF-8 CSV files and can be opened in Excel, LibreOffice, R, pandas, Julia, MATLAB, Mathematica, or another CSV-capable tool. [`DATA_DICTIONARY.md`](DATA_DICTIONARY.md) records the exact columns present in this particular run.",
+        "",
         "## Interpretation boundary",
         "",
         "Energy density and pressure include the conventions recorded by the authoritative method: energy density includes rest-mass energy, energy-density/pressure columns with `_mev_fm3` are in MeV fm^-3, `dP/dε = c_s^2` is dimensionless with `c = 1`, fixed masses are gravitational masses in solar masses, and radius columns with `_km` are in kilometres. A rejected case remains rejected and has no reconstructed or stellar values. The reconstructed state is an effective one-fluid cold barotrope; this view does not establish microscopic composition, species chemical potentials, or beta equilibrium.",
@@ -226,6 +289,14 @@ def _render_dictionary(stage: Path, tables: tuple[Path, ...]) -> str:
         "- `cs2` and named fractions: dimensionless",
         "- Status, reason, case, stage, and capability columns are categorical bookkeeping; preserve their saved text exactly.",
         "",
+        "## How to identify a data point",
+        "",
+        "- `case_id` groups rows belonging to the same baseline or deformation. A change of spreadsheet row is not by itself a change of EoS.",
+        "- Within a thermodynamic case, `epsilon_mev_fm3` identifies the sampled total-energy-density coordinate.",
+        "- Within a stellar case, the saved stage and central-pressure/central-energy-density columns identify the attempted stellar model.",
+        "- Do not use row numbers as scientific identifiers. When copying a subset, keep its `case_id`, physical coordinate, stage, and status columns.",
+        "- Empty fields mean unavailable or non-applicable unless the table explicitly defines otherwise; they must not be replaced with zero.",
+        "",
     ]
     for path in sorted(tables, key=lambda item: item.relative_to(stage).as_posix()):
         relative = path.relative_to(stage).as_posix()
@@ -233,16 +304,18 @@ def _render_dictionary(stage: Path, tables: tuple[Path, ...]) -> str:
             path.name,
             "Optional saved diagnostic or bookkeeping table from the authoritative packet.",
         )
+        guidance = _TABLE_GUIDANCE.get(path.name)
         lines.extend(
             (
                 f"## `{relative}`",
                 "",
                 purpose,
                 "",
-                "Columns in saved order:",
-                "",
             )
         )
+        if guidance is not None:
+            lines.extend((f"Row meaning: {guidance}", ""))
+        lines.extend(("Columns in saved order:", ""))
         lines.extend(f"- `{column}`" for column in _table_columns(path))
         lines.append("")
     return "\n".join(lines)
