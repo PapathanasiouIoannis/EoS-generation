@@ -219,7 +219,14 @@ def build_summary_model(
         )
     validation = _validation_model(validation_report)
     if validation is not None and validation["result_status"] == "invalid":
-        warnings.append("scientific completeness validation failed")
+        warnings.append("hard scientific validity failed")
+    elif (
+        validation is not None
+        and validation["scientific_output_availability"] == "partial"
+    ):
+        warnings.append(
+            "scientific results are hard-valid but only partially available"
+        )
 
     packet_schema = _text(metadata.get("schema_id"), PACKET_SCHEMA_ID)
     model: dict[str, Any] = {

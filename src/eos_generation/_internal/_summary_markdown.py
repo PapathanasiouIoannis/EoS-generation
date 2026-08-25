@@ -201,11 +201,26 @@ def render_summary_markdown(model: Mapping[str, Any]) -> str:
                 + "`"
             ),
             (
+                "- Maximum-mass availability status counts: `"
+                + json.dumps(
+                    _mapping_or_empty(
+                        maximum_evidence.get("availability_status_counts")
+                    ),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                + "`"
+            ),
+            (
                 "- Maximum-mass threshold evidence: "
                 f"{maximum_evidence.get('mass_threshold_pass_count', 0)} passed; "
                 f"{maximum_evidence.get('mass_threshold_fail_count', 0)} failed; "
+                f"{maximum_evidence.get('mass_threshold_unavailable_count', 0)} "
+                "unavailable because M_max was unresolved; "
                 f"{maximum_evidence.get('mass_threshold_unrecorded_count', 0)} "
-                "unrecorded"
+                "unrecorded; "
+                f"{maximum_evidence.get('mass_threshold_inconsistent_count', 0)} "
+                "inconsistent"
             ),
             (
                 "- Maximum-mass resolution by stage: `"
@@ -240,13 +255,21 @@ def render_summary_markdown(model: Mapping[str, Any]) -> str:
                 f"**Result is {_text(validation.get('result_status')).upper()}.**",
                 "",
                 (
-                    "Scientific completeness: "
-                    f"`{_text(validation.get('scientific_output_completeness'))}`."
+                    "Hard scientific validity: "
+                    f"`{_text(validation.get('scientific_output_validity'))}`."
+                ),
+                (
+                    "Scientific availability: "
+                    f"`{_text(validation.get('scientific_output_availability'))}`."
                 ),
             ]
         )
         for failure in _sequence_or_empty(validation.get("failures")):
             lines.append(f"- Failure: `{_markdown_escape(failure)}`")
+        for limitation in _sequence_or_empty(validation.get("limitations")):
+            lines.append(
+                f"- Availability limitation: `{_markdown_escape(limitation)}`"
+            )
 
     lines.extend(["", "## Warnings", ""])
     warnings = _sequence_or_empty(model.get("warnings"))

@@ -12,6 +12,7 @@ import hashlib
 import os
 import shutil
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
@@ -36,6 +37,7 @@ _PRIMARY_TABLES = (
 )
 _REQUIRED_TABLES = frozenset(_PRIMARY_TABLES[:2])
 _PASS_STATUSES = frozenset({"pass", "complete", "validated"})
+_PUBLICATION_RETRY_DELAYS_SECONDS = (0.05, 0.1, 0.2, 0.4, 0.8)
 _TABLE_PURPOSES = {
     "case_ledger.csv": "Saved accepted/rejected lifecycle outcome and deformation coordinates for every declared case.",
     "thermodynamic_profiles.csv": "Saved effective one-fluid EoS profile samples for the direct baseline and reconstructed cases.",
@@ -249,6 +251,8 @@ def _render_readme(
         "- Each nonzero-amplitude `case_id` is one distinct deformed EoS within that geometry.",
         "- Read amplitude and geometry values from `case_ledger.csv`; do not try to recover the complete scientific identity from the readable part of the case-ID text. Its final hexadecimal suffix is a deterministic collision-resistant digest of the deformation coordinates.",
         "- A rejected ledger row is a completed scientific outcome. It deliberately has no reconstructed thermodynamic profile or stellar sequence.",
+        "- `student_view_eligibility_status` is the saved case-level selection status. For stellar work, `eligible_all_requested_fixed_masses_succeeded` requires every configured target at the final reporting stage, but it does not require a resolved maximum mass.",
+        "- Read `requested_fixed_masses_status` and `maximum_mass_availability_status` independently. An unavailable maximum mass does not erase valid fixed-mass rows inside the retained EoS domain.",
         "",
         "## Which files to keep together",
         "",
@@ -258,7 +262,7 @@ def _render_readme(
         "",
         "## Minimal analysis workflow",
         "",
-        "1. Open `case_ledger.csv` and select an accepted `case_id`.",
+        "1. Open `case_ledger.csv` and select an accepted `case_id` with the `student_view_eligibility_status` appropriate to your analysis.",
         "2. Open the result table needed for the question and filter its `case_id` column to that exact value.",
         "3. For an EoS curve, plot `epsilon_mev_fm3` on the horizontal axis and a saved quantity such as `pressure_mev_fm3` or `cs2` on the vertical axis.",
         "4. Treat `direct` as the baseline comparison. Do not compare cases by spreadsheet row number alone; use the saved physical coordinate and status columns.",
@@ -330,6 +334,39 @@ def _write_checksums(stage: Path) -> None:
         f"{_sha256(path)}  {path.relative_to(stage).as_posix()}" for path in files
     ]
     manifest.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+
+
+def _publish_staged_directory(stage: Path, target: Path) -> None:
+    """Atomically publish one same-directory stage without overwriting.
+
+    Windows can transiently deny a directory rename while an editor or virus
+    scanner holds a sharing handle.  Only ``PermissionError`` is retried, for
+    one bounded schedule.  Every attempt rechecks the no-overwrite condition;
+    if a target appears during a retry, it wins and publication fails closed.
+    """
+
+    if stage.parent != target.parent:
+        raise ValueError("student view publication stage must share the target parent")
+    for attempt in range(len(_PUBLICATION_RETRY_DELAYS_SECONDS) + 1):
+        if target.exists() or target.is_symlink():
+            raise FileExistsError(
+                f"student view destination already exists: {target}"
+            )
+        try:
+            os.rename(stage, target)
+            return
+        except FileExistsError as exc:
+            raise FileExistsError(
+                f"student view destination already exists: {target}"
+            ) from exc
+        except PermissionError as exc:
+            if target.exists() or target.is_symlink():
+                raise FileExistsError(
+                    f"student view destination already exists: {target}"
+                ) from exc
+            if attempt == len(_PUBLICATION_RETRY_DELAYS_SECONDS):
+                raise
+            time.sleep(_PUBLICATION_RETRY_DELAYS_SECONDS[attempt])
 
 
 def create_student_view(
@@ -450,11 +487,7 @@ def create_student_view(
                 newline="\n",
             )
             _write_checksums(stage)
-            if target.exists() or target.is_symlink():
-                raise FileExistsError(
-                    f"student view destination already exists: {target}"
-                )
-            os.rename(stage, target)
+            _publish_staged_directory(stage, target)
         except Exception:
             if stage.exists():
                 shutil.rmtree(stage)

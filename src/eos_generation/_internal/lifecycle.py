@@ -9,6 +9,7 @@ solvers.
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -93,6 +94,8 @@ def _case_lifecycle_ledger(
     accepted_case_ids: Sequence[str],
     gate_reports: Mapping[str, Mapping[str, Any]],
     completed_stellar_case_ids: set[str],
+    fixed_mass_rows: pd.DataFrame | None = None,
+    maximum_mass_rows: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Build truthful final lifecycle rows for accepted and rejected cases."""
 
@@ -107,14 +110,56 @@ def _case_lifecycle_ledger(
         gate_report = gate_reports[case_id]
         failure = gate_report.get("first_failure")
         gate_status = gate_report.get("status")
-        if accepted and gate_status not in {
-            None,
-            "accepted",
-            "accepted_raw_local_physics_gate",
-            "accepted_exact_baseline_alias",
+        if accepted and gate_status != "accepted_raw_local_physics_gate":
+            raise ValueError(
+                f"accepted case {case_id!r} did not pass the selected-domain raw gate"
+            )
+        retained = gate_report.get("retained_domain")
+        retained = retained if isinstance(retained, Mapping) else {}
+        endpoint_reason = retained.get("endpoint_reason")
+        if accepted and endpoint_reason not in {
+            "direct_bsk24_causal_endpoint",
+            "first_continuous_causal_crossing",
         }:
             raise ValueError(
-                f"accepted case {case_id!r} did not pass the full-domain raw gate"
+                f"accepted case {case_id!r} has no resolved retained endpoint"
+            )
+        retained_epsilon = retained.get("epsilon_max_mev_fm3")
+        retained_pressure = retained.get("pressure_max_mev_fm3")
+        if accepted and (
+            not isinstance(retained_epsilon, (int, float))
+            or isinstance(retained_epsilon, bool)
+            or not math.isfinite(float(retained_epsilon))
+            or not isinstance(retained_pressure, (int, float))
+            or isinstance(retained_pressure, bool)
+            or not math.isfinite(float(retained_pressure))
+        ):
+            raise ValueError(
+                f"accepted case {case_id!r} has an invalid retained endpoint"
+            )
+        complete_raw_causal = gate_report.get(
+            "complete_raw_proposal_causal_through_direct_endpoint"
+        )
+        if gate_status == "accepted_raw_local_physics_gate":
+            if not isinstance(complete_raw_causal, bool):
+                raise ValueError(
+                    f"accepted case {case_id!r} has no complete-domain causal status"
+                )
+            full_domain_status = (
+                "assessed_causal_through_direct_endpoint"
+                if complete_raw_causal
+                else "assessed_noncausal_beyond_first_retained_crossing"
+            )
+            selected_domain_status = "accepted_selected_retained_domain"
+        elif gate_status == "rejected_raw_local_physics_gate":
+            full_domain_status = "assessed_hard_rejected"
+            selected_domain_status = "rejected_no_selected_retained_domain"
+        elif gate_status == "unresolved_raw_local_physics_gate":
+            full_domain_status = "assessed_unresolved"
+            selected_domain_status = "unresolved_no_selected_retained_domain"
+        else:
+            raise ValueError(
+                f"case {case_id!r} has unsupported raw-gate status {gate_status!r}"
             )
         if not accepted:
             stellar_calculation = "skipped_due_to_raw_gate_rejection"
@@ -124,6 +169,30 @@ def _case_lifecycle_ledger(
             stellar_calculation = "completed"
         else:
             stellar_calculation = "incomplete_or_failed"
+        fixed_mass_status = _requested_fixed_masses_status(
+            plan.config,
+            case_id,
+            accepted=accepted,
+            fixed_mass_rows=fixed_mass_rows,
+        )
+        maximum_mass_status = _maximum_mass_availability_status(
+            plan.config,
+            case_id,
+            accepted=accepted,
+            maximum_mass_rows=maximum_mass_rows,
+        )
+        if not accepted:
+            student_view_status = "evidence_only_raw_gate_not_accepted"
+        elif not plan.config.background_tov_requested:
+            student_view_status = "eligible_thermodynamic_case"
+        elif fixed_mass_status == "all_requested_fixed_masses_succeeded":
+            student_view_status = (
+                "eligible_all_requested_fixed_masses_succeeded"
+            )
+        else:
+            student_view_status = (
+                "ineligible_requested_fixed_masses_incomplete"
+            )
         record = {
                 "case_id": case_id,
                 "amplitude": row.amplitude,
@@ -144,12 +213,33 @@ def _case_lifecycle_ledger(
                 "delta_mev_fm3": row.delta_mev_fm3,
                 "status": "accepted" if accepted else "rejected",
                 "acceptance_domain": (
-                    "full_retained_domain" if accepted else "none"
+                    (
+                        "through_first_continuous_causal_crossing"
+                        if endpoint_reason
+                        == "first_continuous_causal_crossing"
+                        else "full_retained_domain"
+                    )
+                    if accepted
+                    else "none"
                 ),
-                "full_domain_gate_status": gate_report.get("status"),
-                "selected_domain_status": gate_report.get(
-                    "screening_status", gate_report.get("status")
+                "raw_gate_status": gate_status,
+                "full_domain_gate_status": full_domain_status,
+                "selected_domain_status": selected_domain_status,
+                "complete_raw_proposal_causal_through_direct_endpoint": (
+                    complete_raw_causal
                 ),
+                "retained_epsilon_max_mev_fm3": (
+                    float(retained_epsilon) if accepted else None
+                ),
+                "retained_pressure_max_mev_fm3": (
+                    float(retained_pressure) if accepted else None
+                ),
+                "retained_endpoint_reason": (
+                    str(endpoint_reason) if accepted else None
+                ),
+                "requested_fixed_masses_status": fixed_mass_status,
+                "maximum_mass_availability_status": maximum_mass_status,
+                "student_view_eligibility_status": student_view_status,
                 "rejection_reason": (
                     None
                     if accepted
@@ -165,6 +255,96 @@ def _case_lifecycle_ledger(
             }
         rows.append(record)
     return pd.DataFrame(rows)
+
+
+def _final_stage_rows(
+    frame: pd.DataFrame | None,
+    *,
+    case_id: str,
+    stage: str,
+) -> pd.DataFrame:
+    if (
+        frame is None
+        or frame.empty
+        or not {"case_id", "stage"}.issubset(frame.columns)
+    ):
+        return pd.DataFrame()
+    return frame.loc[
+        frame["case_id"].astype(str).eq(case_id)
+        & frame["stage"].astype(str).eq(stage)
+    ]
+
+
+def _requested_fixed_masses_status(
+    config: BSk24TrialConfig,
+    case_id: str,
+    *,
+    accepted: bool,
+    fixed_mass_rows: pd.DataFrame | None,
+) -> str:
+    if not accepted:
+        return "not_applicable_raw_gate_not_accepted"
+    if not config.fixed_mass_background_requested:
+        return "not_requested"
+    if not config.tov_stages:
+        return "unavailable_no_reporting_stage"
+    rows = _final_stage_rows(
+        fixed_mass_rows,
+        case_id=case_id,
+        stage=config.tov_stages[-1].name,
+    )
+    required = {"target_mass_msun", "status"}
+    if rows.empty or not required.issubset(rows.columns):
+        return "unavailable_missing_assessment"
+    observed_targets = [float(value) for value in rows["target_mass_msun"]]
+    expected_targets = [float(value) for value in config.fixed_masses_msun]
+    targets_match = bool(
+        len(observed_targets) == len(expected_targets)
+        and all(
+            math.isclose(observed, expected, rel_tol=0.0, abs_tol=1.0e-12)
+            for observed, expected in zip(
+                sorted(observed_targets), sorted(expected_targets), strict=True
+            )
+        )
+    )
+    succeeded = int(
+        rows["status"].astype(str).eq("bracketed_and_solved").sum()
+    )
+    if targets_match and succeeded == len(expected_targets):
+        return "all_requested_fixed_masses_succeeded"
+    if succeeded:
+        return "partial_requested_fixed_masses_succeeded"
+    return "requested_fixed_masses_unavailable"
+
+
+def _maximum_mass_availability_status(
+    config: BSk24TrialConfig,
+    case_id: str,
+    *,
+    accepted: bool,
+    maximum_mass_rows: pd.DataFrame | None,
+) -> str:
+    if not accepted:
+        return "not_applicable_raw_gate_not_accepted"
+    if not config.background_tov_requested:
+        return "not_requested"
+    if not config.tov_stages:
+        return "unavailable_no_reporting_stage"
+    rows = _final_stage_rows(
+        maximum_mass_rows,
+        case_id=case_id,
+        stage=config.tov_stages[-1].name,
+    )
+    if len(rows) != 1 or "maximum_mass_availability_status" not in rows:
+        return "unavailable_missing_assessment"
+    value = str(rows.iloc[0]["maximum_mass_availability_status"])
+    if value == "resolved_bracketed_and_refined" or value.startswith(
+        "unavailable_"
+    ):
+        return value
+    raise ValueError(
+        f"case {case_id!r} has an invalid maximum-mass availability status"
+    )
 
 
 def _write_case_lifecycle(

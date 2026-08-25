@@ -6,8 +6,9 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import call, patch
 
+from eos_generation._internal import student_view as student_view_module
 from eos_generation._internal.student_view import create_student_view
 
 
@@ -258,6 +259,155 @@ class StudentViewTests(unittest.TestCase):
                     repository_root=root,
                     destination=destination,
                 )
+
+    def test_transient_permission_error_retries_same_volume_publication(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            experiment, report = _make_experiment(root)
+            destination = experiment.parent / "STUDENT_VIEW"
+            original_rename = student_view_module.os.rename
+            attempts: list[tuple[Path, Path]] = []
+
+            def transient_rename(stage: Path, target: Path) -> None:
+                source = Path(stage)
+                published = Path(target)
+                attempts.append((source, published))
+                self.assertEqual(source.parent, published.parent)
+                if len(attempts) == 1:
+                    raise PermissionError(
+                        13, "synthetic transient Windows sharing violation"
+                    )
+                original_rename(source, published)
+
+            with (
+                patch.object(
+                    student_view_module.os,
+                    "rename",
+                    side_effect=transient_rename,
+                ) as rename,
+                patch.object(student_view_module.time, "sleep") as sleep,
+            ):
+                view = create_student_view(
+                    experiment,
+                    validation_report=report,
+                    repository_root=root,
+                    destination=destination,
+                )
+
+            self.assertEqual(destination.resolve(strict=False), view.path)
+            self.assertTrue(destination.is_dir())
+            self.assertEqual(2, rename.call_count)
+            sleep.assert_called_once_with(
+                student_view_module._PUBLICATION_RETRY_DELAYS_SECONDS[0]
+            )
+            self.assertFalse(
+                any(destination.parent.glob(f".{destination.name}.*.tmp"))
+            )
+
+    def test_target_created_during_retry_is_not_overwritten(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            experiment, report = _make_experiment(root)
+            destination = experiment.parent / "STUDENT_VIEW"
+
+            def racing_rename(_stage: Path, target: Path) -> None:
+                published = Path(target)
+                published.mkdir()
+                (published / "owner.txt").write_text(
+                    "unrelated destination\n", encoding="utf-8"
+                )
+                raise PermissionError(
+                    13, "synthetic Windows destination race"
+                )
+
+            with (
+                patch.object(
+                    student_view_module.os,
+                    "rename",
+                    side_effect=racing_rename,
+                ) as rename,
+                patch.object(student_view_module.time, "sleep") as sleep,
+                self.assertRaisesRegex(FileExistsError, "already exists"),
+            ):
+                create_student_view(
+                    experiment,
+                    validation_report=report,
+                    repository_root=root,
+                    destination=destination,
+                )
+
+            self.assertEqual(1, rename.call_count)
+            sleep.assert_not_called()
+            self.assertEqual(
+                "unrelated destination\n",
+                (destination / "owner.txt").read_text(encoding="utf-8"),
+            )
+            self.assertFalse(
+                any(destination.parent.glob(f".{destination.name}.*.tmp"))
+            )
+
+    def test_persistent_permission_error_is_bounded_and_cleans_stage(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            experiment, report = _make_experiment(root)
+            destination = experiment.parent / "STUDENT_VIEW"
+
+            def denied_rename(_stage: Path, _target: Path) -> None:
+                raise PermissionError(
+                    13, "synthetic persistent Windows sharing violation"
+                )
+
+            with (
+                patch.object(
+                    student_view_module.os,
+                    "rename",
+                    side_effect=denied_rename,
+                ) as rename,
+                patch.object(student_view_module.time, "sleep") as sleep,
+                self.assertRaisesRegex(PermissionError, "persistent Windows"),
+            ):
+                create_student_view(
+                    experiment,
+                    validation_report=report,
+                    repository_root=root,
+                    destination=destination,
+                )
+
+            delays = student_view_module._PUBLICATION_RETRY_DELAYS_SECONDS
+            self.assertEqual(len(delays) + 1, rename.call_count)
+            self.assertEqual([call(delay) for delay in delays], sleep.call_args_list)
+            self.assertFalse(destination.exists())
+            self.assertFalse(
+                any(destination.parent.glob(f".{destination.name}.*.tmp"))
+            )
+
+    def test_non_permission_rename_error_is_not_retried(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            experiment, report = _make_experiment(root)
+            destination = experiment.parent / "STUDENT_VIEW"
+            with (
+                patch.object(
+                    student_view_module.os,
+                    "rename",
+                    side_effect=OSError("synthetic non-permission failure"),
+                ) as rename,
+                patch.object(student_view_module.time, "sleep") as sleep,
+                self.assertRaisesRegex(OSError, "non-permission"),
+            ):
+                create_student_view(
+                    experiment,
+                    validation_report=report,
+                    repository_root=root,
+                    destination=destination,
+                )
+
+            self.assertEqual(1, rename.call_count)
+            sleep.assert_not_called()
+            self.assertFalse(destination.exists())
+            self.assertFalse(
+                any(destination.parent.glob(f".{destination.name}.*.tmp"))
+            )
 
     def test_checksums_and_file_order_are_deterministic(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

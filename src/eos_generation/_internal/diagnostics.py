@@ -38,7 +38,8 @@ def _diagnostic_case_ids(
     """Select deterministic post-gate cases for extended radial diagnostics.
 
     ``generated`` is the trial's reconstructed mapping, so a proposal that
-    failed the complete retained-domain raw gate cannot enter either policy.
+    failed the selected retained-prefix gate or its resolution certificate
+    cannot enter either policy.
     The default preserves the established endpoint-only selection. The opt-in
     policy extends each signed branch from its strongest accepted case toward
     zero without changing acceptance, reconstruction, or stellar solving.

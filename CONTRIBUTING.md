@@ -56,7 +56,7 @@ command from outside the checkout:
 ```powershell
 python -m pip install build
 python -m build --wheel
-python -m pip install --force-reinstall dist/eos_generation-1.0.0-py3-none-any.whl
+python -m pip install --force-reinstall dist/eos_generation-1.1.0-py3-none-any.whl
 bsk24-trial --help
 ```
 

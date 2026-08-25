@@ -69,11 +69,59 @@ from eos_generation.bsk24.baseline import (
 from eos_generation.bsk24.deformation import (
     PURE_GAUSSIAN_GENERATOR_ID,
     WINDOWED_GAUSSIAN_GENERATOR_ID,
+    BSk24MechanicalStabilityError,
     BSk24WindowedEos,
 )
 
 
 TRIAL_PACKET_SCHEMA = PACKET_SCHEMA_ID
+RAW_GATE_SCHEMA = "eos_generation_raw_gate_v2"
+
+
+def _maximum_mass_availability_summary(
+    frame: pd.DataFrame | None,
+) -> dict[str, Any]:
+    if frame is None:
+        return {
+            "status": "not_requested",
+            "assessment_count": 0,
+            "resolved_count": 0,
+            "unavailable_count": 0,
+            "statuses": {},
+        }
+    if frame.empty or "maximum_mass_availability_status" not in frame.columns:
+        return {
+            "status": "unavailable",
+            "assessment_count": int(len(frame)),
+            "resolved_count": 0,
+            "unavailable_count": int(len(frame)),
+            "statuses": {},
+        }
+    statuses = frame["maximum_mass_availability_status"].astype(str)
+    invalid = statuses.loc[
+        ~statuses.eq("resolved_bracketed_and_refined")
+        & ~statuses.str.startswith("unavailable_")
+    ]
+    if not invalid.empty:
+        raise ValueError(
+            "maximum-mass table contains an invalid availability status"
+        )
+    counts = {str(key): int(value) for key, value in statuses.value_counts().items()}
+    resolved = int(statuses.eq("resolved_bracketed_and_refined").sum())
+    unavailable = int(len(statuses) - resolved)
+    return {
+        "status": (
+            "complete"
+            if unavailable == 0
+            else "partial"
+            if resolved
+            else "unavailable"
+        ),
+        "assessment_count": int(len(statuses)),
+        "resolved_count": resolved,
+        "unavailable_count": unavailable,
+        "statuses": dict(sorted(counts.items())),
+    }
 
 
 @dataclass(frozen=True)
@@ -179,6 +227,8 @@ def run_bsk24_trial(
     raw_frames: list[pd.DataFrame] = []
     accepted_ids: list[str] = []
     rejected_ids: list[str] = []
+    unresolved_ids: list[str] = []
+    hard_rejected_ids: list[str] = []
     for case_id, deformation in deformations.items():
         gate_kwargs: dict[str, Any] = {
             "dense_lower_points": config.raw_gate_lower_points,
@@ -200,73 +250,146 @@ def run_bsk24_trial(
                 status=str(report["status"]),
             )
         )
-        if report["status"] == "accepted_raw_local_physics_gate":
+        gate_status = str(report.get("status", ""))
+        if gate_status == "accepted_raw_local_physics_gate":
             accepted_ids.append(case_id)
-        else:
+        elif gate_status == "unresolved_raw_local_physics_gate":
+            unresolved_ids.append(case_id)
             rejected_ids.append(case_id)
+        elif gate_status == "rejected_raw_local_physics_gate":
+            hard_rejected_ids.append(case_id)
+            rejected_ids.append(case_id)
+        else:
+            raise ValueError(
+                f"raw gate returned an unsupported status for {case_id!r}: "
+                f"{gate_status!r}"
+            )
+    raw_gate_payload = {
+        "schema_id": RAW_GATE_SCHEMA,
+        "executed_before_reconstruction_and_TOV": True,
+        "complete_raw_proposal_assessment_authoritative": True,
+        "selected_retained_domain_authoritative": True,
+        "selected_domain_policy": (
+            "prefix_through_first_continuous_cs2_equals_one"
+        ),
+        "cases": gate_reports,
+        "accepted_case_ids": accepted_ids,
+        "rejected_case_ids": rejected_ids,
+        "hard_rejected_case_ids": hard_rejected_ids,
+        "unresolved_case_ids": unresolved_ids,
+    }
     write_json_atomic(
-        {
-            "schema_id": "eos_generation_raw_gate_v1",
-            "executed_before_reconstruction_and_TOV": True,
-            "cases": gate_reports,
-            "accepted_case_ids": accepted_ids,
-            "rejected_case_ids": rejected_ids,
-        },
+        raw_gate_payload,
         packet / "raw_gate_report.json",
     )
-    write_csv_atomic(
-        (
-            pd.concat(raw_frames, ignore_index=True)
-            if raw_frames
-            else pd.DataFrame(
-                columns=(
-                    "case_id",
-                    "amplitude",
-                    "epsilon0_mev_fm3",
-                    "sigma_mev_fm3",
-                    "delta_mev_fm3",
-                    "epsilon_mev_fm3",
-                    "window",
-                    "gaussian",
-                    "delta_cs2",
-                    "raw_cs2",
-                    "gate_status",
-                )
+    raw_profile_frame = (
+        pd.concat(raw_frames, ignore_index=True)
+        if raw_frames
+        else pd.DataFrame(
+            columns=(
+                "case_id",
+                "amplitude",
+                "epsilon0_mev_fm3",
+                "sigma_mev_fm3",
+                "delta_mev_fm3",
+                "epsilon_mev_fm3",
+                "window",
+                "gaussian",
+                "delta_cs2",
+                "direct_pressure_mev_fm3",
+                "delta_pressure_mev_fm3",
+                "raw_pressure_mev_fm3",
+                "raw_cs2",
+                "gate_status",
             )
-        ),
-        packet / "raw_gate_profiles.csv",
+        )
     )
+    write_csv_atomic(raw_profile_frame, packet / "raw_gate_profiles.csv")
     finish_phase("raw_local_physics_gate")
-
-    full_domain_accepted_ids = list(accepted_ids)
-    full_domain_rejected_ids = list(rejected_ids)
 
     stage_cases: dict[str, dict[str, BSk24WindowedEos]] = {
         stage_name: {} for stage_name in stages
     }
-    for stage_name, stage_baseline in stages.items():
-        for case_id in accepted_ids:
-            stage_cases[stage_name][case_id] = callbacks.build_windowed_eos(
-                stage_baseline,
-                deformations[case_id],
-                raw_gate_report=gate_reports[case_id],
+    tabulation_unresolved = False
+    for case_id in tuple(accepted_ids):
+        built: dict[str, BSk24WindowedEos] = {}
+        try:
+            for stage_name, stage_baseline in stages.items():
+                built[stage_name] = callbacks.build_windowed_eos(
+                    stage_baseline,
+                    deformations[case_id],
+                    raw_gate_report=gate_reports[case_id],
+                )
+        except BSk24MechanicalStabilityError as exc:
+            diagnostics = dict(exc.diagnostics)
+            if diagnostics.get("status") != "unresolved_tabulation_resolution":
+                raise
+            report = dict(gate_reports[case_id])
+            retained = dict(report.get("retained_domain", {}))
+            retained["passed"] = False
+            retained["resolution_certified"] = False
+            report.update(
+                {
+                    "status": "unresolved_raw_local_physics_gate",
+                    "selected_retained_domain_passed": False,
+                    "retained_domain": retained,
+                    "pre_reconstruction_tabulation_resolution": diagnostics,
+                    "first_failure": {
+                        "reason": "unresolved_tabulation_resolution",
+                        "detail": diagnostics,
+                        "first_failing_epsilon_mev_fm3": None,
+                        "first_failing_cs2": None,
+                    },
+                }
             )
-    # The complete raw proposal is the authoritative acceptance domain.  No
-    # rejected case is reconstructed or sent to a stellar solver.
-    write_json_atomic(
-        {
-            "schema_id": "eos_generation_raw_gate_v1",
-            "executed_before_reconstruction_and_TOV": True,
-            "full_domain_gate_authoritative": True,
-            "selected_domain_policy": "full_retained_domain_only",
-            "cases": gate_reports,
-            "full_domain_accepted_case_ids": full_domain_accepted_ids,
-            "full_domain_rejected_case_ids": full_domain_rejected_ids,
-            "accepted_case_ids": accepted_ids,
-            "rejected_case_ids": rejected_ids,
-        },
-        packet / "raw_gate_report.json",
-    )
+            gate_reports[case_id] = report
+            tabulation_unresolved = True
+            continue
+        for stage_name, eos in built.items():
+            stage_cases[stage_name][case_id] = eos
+    if tabulation_unresolved:
+        accepted_ids = [
+            case_id
+            for case_id in deformations
+            if gate_reports[case_id]["status"]
+            == "accepted_raw_local_physics_gate"
+        ]
+        hard_rejected_ids = [
+            case_id
+            for case_id in deformations
+            if gate_reports[case_id]["status"]
+            == "rejected_raw_local_physics_gate"
+        ]
+        unresolved_ids = [
+            case_id
+            for case_id in deformations
+            if gate_reports[case_id]["status"]
+            == "unresolved_raw_local_physics_gate"
+        ]
+        rejected_ids = [
+            case_id for case_id in deformations if case_id not in accepted_ids
+        ]
+        raw_gate_payload.update(
+            {
+                "cases": gate_reports,
+                "accepted_case_ids": accepted_ids,
+                "rejected_case_ids": rejected_ids,
+                "hard_rejected_case_ids": hard_rejected_ids,
+                "unresolved_case_ids": unresolved_ids,
+            }
+        )
+        if not raw_profile_frame.empty:
+            for case_id in unresolved_ids:
+                raw_profile_frame.loc[
+                    raw_profile_frame["case_id"].astype(str).eq(case_id),
+                    "gate_status",
+                ] = "unresolved_raw_local_physics_gate"
+        write_json_atomic(raw_gate_payload, packet / "raw_gate_report.json")
+        write_csv_atomic(raw_profile_frame, packet / "raw_gate_profiles.csv")
+    # The complete raw proposal remains saved evidence, while only the
+    # certified prefix through the first continuous causal crossing is
+    # reconstructed.  Rejected and unresolved proposals receive no downstream
+    # work.
     generated = stage_cases[reference_stage]
     declared_gate_reports = gate_reports
     lifecycle_accepted_ids = list(accepted_ids)
@@ -297,6 +420,10 @@ def run_bsk24_trial(
             for case_id in accepted_ids
         ]
     )
+    if not len(characterization.columns):
+        characterization = pd.DataFrame(
+            columns=("case_id", "amplitude", "delta_mev_fm3")
+        )
     write_csv_atomic(
         characterization, packet / "window_characterization.csv"
     )
@@ -337,7 +464,7 @@ def run_bsk24_trial(
         )
         write_json_atomic(
             {
-                "schema_id": "bsk24_maximum_mass_reports_v1",
+                "schema_id": "bsk24_maximum_mass_reports_v2",
                 "cases": dict(maximum_reports),
             },
             packet / "maximum_mass_reports.json",
@@ -383,6 +510,8 @@ def run_bsk24_trial(
         accepted_case_ids=lifecycle_accepted_ids,
         gate_reports=declared_gate_reports,
         completed_stellar_case_ids=completed_stellar_ids,
+        fixed_mass_rows=fixed,
+        maximum_mass_rows=maximum_mass_frame,
     )
     _write_case_lifecycle(packet, lifecycle)
 
@@ -471,6 +600,9 @@ def run_bsk24_trial(
         },
         packet / "plot_inventory.json",
     )
+    maximum_mass_availability = _maximum_mass_availability_summary(
+        maximum_mass_frame
+    )
     metadata = {
         "schema_id": TRIAL_PACKET_SCHEMA,
         "packet_status": "calculations_complete_plots_pending",
@@ -498,6 +630,8 @@ def run_bsk24_trial(
         "rejected_case_count": len(rejected_ids),
         "accepted_case_ids": accepted_ids,
         "rejected_case_ids": rejected_ids,
+        "unresolved_case_count": len(unresolved_ids),
+        "unresolved_case_ids": unresolved_ids,
         "identity_status": identity_report["status"],
         "numerical_convergence_status": {
             "thermodynamic": thermo_convergence["status"],
@@ -518,6 +652,7 @@ def run_bsk24_trial(
             if maximum_mass_frame is not None
             else "not_assessed_sampled_peaks_only"
         ),
+        "maximum_mass_availability": maximum_mass_availability,
         "composition_policy": {
             "microscopic_composition": "unavailable",
             "species_chemical_potentials": "unavailable",
@@ -640,6 +775,7 @@ def run_bsk24_trial(
         validation["internal_packet_integrity"]["status"] != "pass"
         or validation["current_source_equivalence"]["status"]
         != "equivalent"
+        or validation["scientific_output_validity"]["status"] != "pass"
     ):
         raise RuntimeError(
             f"trial packet validation failed: {validation}"
@@ -647,4 +783,9 @@ def run_bsk24_trial(
     return callbacks.load_trial(packet)
 
 
-__all__ = ["RunCallbacks", "TRIAL_PACKET_SCHEMA", "run_bsk24_trial"]
+__all__ = [
+    "RAW_GATE_SCHEMA",
+    "RunCallbacks",
+    "TRIAL_PACKET_SCHEMA",
+    "run_bsk24_trial",
+]

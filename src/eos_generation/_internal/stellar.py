@@ -69,6 +69,18 @@ def _pressure_max(eos: Any) -> float:
     return float(eos.pressure_max_causal_mev_fm3)
 
 
+def _declared_pressure_max(eos: Any) -> float | None:
+    """Return an explicit retained endpoint when the EoS exposes one."""
+
+    for name in ("pressure_max_mev_fm3", "pressure_max_causal_mev_fm3"):
+        if hasattr(eos, name):
+            value = float(getattr(eos, name))
+            if not math.isfinite(value) or value <= 0.0:
+                raise ValueError("retained EoS pressure endpoint is invalid")
+            return value
+    return None
+
+
 def _fixed_mass_result(
     eos: Any,
     evidence: TovSequenceEvidence,
@@ -82,6 +94,21 @@ def _fixed_mass_result(
             "status": "unavailable_not_bracketed",
             "target_mass_msun": target_mass,
             "reason": "stable sequence has fewer than two successful configurations",
+            "tidal_status": None,
+            "tidal_failure_reason": None,
+        }, None
+    endpoint = _declared_pressure_max(eos)
+    if endpoint is not None and (
+        not np.all(np.isfinite(stable[:, 3]))
+        or np.any(stable[:, 3] > endpoint)
+    ):
+        return {
+            "status": "unavailable_outside_retained_eos_domain",
+            "target_mass_msun": target_mass,
+            "reason": (
+                "stable-sequence fixed-mass evidence exceeds the retained "
+                "EoS pressure endpoint"
+            ),
             "tidal_status": None,
             "tidal_failure_reason": None,
         }, None
@@ -99,6 +126,14 @@ def _fixed_mass_result(
         }, None
     index = int(crossings[0])
     lower, upper = float(stable[index, 3]), float(stable[index + 1, 3])
+    if endpoint is not None and (lower > endpoint or upper > endpoint):
+        return {
+            "status": "unavailable_outside_retained_eos_domain",
+            "target_mass_msun": target_mass,
+            "reason": "fixed-mass bracket exceeds the retained EoS pressure endpoint",
+            "tidal_status": None,
+            "tidal_failure_reason": None,
+        }, None
     settings = _tov_settings(eos, config, stage)
     # The successful stable-prefix sequence already contains the exact
     # bracket-endpoint masses from this EoS, stage and tolerance pair.  Reuse
@@ -141,6 +176,14 @@ def _fixed_mass_result(
         xtol=config.fixed_mass_root_xtol_mev_fm3,
         rtol=4.0 * np.finfo(float).eps,
     )
+    if endpoint is not None and float(root) > endpoint:
+        return {
+            "status": "unavailable_outside_retained_eos_domain",
+            "target_mass_msun": target_mass,
+            "reason": "fixed-mass root exceeds the retained EoS pressure endpoint",
+            "tidal_status": None,
+            "tidal_failure_reason": None,
+        }, None
     star = solve_star(
         eos,
         float(root),
@@ -523,9 +566,10 @@ def _run_case_job(
     stages: dict[str, dict[str, Any]] = {}
     for stage in config.tov_stages:
         settings = _tov_settings(eos, config, stage)
+        retained_endpoint = _pressure_max(eos)
         evidence = solve_sequence(
             eos,
-            p_max_causal=_pressure_max(eos),
+            p_max_causal=retained_endpoint,
             rtol=stage.rtol,
             atol=stage.atol,
             settings=settings,
@@ -536,6 +580,22 @@ def _run_case_job(
             raise TypeError(
                 "shared solve_sequence did not return TovSequenceEvidence"
             )
+        attempted_pressures = np.asarray(
+            evidence.attempted_central_pressures, dtype=float
+        )
+        successful_pressures = np.asarray(
+            evidence.successful_central_pressures, dtype=float
+        )
+        if (
+            np.any(~np.isfinite(attempted_pressures))
+            or np.any(~np.isfinite(successful_pressures))
+            or np.any(attempted_pressures > retained_endpoint)
+            or np.any(successful_pressures > retained_endpoint)
+        ):
+            raise ValueError(
+                "stellar sequence contains a central pressure outside the "
+                "retained EoS domain"
+            )
         maximum = refine_maximum_mass_from_sequence(
             eos,
             evidence,
@@ -545,11 +605,23 @@ def _run_case_job(
             atol=stage.atol,
             settings=settings,
         )
+        if (
+            maximum.central_pressure_mev_fm3 is not None
+            and float(maximum.central_pressure_mev_fm3) > retained_endpoint
+        ):
+            raise ValueError(
+                "maximum-mass refinement exceeded the retained EoS endpoint"
+            )
         maximum_row = {
             "case_id": case_id,
             "stage": stage.name,
             "status": maximum.status,
             "maximum_mass_resolved": maximum.maximum_mass_resolved,
+            "maximum_mass_availability_status": (
+                "resolved_bracketed_and_refined"
+                if maximum.maximum_mass_resolved
+                else f"unavailable_{maximum.status}"
+            ),
             "maximum_mass_msun": maximum.maximum_mass_msun,
             "maximum_mass_threshold_msun": (
                 maximum.maximum_mass_threshold_msun

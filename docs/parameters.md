@@ -69,9 +69,15 @@ ramp_width > 0.
 The schema also restricts a numeric `epsilon_match` to the retained
 homogeneous-core interval. The Gaussian center is not required to lie above
 the activation anchor: the smootherstep window still makes the deformation
-exactly zero below that anchor. Likewise, `ramp_width` controls the window rise
-and is not geometrically bounded by `center - epsilon_match`. These checks and
-the fully expanded geometry occur before scientific execution.
+exactly zero below that anchor. A requested center and width are retained when
+the Gaussian's nominal four-standard-deviation support has a nonempty open
+intersection with the deformable domain above the anchor and below the direct
+BSk24 endpoint. This allows a below-anchor center whose tail meaningfully
+overlaps the domain and rejects, during passive planning, a geometry with no
+meaningful in-domain support. A point contact is not an overlap. Likewise,
+`ramp_width` controls the window rise and is not geometrically bounded by
+`center - epsilon_match`. These checks and the fully expanded geometry occur
+before scientific execution.
 
 ## Calculation choices
 
@@ -81,7 +87,10 @@ performs effective cold reconstruction. It does not run a stellar solver.
 `stellar` includes the governed background sequence, fixed-mass observables,
 and tidal calculation for accepted cases. It is substantially more expensive.
 Requested fixed masses are reported only when they are truly bracketed on the
-successful stable branch.
+successful stable branch and their central pressures lie inside the retained
+case-specific EoS domain. Maximum-mass availability is independent: an
+endpoint-limited case can retain solved requested fixed masses while its
+turning point remains unavailable.
 
 The passive plan reports the declared sequence, fixed-mass, and initial local
 maximum-mass screening targets. Any later turning-point refinement is adaptive,

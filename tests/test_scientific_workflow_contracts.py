@@ -11,6 +11,7 @@ from unittest.mock import Mock, patch
 import numpy as np
 import pandas as pd
 
+from eos_generation._internal import lifecycle as internal_lifecycle
 from eos_generation._internal import stellar as internal_stellar
 from eos_generation._internal import summary as internal_summary
 from eos_generation._internal.execution import RunCallbacks, run_bsk24_trial
@@ -26,6 +27,7 @@ from eos_generation.stellar.tov import (
     _sampled_mass_secants,
     refine_maximum_mass_from_sequence,
     resolve_maximum_mass,
+    solve_sequence,
 )
 
 
@@ -180,6 +182,58 @@ class StellarDecisionContracts(unittest.TestCase):
         self.assertIsNone(missing_star)
         forbidden_solver.assert_not_called()
 
+    def test_fixed_mass_rejects_a_bracket_beyond_the_retained_endpoint(self) -> None:
+        evidence = SimpleNamespace(
+            stable_sequence=(
+                (1.2, 12.0, 400.0, 10.0, 110.0, 0.5, 0.0),
+                (1.6, 11.8, 300.0, 20.0, 120.0, 0.5, 0.0),
+            )
+        )
+        config = BSk24TrialConfig(amplitudes=(0.0,))
+        stage = BSk24TOVStage("synthetic", 5, 1.0e-8, 1.0e-10, 3)
+        eos = SimpleNamespace(
+            pressure_min_mev_fm3=1.0e-9,
+            pressure_max_mev_fm3=15.0,
+        )
+        with patch.object(internal_stellar, "solve_star") as forbidden_solver:
+            unavailable, star = internal_stellar._fixed_mass_result(
+                eos,
+                evidence,
+                1.4,
+                config,
+                stage,
+            )
+        self.assertEqual(
+            "unavailable_outside_retained_eos_domain",
+            unavailable["status"],
+        )
+        self.assertIn("retained EoS pressure endpoint", unavailable["reason"])
+        self.assertIsNone(star)
+        forbidden_solver.assert_not_called()
+
+    def test_sequence_endpoint_below_pressure_floor_never_calls_solver(self) -> None:
+        config = BSk24TrialConfig(amplitudes=(0.0,))
+        stage = BSk24TOVStage("synthetic", 5, 1.0e-8, 1.0e-10, 3)
+        eos = SimpleNamespace(pressure_min_mev_fm3=1.0e-9)
+        settings = internal_stellar._tov_settings(eos, config, stage)
+        with patch(
+            "eos_generation.stellar._tov_sequence.solve_star",
+            side_effect=AssertionError("solver must not run"),
+        ) as forbidden_solver:
+            evidence = solve_sequence(
+                object(),
+                p_max_causal=1.0,
+                settings=settings,
+                return_sequence_evidence=True,
+            )
+        self.assertEqual((), evidence.full_sequence)
+        self.assertEqual((1.0,), evidence.attempted_central_pressures)
+        self.assertEqual(
+            "eos_endpoint_below_sequence_floor",
+            evidence.failed_central_pressures[0].category,
+        )
+        forbidden_solver.assert_not_called()
+
     def test_turning_point_is_refined_but_sampled_endpoint_peak_is_not_mmax(
         self,
     ) -> None:
@@ -249,9 +303,144 @@ class StellarDecisionContracts(unittest.TestCase):
             unresolved.status,
         )
         self.assertIsNone(unresolved.maximum_mass_msun)
+        self.assertIsNone(unresolved.passes_maximum_mass_threshold)
+        self.assertIsNone(
+            unresolved.to_dict()["passes_maximum_mass_threshold"]
+        )
         self.assertEqual(1.8, max(row[1] for row in unresolved.sampled_models))
         self.assertFalse(unresolved.to_dict()["sampled_argmax_is_maximum_mass"])
         forbidden_solver.assert_not_called()
+
+
+class LifecycleAvailabilityContracts(unittest.TestCase):
+    def test_fixed_mass_success_remains_student_eligible_when_mmax_unavailable(
+        self,
+    ) -> None:
+        stage = BSk24TOVStage("reporting", 5, 1.0e-8, 1.0e-10, 3)
+        config = BSk24TrialConfig(
+            amplitudes=(0.0, 0.2),
+            fixed_masses_msun=(1.4,),
+            tov_stages=(stage,),
+            stellar_enabled=True,
+        )
+        case_table = pd.DataFrame(
+            (
+                {
+                    "case_id": "early-causal",
+                    "amplitude": 0.2,
+                    "epsilon0_mev_fm3": 200.0,
+                    "sigma_mev_fm3": 50.0,
+                    "delta_mev_fm3": 40.0,
+                },
+                {
+                    "case_id": "unresolved-case",
+                    "amplitude": -1.0,
+                    "epsilon0_mev_fm3": 200.0,
+                    "sigma_mev_fm3": 50.0,
+                    "delta_mev_fm3": 40.0,
+                },
+            )
+        )
+        plan = SimpleNamespace(config=config, case_table=case_table)
+        gate_reports = {
+            "early-causal": {
+                "status": "accepted_raw_local_physics_gate",
+                "complete_raw_proposal_causal_through_direct_endpoint": False,
+                "retained_domain": {
+                    "endpoint_reason": "first_continuous_causal_crossing",
+                    "epsilon_max_mev_fm3": 600.0,
+                    "pressure_max_mev_fm3": 250.0,
+                },
+                "first_failure": None,
+            },
+            "unresolved-case": {
+                "status": "unresolved_raw_local_physics_gate",
+                "complete_raw_proposal_causal_through_direct_endpoint": False,
+                "retained_domain": {
+                    "endpoint_reason": (
+                        "unavailable_unresolved_continuous_assessment"
+                    ),
+                    "epsilon_max_mev_fm3": None,
+                    "pressure_max_mev_fm3": None,
+                },
+                "first_failure": {"reason": "synthetic_unresolved"},
+            },
+        }
+        fixed = pd.DataFrame(
+            (
+                {
+                    "case_id": "early-causal",
+                    "stage": stage.name,
+                    "target_mass_msun": 1.4,
+                    "status": "bracketed_and_solved",
+                },
+            )
+        )
+        maximum = pd.DataFrame(
+            (
+                {
+                    "case_id": "early-causal",
+                    "stage": stage.name,
+                    "maximum_mass_availability_status": (
+                        "unavailable_unresolved_no_turning_point_before_eos_endpoint"
+                    ),
+                },
+            )
+        )
+
+        ledger = internal_lifecycle._case_lifecycle_ledger(
+            plan,
+            accepted_case_ids=("early-causal",),
+            gate_reports=gate_reports,
+            completed_stellar_case_ids={"early-causal"},
+            fixed_mass_rows=fixed,
+            maximum_mass_rows=maximum,
+        ).set_index("case_id")
+
+        accepted = ledger.loc["early-causal"]
+        self.assertEqual(
+            "through_first_continuous_causal_crossing",
+            accepted["acceptance_domain"],
+        )
+        self.assertEqual(
+            "assessed_noncausal_beyond_first_retained_crossing",
+            accepted["full_domain_gate_status"],
+        )
+        self.assertEqual(
+            "accepted_selected_retained_domain",
+            accepted["selected_domain_status"],
+        )
+        self.assertEqual(
+            "all_requested_fixed_masses_succeeded",
+            accepted["requested_fixed_masses_status"],
+        )
+        self.assertEqual(
+            "unavailable_unresolved_no_turning_point_before_eos_endpoint",
+            accepted["maximum_mass_availability_status"],
+        )
+        self.assertEqual(
+            "eligible_all_requested_fixed_masses_succeeded",
+            accepted["student_view_eligibility_status"],
+        )
+        self.assertEqual(600.0, accepted["retained_epsilon_max_mev_fm3"])
+        rejected = ledger.loc["unresolved-case"]
+        self.assertEqual("rejected", rejected["status"])
+        self.assertEqual("none", rejected["acceptance_domain"])
+        self.assertEqual(
+            "assessed_unresolved", rejected["full_domain_gate_status"]
+        )
+        self.assertEqual(
+            "unresolved_no_selected_retained_domain",
+            rejected["selected_domain_status"],
+        )
+        self.assertEqual(
+            "evidence_only_raw_gate_not_accepted",
+            rejected["student_view_eligibility_status"],
+        )
+        self.assertEqual(
+            "skipped_due_to_raw_gate_rejection",
+            rejected["stellar_calculation"],
+        )
 
 
 class SavedSummaryContracts(unittest.TestCase):
@@ -389,7 +578,7 @@ class FailClosedOrchestrationContracts(unittest.TestCase):
         ) as temporary:
             packet = Path(temporary) / "packet"
             config = BSk24TrialConfig(
-                amplitudes=(0.0, -1.0),
+                amplitudes=(0.0, -1.0, -0.5, 0.3),
                 deltas_mev_fm3=(40.0,),
                 thermodynamic_stages=(
                     BSk24ThermodynamicStage("synthetic", 17, 17),
@@ -417,6 +606,20 @@ class FailClosedOrchestrationContracts(unittest.TestCase):
                         "sigma_mev_fm3": 50.0,
                         "delta_mev_fm3": 40.0,
                     },
+                    {
+                        "case_id": "unresolved-case",
+                        "amplitude": -0.5,
+                        "epsilon0_mev_fm3": 200.0,
+                        "sigma_mev_fm3": 50.0,
+                        "delta_mev_fm3": 40.0,
+                    },
+                    {
+                        "case_id": "tabulation-unresolved-case",
+                        "amplitude": 0.3,
+                        "epsilon0_mev_fm3": 200.0,
+                        "sigma_mev_fm3": 50.0,
+                        "delta_mev_fm3": 40.0,
+                    },
                 )
             )
             plan = SimpleNamespace(
@@ -431,15 +634,18 @@ class FailClosedOrchestrationContracts(unittest.TestCase):
                 proposal: deformation.BSk24WindowedDeformation,
                 **_kwargs: object,
             ) -> tuple[dict[str, object], np.ndarray, np.ndarray]:
-                accepted = proposal.case_id == "accepted-case"
+                statuses = {
+                    "accepted-case": "accepted_raw_local_physics_gate",
+                    "rejected-case": "rejected_raw_local_physics_gate",
+                    "unresolved-case": "unresolved_raw_local_physics_gate",
+                    "tabulation-unresolved-case": (
+                        "accepted_raw_local_physics_gate"
+                    ),
+                }
                 return (
                     {
                         "case_id": proposal.case_id,
-                        "status": (
-                            "accepted_raw_local_physics_gate"
-                            if accepted
-                            else "rejected_raw_local_physics_gate"
-                        ),
+                        "status": statuses[proposal.case_id],
                     },
                     np.asarray([1.0]),
                     np.asarray([0.5]),
@@ -450,6 +656,14 @@ class FailClosedOrchestrationContracts(unittest.TestCase):
                 proposal: deformation.BSk24WindowedDeformation,
                 **_kwargs: object,
             ) -> SimpleNamespace:
+                if proposal.case_id == "tabulation-unresolved-case":
+                    raise deformation.BSk24MechanicalStabilityError(
+                        {
+                            "case_id": proposal.case_id,
+                            "status": "unresolved_tabulation_resolution",
+                            "failure_reason": "synthetic_resolution_gap",
+                        }
+                    )
                 reconstructed_case_ids.append(proposal.case_id)
                 return SimpleNamespace(deformation=proposal)
 
@@ -478,7 +692,9 @@ class FailClosedOrchestrationContracts(unittest.TestCase):
             )
 
             with (
-                patch("eos_generation._internal.execution.write_json_atomic"),
+                patch(
+                    "eos_generation._internal.execution.write_json_atomic"
+                ) as write_json,
                 patch("eos_generation._internal.execution.write_csv_atomic"),
                 self.assertRaises(DownstreamProbeComplete),
             ):
@@ -488,6 +704,24 @@ class FailClosedOrchestrationContracts(unittest.TestCase):
         self.assertEqual({"accepted-case"}, stellar_case_ids)
         self.assertNotIn("rejected-case", reconstructed_case_ids)
         self.assertNotIn("rejected-case", stellar_case_ids)
+        self.assertNotIn("unresolved-case", reconstructed_case_ids)
+        self.assertNotIn("unresolved-case", stellar_case_ids)
+        self.assertNotIn("tabulation-unresolved-case", reconstructed_case_ids)
+        self.assertNotIn("tabulation-unresolved-case", stellar_case_ids)
+        raw_payloads = [
+            call.args[0]
+            for call in write_json.call_args_list
+            if call.args[1].name == "raw_gate_report.json"
+        ]
+        self.assertEqual(2, len(raw_payloads))
+        self.assertEqual("eos_generation_raw_gate_v2", raw_payloads[-1]["schema_id"])
+        self.assertEqual(
+            ["unresolved-case", "tabulation-unresolved-case"],
+            raw_payloads[-1]["unresolved_case_ids"],
+        )
+        self.assertEqual(
+            ["rejected-case"], raw_payloads[-1]["hard_rejected_case_ids"]
+        )
 
 
 if __name__ == "__main__":

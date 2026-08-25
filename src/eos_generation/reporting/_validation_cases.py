@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -11,7 +13,8 @@ from eos_generation.reporting._validation_io import (
     _safe_packet_relative,
 )
 
-RAW_GATE_SCHEMA = "eos_generation_raw_gate_v1"
+RAW_GATE_SCHEMA = "eos_generation_raw_gate_v2"
+LEGACY_RAW_GATE_SCHEMA = "eos_generation_raw_gate_v1"
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 EXTENDED_REQUIRED_FILES = (
@@ -25,6 +28,25 @@ EXTENDED_REQUIRED_FILES = (
     "odd_even_response.csv",
     "matched_area_comparison.csv",
     "numerical_error_summary.csv",
+)
+
+_RAW_GATE_PROFILE_V2_COLUMNS = frozenset(
+    {
+        "case_id",
+        "amplitude",
+        "epsilon0_mev_fm3",
+        "sigma_mev_fm3",
+        "delta_mev_fm3",
+        "epsilon_mev_fm3",
+        "window",
+        "gaussian",
+        "delta_cs2",
+        "direct_pressure_mev_fm3",
+        "delta_pressure_mev_fm3",
+        "raw_pressure_mev_fm3",
+        "raw_cs2",
+        "gate_status",
+    }
 )
 
 
@@ -93,6 +115,177 @@ def _ids_from_records(value: Any) -> set[str]:
     return result
 
 
+def _finite_float(value: Any) -> float | None:
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    return result if math.isfinite(result) else None
+
+
+def _validate_raw_gate_profiles(
+    rows: list[dict[str, str]] | None,
+    *,
+    raw_gate: Any,
+    raw_schema: Any,
+    accepted: set[str],
+    rejected: set[str],
+    layer: _Layer,
+) -> None:
+    if rows is None:
+        return
+    expected_ids = accepted | rejected
+    present_ids = _case_ids(rows)
+    if present_ids != expected_ids:
+        layer.fail("raw_gate_profiles:case_ids_mismatch")
+    if raw_schema != RAW_GATE_SCHEMA:
+        return
+    if not rows:
+        if expected_ids:
+            layer.fail("raw_gate_profiles:missing_v2_rows")
+        return
+    missing_columns = sorted(_RAW_GATE_PROFILE_V2_COLUMNS - set(rows[0]))
+    if missing_columns:
+        layer.fail(f"raw_gate_profiles:missing_v2_columns:{missing_columns}")
+        return
+    reports = raw_gate.get("cases") if isinstance(raw_gate, dict) else None
+    if not isinstance(reports, dict):
+        layer.fail("raw_gate_profiles:case_reports_unavailable")
+        return
+
+    blocks: dict[str, list[dict[str, str]]] = {}
+    closed: set[str] = set()
+    current: str | None = None
+    for row in rows:
+        case_id = str(row.get("case_id") or "")
+        if case_id != current:
+            if current is not None:
+                closed.add(current)
+            if case_id in closed:
+                layer.fail(f"raw_gate_profiles:noncontiguous_case:{case_id}")
+            current = case_id
+        blocks.setdefault(case_id, []).append(row)
+
+    geometry_fields = (
+        "amplitude",
+        "epsilon0_mev_fm3",
+        "sigma_mev_fm3",
+        "delta_mev_fm3",
+    )
+    for case_id in sorted(expected_ids):
+        case_rows = blocks.get(case_id, [])
+        report = reports.get(case_id)
+        if not case_rows or not isinstance(report, dict):
+            layer.fail(f"raw_gate_profiles:missing_case_evidence:{case_id}")
+            continue
+        parameters = report.get("parameters")
+        domain = report.get("complete_proposed_retained_domain_mev_fm3")
+        if not isinstance(parameters, dict):
+            layer.fail(f"raw_gate_profiles:parameters_unavailable:{case_id}")
+            continue
+        if not isinstance(domain, list) or len(domain) != 2:
+            layer.fail(f"raw_gate_profiles:domain_unavailable:{case_id}")
+            continue
+        lower = _finite_float(domain[0])
+        upper = _finite_float(domain[1])
+        epsilon = [
+            _finite_float(row.get("epsilon_mev_fm3")) for row in case_rows
+        ]
+        if (
+            lower is None
+            or upper is None
+            or lower >= upper
+            or any(value is None for value in epsilon)
+            or any(
+                right <= left
+                for left, right in zip(epsilon[:-1], epsilon[1:])
+            )
+            or epsilon[0] != lower
+            or epsilon[-1] != upper
+        ):
+            layer.fail(f"raw_gate_profiles:incomplete_raw_domain:{case_id}")
+        expected_count = report.get("dense_grid_points")
+        if (
+            not isinstance(expected_count, int)
+            or isinstance(expected_count, bool)
+            or len(case_rows) != expected_count
+        ):
+            layer.fail(f"raw_gate_profiles:point_count_mismatch:{case_id}")
+
+        expected_status = report.get("status")
+        accepted_status = expected_status == "accepted_raw_local_physics_gate"
+        report_finite = report.get("finite_values") is True
+        accepted_pressures: list[float] = []
+        accepted_cs2: list[float] = []
+        for position, row in enumerate(case_rows):
+            if row.get("gate_status") != expected_status:
+                layer.fail(
+                    f"raw_gate_profiles:gate_status_mismatch:"
+                    f"{case_id}:{position}"
+                )
+            for field in geometry_fields:
+                saved = _finite_float(row.get(field))
+                expected = _finite_float(parameters.get(field))
+                if saved is None or expected is None or saved != expected:
+                    layer.fail(
+                        f"raw_gate_profiles:geometry_mismatch:"
+                        f"{case_id}:{position}:{field}"
+                    )
+            direct_pressure = _finite_float(
+                row.get("direct_pressure_mev_fm3")
+            )
+            delta_pressure = _finite_float(row.get("delta_pressure_mev_fm3"))
+            raw_pressure = _finite_float(row.get("raw_pressure_mev_fm3"))
+            raw_cs2 = _finite_float(row.get("raw_cs2"))
+            auxiliary = tuple(
+                _finite_float(row.get(column))
+                for column in ("window", "gaussian", "delta_cs2")
+            )
+            if (
+                direct_pressure is not None
+                and delta_pressure is not None
+                and raw_pressure is not None
+            ):
+                if raw_pressure != direct_pressure + delta_pressure:
+                    layer.fail(
+                        f"raw_gate_profiles:pressure_identity_mismatch:"
+                        f"{case_id}:{position}"
+                    )
+            elif report_finite or accepted_status:
+                layer.fail(
+                    f"raw_gate_profiles:nonfinite_pressure_evidence:"
+                    f"{case_id}:{position}"
+                )
+            if (report_finite or accepted_status) and raw_cs2 is None:
+                layer.fail(
+                    f"raw_gate_profiles:nonfinite_cs2_evidence:"
+                    f"{case_id}:{position}"
+                )
+            if accepted_status:
+                if any(value is None for value in auxiliary):
+                    layer.fail(
+                        f"raw_gate_profiles:nonfinite_analytical_evidence:"
+                        f"{case_id}:{position}"
+                    )
+                if raw_pressure is not None:
+                    accepted_pressures.append(raw_pressure)
+                if raw_cs2 is not None:
+                    accepted_cs2.append(raw_cs2)
+        if accepted_status and (
+            len(accepted_pressures) != len(case_rows)
+            or len(accepted_cs2) != len(case_rows)
+            or any(value <= 0.0 for value in accepted_pressures)
+            or any(value <= 0.0 for value in accepted_cs2)
+            or any(
+                right <= left
+                for left, right in zip(
+                    accepted_pressures[:-1], accepted_pressures[1:]
+                )
+            )
+        ):
+            layer.fail(f"raw_gate_profiles:accepted_core_state_invalid:{case_id}")
+
+
 def _validate_case_consistency(
     packet: Path,
     *,
@@ -125,8 +318,11 @@ def _validate_case_consistency(
     if case_plan is not None and planned != accepted | rejected:
         layer.fail("case_plan_case_ledger_mismatch")
 
+    raw_schema: Any = None
+    case_reports: Any = {}
     if isinstance(raw_gate, dict):
-        if raw_gate.get("schema_id") != RAW_GATE_SCHEMA:
+        raw_schema = raw_gate.get("schema_id")
+        if raw_schema not in {RAW_GATE_SCHEMA, LEGACY_RAW_GATE_SCHEMA}:
             layer.fail("raw_gate:unsupported_schema")
         raw_accepted = set(raw_gate.get("accepted_case_ids", []))
         raw_rejected = set(raw_gate.get("rejected_case_ids", []))
@@ -141,10 +337,29 @@ def _validate_case_consistency(
             layer.fail("raw_gate:cases_mismatch")
         if raw_gate.get("executed_before_reconstruction_and_TOV") is not True:
             layer.fail("raw_gate:ordering_not_confirmed")
-        if raw_gate.get("full_domain_gate_authoritative") is not True:
-            layer.fail("raw_gate:full_domain_authority_not_confirmed")
-        if raw_gate.get("selected_domain_policy") != "full_retained_domain_only":
-            layer.fail("raw_gate:invalid_selected_domain_policy")
+        if raw_schema == RAW_GATE_SCHEMA:
+            if (
+                raw_gate.get(
+                    "complete_raw_proposal_assessment_authoritative"
+                )
+                is not True
+            ):
+                layer.fail("raw_gate:complete_raw_authority_not_confirmed")
+            if raw_gate.get("selected_retained_domain_authoritative") is not True:
+                layer.fail("raw_gate:selected_domain_authority_not_confirmed")
+            if raw_gate.get("selected_domain_policy") != (
+                "prefix_through_first_continuous_cs2_equals_one"
+            ):
+                layer.fail("raw_gate:invalid_selected_domain_policy")
+            hard_rejected = set(raw_gate.get("hard_rejected_case_ids", []))
+            unresolved = set(raw_gate.get("unresolved_case_ids", []))
+            if hard_rejected & unresolved or hard_rejected | unresolved != raw_rejected:
+                layer.fail("raw_gate:rejected_subsets_mismatch")
+        else:
+            if raw_gate.get("full_domain_gate_authoritative") is not True:
+                layer.fail("raw_gate:full_domain_authority_not_confirmed")
+            if raw_gate.get("selected_domain_policy") != "full_retained_domain_only":
+                layer.fail("raw_gate:invalid_selected_domain_policy")
         case_reports = raw_gate.get("cases", {})
         ledger_by_id = {
             str(row.get("case_id", "")): row for row in case_ledger
@@ -158,7 +373,12 @@ def _validate_case_consistency(
             if not isinstance(report, dict):
                 layer.fail(f"raw_gate:missing_case_report:{case_id}")
                 continue
-            if report.get("status") == "accepted_raw_local_physics_gate":
+            if report.get("status") != "accepted_raw_local_physics_gate":
+                layer.fail(
+                    f"raw_gate:accepted_case_failed_selected_domain_gate:{case_id}"
+                )
+                continue
+            if raw_schema == LEGACY_RAW_GATE_SCHEMA:
                 if ledger_by_id[case_id].get("acceptance_domain") not in (
                     None,
                     "",
@@ -168,9 +388,231 @@ def _validate_case_consistency(
                         f"raw_gate:invalid_full_domain_selection:{case_id}"
                     )
                 continue
-            layer.fail(
-                f"raw_gate:accepted_case_failed_full_domain_gate:{case_id}"
+            required_hard_flags = (
+                "finite_values",
+                "positive_energy_density",
+                "positive_pressure",
+                "complete_raw_proposal_mechanically_stable",
+                "complete_raw_pressure_numerically_usable",
+                "strictly_monotone_pressure_implied",
             )
+            if any(report.get(field) is not True for field in required_hard_flags):
+                layer.fail(f"raw_gate:accepted_hard_flags_not_passed:{case_id}")
+            if report.get("first_failure") is not None:
+                layer.fail(f"raw_gate:accepted_case_has_failure:{case_id}")
+            continuous = report.get("continuous_resolution_certificate")
+            pressure_certificate = report.get(
+                "raw_pressure_reconstruction_certificate"
+            )
+            retained_certificate = report.get(
+                "retained_tabulation_resolution_certificate"
+            )
+            continuous_status = (
+                continuous.get("status")
+                if isinstance(continuous, dict)
+                else None
+            )
+            pressure_status = (
+                pressure_certificate.get("status")
+                if isinstance(pressure_certificate, dict)
+                else None
+            )
+            retained_status = (
+                retained_certificate.get("status")
+                if isinstance(retained_certificate, dict)
+                else None
+            )
+            if continuous_status not in {
+                "resolved_geometry_aware_sampling",
+                "resolved_exact_zero_amplitude_identity_sampling",
+            }:
+                layer.fail(f"raw_gate:accepted_continuous_resolution_invalid:{case_id}")
+            if pressure_status != "resolved_strictly_increasing_raw_pressure":
+                layer.fail(f"raw_gate:accepted_pressure_resolution_invalid:{case_id}")
+            if retained_status not in {
+                "resolved_tabulation_resolution",
+                "resolved_exact_baseline_identity_grid",
+            }:
+                layer.fail(f"raw_gate:accepted_tabulation_resolution_invalid:{case_id}")
+            retained = report.get("retained_domain")
+            if not isinstance(retained, dict):
+                layer.fail(f"raw_gate:missing_retained_domain:{case_id}")
+                continue
+            reason = retained.get("endpoint_reason")
+            expected_domain = {
+                "direct_bsk24_causal_endpoint": "full_retained_domain",
+                "first_continuous_causal_crossing": (
+                    "through_first_continuous_causal_crossing"
+                ),
+            }.get(reason)
+            if (
+                expected_domain is None
+                or report.get("complete_raw_proposal_assessed") is not True
+                or report.get("selected_retained_domain_authoritative") is not True
+                or report.get("selected_retained_domain_passed") is not True
+                or retained.get("passed") is not True
+                or retained.get("resolution_certified") is not True
+            ):
+                layer.fail(f"raw_gate:invalid_retained_domain:{case_id}")
+                continue
+            ledger_row = ledger_by_id[case_id]
+            if ledger_row.get("acceptance_domain") != expected_domain:
+                layer.fail(f"raw_gate:ledger_domain_mismatch:{case_id}")
+            complete_raw_causal = report.get(
+                "complete_raw_proposal_causal_through_direct_endpoint"
+            )
+            if not isinstance(complete_raw_causal, bool):
+                layer.fail(f"raw_gate:complete_domain_status_missing:{case_id}")
+            else:
+                expected_full_status = (
+                    "assessed_causal_through_direct_endpoint"
+                    if complete_raw_causal
+                    else "assessed_noncausal_beyond_first_retained_crossing"
+                )
+                if (
+                    ledger_row.get("full_domain_gate_status")
+                    != expected_full_status
+                ):
+                    layer.fail(
+                        f"raw_gate:ledger_full_domain_status_mismatch:{case_id}"
+                    )
+            raw_domain = report.get(
+                "complete_proposed_retained_domain_mev_fm3"
+            )
+            try:
+                raw_lower, raw_upper = (
+                    float(raw_domain[0]),
+                    float(raw_domain[1]),
+                )
+                retained_lower = float(retained.get("epsilon_min_mev_fm3"))
+                retained_upper = float(retained.get("epsilon_max_mev_fm3"))
+                retained_cs2 = float(retained.get("cs2_at_endpoint"))
+                retained_pressure = float(retained.get("pressure_max_mev_fm3"))
+                endpoints_finite = all(
+                    math.isfinite(value)
+                    for value in (
+                        raw_lower,
+                        raw_upper,
+                        retained_lower,
+                        retained_upper,
+                        retained_cs2,
+                        retained_pressure,
+                    )
+                )
+            except (TypeError, ValueError, IndexError):
+                endpoints_finite = False
+                raw_lower = raw_upper = retained_lower = retained_upper = math.nan
+                retained_cs2 = retained_pressure = math.nan
+            crossing = retained.get("first_causal_crossing")
+            endpoint_structure_valid = bool(
+                endpoints_finite
+                and 0.0 < raw_lower < raw_upper
+                and retained_lower == raw_lower
+                and raw_lower < retained_upper <= raw_upper
+                and 0.0 < retained_cs2 <= 1.0
+                and retained_pressure > 0.0
+            )
+            if reason == "direct_bsk24_causal_endpoint":
+                endpoint_structure_valid = bool(
+                    endpoint_structure_valid
+                    and complete_raw_causal is True
+                    and retained_upper == raw_upper
+                    and crossing is None
+                )
+            elif reason == "first_continuous_causal_crossing":
+                crossing_epsilon = (
+                    _finite_float(crossing.get("epsilon_mev_fm3"))
+                    if isinstance(crossing, dict)
+                    else None
+                )
+                crossing_cs2 = (
+                    _finite_float(crossing.get("cs2_at_endpoint"))
+                    if isinstance(crossing, dict)
+                    else None
+                )
+                endpoint_structure_valid = bool(
+                    endpoint_structure_valid
+                    and complete_raw_causal is False
+                    and isinstance(crossing, dict)
+                    and crossing.get("status")
+                    == "resolved_first_continuous_causal_crossing"
+                    and crossing.get("continuous_crossing_bracketed") is True
+                    and crossing.get(
+                        "crossing_included_to_governed_tolerance"
+                    )
+                    is True
+                    and crossing.get("cs2_values_modified") is False
+                    and crossing_epsilon == retained_upper
+                    and crossing_cs2 == retained_cs2
+                )
+            if not endpoint_structure_valid:
+                layer.fail(f"raw_gate:invalid_retained_endpoint_structure:{case_id}")
+            if ledger_row.get("selected_domain_status") != (
+                "accepted_selected_retained_domain"
+            ):
+                layer.fail(
+                    f"raw_gate:ledger_selected_domain_status_mismatch:{case_id}"
+                )
+            if ledger_row.get("retained_endpoint_reason") != reason:
+                layer.fail(f"raw_gate:ledger_endpoint_reason_mismatch:{case_id}")
+            for ledger_field, report_field in (
+                ("retained_epsilon_max_mev_fm3", "epsilon_max_mev_fm3"),
+                ("retained_pressure_max_mev_fm3", "pressure_max_mev_fm3"),
+            ):
+                saved = ledger_row.get(ledger_field)
+                expected = retained.get(report_field)
+                try:
+                    matches = float(saved) == float(expected)
+                except (TypeError, ValueError):
+                    matches = False
+                if not matches:
+                    layer.fail(
+                        f"raw_gate:ledger_endpoint_value_mismatch:{case_id}:"
+                        f"{ledger_field}"
+                    )
+        if raw_schema == RAW_GATE_SCHEMA:
+            for case_id in rejected:
+                report = (
+                    case_reports.get(case_id)
+                    if isinstance(case_reports, dict)
+                    else None
+                )
+                if not isinstance(report, dict):
+                    continue
+                if report.get("status") not in {
+                    "rejected_raw_local_physics_gate",
+                    "unresolved_raw_local_physics_gate",
+                }:
+                    layer.fail(f"raw_gate:invalid_rejected_status:{case_id}")
+                if report.get("complete_raw_proposal_assessed") is not True:
+                    layer.fail(f"raw_gate:rejected_raw_not_preserved:{case_id}")
+                if ledger_by_id[case_id].get("acceptance_domain") != "none":
+                    layer.fail(f"raw_gate:rejected_domain_not_none:{case_id}")
+                expected_statuses = {
+                    "rejected_raw_local_physics_gate": (
+                        "assessed_hard_rejected",
+                        "rejected_no_selected_retained_domain",
+                    ),
+                    "unresolved_raw_local_physics_gate": (
+                        "assessed_unresolved",
+                        "unresolved_no_selected_retained_domain",
+                    ),
+                }.get(report.get("status"))
+                if expected_statuses is None:
+                    continue
+                expected_full_status, expected_selected_status = expected_statuses
+                ledger_row = ledger_by_id[case_id]
+                if ledger_row.get("full_domain_gate_status") != expected_full_status:
+                    layer.fail(
+                        f"raw_gate:ledger_full_domain_status_mismatch:{case_id}"
+                    )
+                if (
+                    ledger_row.get("selected_domain_status")
+                    != expected_selected_status
+                ):
+                    layer.fail(
+                        f"raw_gate:ledger_selected_domain_status_mismatch:{case_id}"
+                    )
     elif raw_gate is not None:
         layer.fail("raw_gate:not_an_object")
 
@@ -199,6 +641,18 @@ def _validate_case_consistency(
                 continue
             for field in (
                 "status",
+                "acceptance_domain",
+                "raw_gate_status",
+                "full_domain_gate_status",
+                "selected_domain_status",
+                "complete_raw_proposal_causal_through_direct_endpoint",
+                "retained_epsilon_max_mev_fm3",
+                "retained_pressure_max_mev_fm3",
+                "retained_endpoint_reason",
+                "requested_fixed_masses_status",
+                "maximum_mass_availability_status",
+                "student_view_eligibility_status",
+                "rejection_reason",
                 "pressure_reconstruction",
                 "stellar_calculation",
                 "clipping_or_repair",
@@ -222,6 +676,78 @@ def _validate_case_consistency(
             layer.fail("metadata:accepted_case_count_mismatch")
         if metadata.get("rejected_case_count") != len(rejected):
             layer.fail("metadata:rejected_case_count_mismatch")
+        if raw_schema == RAW_GATE_SCHEMA:
+            unresolved = set(raw_gate.get("unresolved_case_ids", []))
+            if set(metadata.get("unresolved_case_ids", [])) != unresolved:
+                layer.fail("metadata:unresolved_case_ids_mismatch")
+            if metadata.get("unresolved_case_count") != len(unresolved):
+                layer.fail("metadata:unresolved_case_count_mismatch")
+
+    for row in case_ledger:
+        case_id = str(row.get("case_id") or "")
+        accepted_row = row.get("status") == "accepted"
+        fixed_status = row.get("requested_fixed_masses_status")
+        eligibility = row.get("student_view_eligibility_status")
+        maximum_status = row.get("maximum_mass_availability_status")
+        if not accepted_row:
+            expected_eligibility = "evidence_only_raw_gate_not_accepted"
+        elif fixed_status == "not_requested":
+            expected_eligibility = "eligible_thermodynamic_case"
+        elif fixed_status == "all_requested_fixed_masses_succeeded":
+            expected_eligibility = (
+                "eligible_all_requested_fixed_masses_succeeded"
+            )
+        else:
+            expected_eligibility = "ineligible_requested_fixed_masses_incomplete"
+        if eligibility != expected_eligibility:
+            layer.fail(
+                f"case_ledger:student_eligibility_mismatch:{case_id}"
+            )
+        report = case_reports.get(case_id) if isinstance(case_reports, dict) else None
+        if isinstance(report, dict) and row.get("raw_gate_status") != report.get(
+            "status"
+        ):
+            layer.fail(f"case_ledger:raw_gate_status_mismatch:{case_id}")
+        if accepted_row:
+            if _inventory_scalar(row.get("rejection_reason")):
+                layer.fail(f"case_ledger:accepted_has_rejection_reason:{case_id}")
+            if row.get("pressure_reconstruction") != "completed":
+                layer.fail(
+                    f"case_ledger:accepted_reconstruction_status_mismatch:{case_id}"
+                )
+            if row.get("clipping_or_repair") != "none":
+                layer.fail(f"case_ledger:accepted_repair_claim:{case_id}")
+        else:
+            expected_reason = (
+                json.dumps(report.get("first_failure"), sort_keys=True)
+                if isinstance(report, dict)
+                else None
+            )
+            if row.get("rejection_reason") != expected_reason:
+                layer.fail(f"case_ledger:rejection_reason_mismatch:{case_id}")
+            for field, expected in (
+                ("requested_fixed_masses_status", "not_applicable_raw_gate_not_accepted"),
+                ("maximum_mass_availability_status", "not_applicable_raw_gate_not_accepted"),
+                ("pressure_reconstruction", "skipped_due_to_raw_gate_rejection"),
+                ("stellar_calculation", "skipped_due_to_raw_gate_rejection"),
+                ("clipping_or_repair", "none"),
+            ):
+                if row.get(field) != expected:
+                    layer.fail(
+                        f"case_ledger:rejected_lifecycle_mismatch:"
+                        f"{case_id}:{field}"
+                    )
+        if maximum_status and maximum_status not in {
+            "not_requested",
+            "not_applicable_raw_gate_not_accepted",
+            "unavailable_no_reporting_stage",
+            "unavailable_missing_assessment",
+            "resolved_bracketed_and_refined",
+        } and not maximum_status.startswith("unavailable_"):
+            layer.fail(
+                "case_ledger:invalid_maximum_mass_availability_status:"
+                f"{row.get('case_id', '')}"
+            )
 
     reconstructed_tables = (
         "thermodynamic_profiles.csv",
@@ -239,6 +765,15 @@ def _validate_case_consistency(
         leaked = present & rejected
         if leaked:
             layer.fail(f"rejected_case_in_output:{relative}:{sorted(leaked)}")
+    raw_rows = _read_csv(packet, "raw_gate_profiles.csv", layer)
+    _validate_raw_gate_profiles(
+        raw_rows,
+        raw_gate=raw_gate,
+        raw_schema=raw_schema,
+        accepted=accepted,
+        rejected=rejected,
+        layer=layer,
+    )
     layer.checks["accepted_case_count"] = len(accepted)
     layer.checks["rejected_case_count"] = len(rejected)
     return accepted, rejected
@@ -249,6 +784,8 @@ def _inventory_scalar(value: Any) -> str:
         return ""
     if isinstance(value, bool):
         return "true" if value else "false"
+    if isinstance(value, str) and value.strip().lower() in {"true", "false"}:
+        return value.strip().lower()
     return str(value)
 
 

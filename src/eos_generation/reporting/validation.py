@@ -12,13 +12,16 @@ The three validation layers have different meanings:
     The retained files agree with one another and with the packet manifest.
 ``current_source_equivalence``
     The retained source checksums agree with the currently checked-out source.
-``scientific_output_completeness``
-    Outputs required by the serialized configuration are present, and requested
-    fixed-mass stellar/tidal evidence is complete.
+``scientific_output_validity``
+    Saved scientific evidence is structurally consistent, finite where
+    required, and fail-closed where a result is unavailable.
+``scientific_output_availability``
+    Requested observables are complete or have explicit scientifically valid
+    unavailable outcomes.
 
 Source drift is never reported as packet corruption.  Likewise, a correctly
-recorded failed-closed scientific result can make a packet scientifically
-partial without invalidating its internal checksums.
+recorded failed-closed scientific result can make availability partial without
+making the packet scientifically invalid or unloadable.
 """
 
 from __future__ import annotations
@@ -100,31 +103,43 @@ def validate_bsk24_trial_packet_layers(
         metadata=context["metadata"],
         accepted=context["accepted_case_ids"],
     )
-    complete = (
+    validity = scientific["hard_validity"]
+    availability = scientific["availability"]
+    valid = (
         internal["status"] == "pass"
         and source["status"] == "equivalent"
-        and scientific["status"] == "complete"
+        and validity["status"] == "pass"
     )
     failures = [
         *(f"internal_packet_integrity:{item}" for item in internal["failures"]),
         *(f"current_source_equivalence:{item}" for item in source["failures"]),
-        *(f"scientific_output_completeness:{item}" for item in scientific["failures"]),
+        *(f"scientific_output_validity:{item}" for item in validity["failures"]),
     ]
     return {
         "schema_id": SCHEMA_ID,
         # Backward compatible for existing callers that require exactly
         # ``status == 'pass'`` before accepting a newly written packet.
-        "status": "pass" if complete else "fail",
+        "status": "pass" if valid else "fail",
         "failures": failures,
         "warnings": [
             *(f"internal_packet_integrity:{item}" for item in internal["warnings"]),
             *(f"current_source_equivalence:{item}" for item in source["warnings"]),
-            *(f"scientific_output_completeness:{item}" for item in scientific["warnings"]),
+            *(f"scientific_output_validity:{item}" for item in validity["warnings"]),
+            *(
+                f"scientific_output_availability:{item}"
+                for item in availability["limitations"]
+            ),
+            *(
+                f"scientific_output_availability:{item}"
+                for item in availability["warnings"]
+            ),
         ],
         "packet_path": str(packet),
         "manifest_entries": internal["checks"].get("manifest_entries", 0),
         "internal_packet_integrity": internal,
         "current_source_equivalence": source,
+        "scientific_output_validity": validity,
+        "scientific_output_availability": availability,
         "scientific_output_completeness": scientific,
     }
 
