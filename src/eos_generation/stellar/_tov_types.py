@@ -772,7 +772,7 @@ class TovMaximumMassResult:
     status: str
     maximum_mass_resolved: bool
     maximum_mass_threshold_msun: float
-    passes_maximum_mass_threshold: bool
+    passes_maximum_mass_threshold: bool | None
     maximum_mass_msun: float | None
     central_pressure_mev_fm3: float | None
     central_energy_density_mev_fm3: float | None
@@ -817,7 +817,7 @@ class TovMaximumMassResult:
             }
 
         return {
-            "schema_id": "tov_resolved_maximum_mass_v1",
+            "schema_id": "tov_resolved_maximum_mass_v2",
             "status": self.status,
             "maximum_mass_resolved": self.maximum_mass_resolved,
             "decision_basis": (

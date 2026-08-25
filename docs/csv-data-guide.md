@@ -18,7 +18,7 @@ tables applicable to that geometry and calculation:
 
 | File | What it answers |
 |---|---|
-| `case_ledger.csv` | Which deformation does a `case_id` represent, and was it accepted? |
+| `case_ledger.csv` | Which deformation does a `case_id` represent, was it hard-valid, and which requested results are available? |
 | `thermodynamic_profiles.csv` | What are the saved pressure, sound-speed, and reconstructed thermodynamic values along each EoS? |
 | `stellar_sequences.csv` | What stellar models were attempted along each saved central-pressure sequence? |
 | `fixed_mass_observables.csv` | Was each requested gravitational mass bracketed, and what observables were saved? |
@@ -100,9 +100,10 @@ There are three important case types:
 - Every accepted nonzero-amplitude `case_id` is one distinct deformed EoS for
   that geometry.
 
-Rejected proposals remain in `case_ledger.csv` and the applicable raw-gate
-diagnostics. They deliberately have no reconstructed thermodynamic profile or
-stellar sequence.
+Rejected or unresolved proposals remain in `case_ledger.csv` and the
+applicable raw-gate diagnostics. Their complete raw proposals are retained as
+evidence, but they deliberately have no reconstructed thermodynamic profile
+or stellar sequence.
 
 A readable ID such as `dp20_am0p1_<digest>` includes a ramp-width and amplitude
 prefix, but the final digest is calculated from the complete deformation
@@ -130,15 +131,18 @@ in `case_id` is the EoS boundary.
 
 Within one thermodynamic case, energy density is the independent saved
 coordinate. The grid is nonuniform: it is logarithmically spaced below the
-reconstruction anchor and linearly spaced from the anchor to the retained
-upper endpoint. Never substitute row number for energy density. Even when two
-cases appear to have aligned rows, join or compare them using the saved
-physical coordinate.
+reconstruction anchor and linearly spaced from the anchor to that case's
+retained upper endpoint. If the deformation reaches `c_s^2 = 1` before direct
+BSk24, the refined crossing is included as the last point. Different cases can
+therefore end at different coordinates. Never substitute row number for
+energy density. Even when two cases appear to have aligned rows, join or
+compare them using the saved physical coordinate and common domain.
 
 Within one stellar case and stage, central pressure increases. Mass need not
 increase over the complete sequence: models after the sampled mass peak can
 belong to the decreasing-mass branch. Do not sort a stellar sequence by mass
-and then infer stability from the new order.
+and then infer stability from the new order. Every attempted and solved
+central pressure must remain inside that case's retained EoS endpoint.
 
 ## Keys and table relationships
 
@@ -174,12 +178,18 @@ exception and has no ledger row.
 | `sigma_mev_fm3` | Gaussian standard deviation in MeV fm^-3 |
 | `delta_mev_fm3` | Smootherstep activation-ramp width in MeV fm^-3; this is not a pressure difference |
 | `status` | Final `accepted` or `rejected` lifecycle status |
-| `acceptance_domain` | Domain on which acceptance was established; accepted production cases use the full retained domain |
-| `full_domain_gate_status` | Exact saved outcome of the authoritative raw full-domain gate |
-| `selected_domain_status` | Saved selected-domain or screening status; preserve it rather than using it to override the full-domain result |
+| `acceptance_domain` | Domain on which acceptance was established: either the direct retained endpoint or the case-specific prefix through the first continuous causal crossing |
+| `full_domain_gate_status` | Summary of the complete raw proposal: causal through the direct endpoint, noncausal only beyond the first retained crossing, hard-rejected, or unresolved |
+| `selected_domain_status` | Separate acceptance, rejection, or unresolved status of the selected usable retained branch; preserve it together with the complete raw evidence |
+| `retained_epsilon_max_mev_fm3` | Included upper total-energy-density endpoint of the accepted reconstructed branch; blank for a rejected or unresolved proposal |
+| `retained_pressure_max_mev_fm3` | Pressure at that included retained endpoint in MeV fm^-3; blank when no retained reconstruction exists |
+| `retained_endpoint_reason` | Whether the endpoint is the direct BSk24 causal endpoint or this case's first continuous `c_s^2 = 1` crossing |
 | `rejection_reason` | Blank for accepted cases; strict JSON text describing the first saved failure for rejected cases |
 | `pressure_reconstruction` | Whether reconstruction completed or was skipped after raw-gate rejection |
-| `stellar_calculation` | `disabled`, `completed`, `incomplete_or_failed`, or skipped after rejection, as applicable |
+| `stellar_calculation` | Whether stellar work was disabled, completed with its saved availability statuses, incomplete/failed, or skipped after rejection |
+| `requested_fixed_masses_status` | Final-reporting-stage availability of all explicitly requested fixed-mass rows; it is independent of maximum-mass resolution |
+| `maximum_mass_availability_status` | Final-reporting-stage maximum-mass availability, including an explicit unresolved or endpoint-limited outcome |
+| `student_view_eligibility_status` | Whether the case is eligible for student-facing use; for a stellar case this requires every configured target row at the final reporting stage to be uniquely present and `bracketed_and_solved`, but does not require maximum-mass availability |
 | `clipping_or_repair` | Records that no failed result was made acceptable by clipping or repair |
 
 Choose EoSs for downstream regression or plotting only from ledger rows whose
@@ -190,7 +200,11 @@ outcome, not a missing positive example.
 
 One row is one sampled total-energy-density point belonging to the EoS named
 by `case_id`. The file contains `direct` plus every accepted reconstructed
-case; rejected cases are absent.
+case; rejected and unresolved cases are absent. Each accepted case stops at
+its saved case-specific causal endpoint, and that endpoint is included as the
+last row. The complete raw proposal, including evidence above an earlier
+endpoint, belongs in `raw_gate_profiles.csv` rather than this reconstructed
+table.
 
 | Column | Meaning |
 |---|---|
@@ -211,6 +225,11 @@ case; rejected cases are absent.
 
 The three relative columns are fractions, not percentages. A value of `0.02`
 means a two-percent relative change. They are zero for `direct`.
+
+Finite auxiliary columns such as `gamma_eff` and effective baryon-enthalpy or
+chemical-potential trends are diagnostic data. Their finite magnitudes do not
+alone decide hard acceptance. Non-finite or unusable reconstruction and
+broken matching, interpolation, or inversion remain fail-closed conditions.
 
 The reconstructed state is an effective one-fluid cold barotrope. These
 columns do not establish particle fractions, species chemical potentials, or
@@ -254,7 +273,10 @@ remain blank in those rows.
 Use only rows with the required background and tidal status. The sampled
 stable prefix ends at the sampled-peak row used by the workflow, but that row
 must not be reported as a resolved maximum mass. Maximum-mass resolution is
-recorded separately in `maximum_mass_screening.csv`.
+recorded separately in `maximum_mass_screening.csv`. No attempted or
+successful central pressure may exceed the case-specific retained EoS
+endpoint; an endpoint below the sequence floor produces explicit unavailable
+evidence instead of an extrapolated model.
 
 Strict calculations retain several stellar stages for convergence evidence.
 The final configured stage is the reporting and plotting reference; earlier
@@ -296,7 +318,10 @@ Some result columns can be absent from a run-specific CSV header when no row
 could populate them; the generated `DATA_DICTIONARY.md` is authoritative for
 the columns actually present. Never replace an unavailable observable with
 zero. For tidal analysis, require both a solved background status and the
-saved valid tidal capability status.
+saved valid tidal capability status. An unavailable status can specifically
+record that the stable evidence, bracket, or root would lie outside the
+retained EoS domain; other fixed-mass rows solved inside the domain remain
+valid.
 
 ## `maximum_mass_screening.csv`
 
@@ -310,6 +335,7 @@ mass as the maximum.
 | `stage` | Governed numerical stage name |
 | `status` | Exact turning-point/refinement outcome |
 | `maximum_mass_resolved` | Boolean declaring whether a maximum was validly bracketed and refined |
+| `maximum_mass_availability_status` | Explicit resolved or unavailable status, independent of fixed-mass availability |
 | `maximum_mass_msun` | Refined maximum gravitational mass in solar masses; blank when unresolved |
 | `maximum_mass_threshold_msun` | Governed screening threshold in solar masses |
 | `passes_maximum_mass_threshold` | Saved threshold result when assessable |
@@ -330,9 +356,11 @@ mass as the maximum.
 | `delta_mev_fm3` | Activation-ramp width; blank for `direct` |
 
 Use `maximum_mass_msun` only when `maximum_mass_resolved` is true and the
-status is consistent with a bracketed, refined turning point. Use
+status is consistent with a bracketed, refined turning point. When unresolved,
+the threshold result is unavailable rather than false. Use
 `stellar_sequences.csv` to inspect the sampled curve, not to invent a maximum
-for an unresolved row.
+for an unresolved row. Endpoint-limited maximum-mass availability does not
+erase solved rows in `fixed_mass_observables.csv`.
 
 ## Common analysis tasks
 
@@ -394,14 +422,16 @@ Filter to one target mass and the final reporting stage. Keep rows with
 `status = bracketed_and_solved`, then separately require valid tidal status
 for `k2` or `lambda_dimensionless`. Radius and non-tidal background values can
 be usable even when a tidal value is unavailable, provided the saved statuses
-support that use.
+support that use. Do not discard these rows merely because the separate
+maximum-mass assessment is unavailable.
 
 ### Compare maximum masses
 
 Filter to the final reporting stage and rows with
 `maximum_mass_resolved = true`. Preserve unresolved rows as labelled missing
 outcomes when studying coverage; do not convert them to zero or replace them
-with the largest sampled mass.
+with the largest sampled mass. Use the explicit availability status to
+distinguish an endpoint-limited branch from another unresolved outcome.
 
 ## Preparing data for machine learning
 
@@ -501,7 +531,7 @@ cases, and diagnostics setting.
 | File | Main use |
 |---|---|
 | `case_plan.csv` | Planned case identities, identity-control injection, and requested stages |
-| `raw_gate_profiles.csv` | Pointwise raw deformation shape and gate status for accepted and rejected proposals |
+| `raw_gate_profiles.csv` | Complete raw deformation evidence, including values beyond an earlier retained causal endpoint, plus gate and resolution status for accepted, rejected, and unresolved proposals |
 | `thermodynamic_residuals.csv` | Reconstruction and derivative-consistency residuals for accepted cases |
 | `window_characterization.csv` | One-row summaries of nominal and realized deformation geometry |
 | `a0_identity_table.csv` | Saved zero-amplitude identity evidence |
@@ -513,7 +543,13 @@ cases, and diagnostics setting.
 
 Use raw-gate data when the question includes why a proposal was rejected. Do
 not mix raw proposal values with reconstructed accepted profiles as if they
-were the same lifecycle stage.
+were the same lifecycle stage. For an accepted early-causal case, raw rows
+above the first `c_s^2 = 1` crossing are evidence outside the usable branch;
+a later return below one does not extend the reconstructed domain.
+The raw table retains direct pressure, integrated pressure change, resulting
+raw pressure, and raw `c_s^2` at its saved coordinates. Read it together with
+the gate report's continuous-resolution and first-crossing evidence; the CSV
+sampling alone is not the continuous certificate.
 
 ## Combining geometries or experiments
 
@@ -541,8 +577,12 @@ physical zeros.
 - `direct` and the reconstructed `A = 0` control are related but distinct
   lifecycle cases.
 - Rejected proposals have no reconstructed or stellar rows by design.
+- Accepted cases can have different retained endpoints; compare only their
+  common saved domains and never extrapolate a shorter case.
 - Blank and unavailable values are not zero.
 - A sampled stellar peak is not automatically a resolved maximum mass.
+- Maximum-mass unavailability does not invalidate independently solved
+  requested fixed masses.
 - Background success does not automatically make a tidal result valid.
 - Fixed masses are gravitational masses in solar masses.
 - Energy density includes rest-mass energy.

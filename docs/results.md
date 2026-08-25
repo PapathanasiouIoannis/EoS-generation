@@ -12,8 +12,18 @@ bsk24-trial status runs/my-experiment
 ```
 
 Validation is read-only. It checks the packet schema, strict JSON, exact file
-manifest, configuration and source identities, and declared scientific
-completeness before tables are treated as trusted saved results.
+manifest, configuration and source identities, and hard scientific validity
+before tables are treated as trusted saved results. Availability is reported
+separately: a structurally sound, hard-valid packet can be scientifically
+partial when a requested observable is explicitly unavailable. Such a packet
+remains loadable; the status fields and reasons determine which observables
+may be used.
+
+In a child validation report, `scientific_output_validity` is the hard gate
+and `scientific_output_availability` is `complete` or `partial`. The aggregate
+experiment report summarizes the latter as `scientific_availability_status`.
+An availability limitation is reported as a warning/limitation, not rewritten
+as a hard-validity failure.
 
 `status` gives a compact health summary: calculation and precision, geometry
 count, identity and convergence status, accepted/rejected counts, and bounded
@@ -29,8 +39,8 @@ these layers:
 |---|---|
 | Definition | Canonical user settings, expanded numerical profile, deterministic hash, plan, and case IDs |
 | Lifecycle | Run state and one accepted/rejected outcome with an exact reason for every case |
-| Thermodynamics | Raw gate profiles, reconstructed profiles, residuals, identity checks, and convergence status |
-| Stellar | Successful sequences, fixed-mass observables, tidal capability status, and turning-point resolution when requested |
+| Thermodynamics | Complete raw gate profiles, continuous-resolution evidence, case-specific retained endpoints, reconstructed profiles, residuals, identity checks, and convergence status |
+| Stellar | Domain-bounded sequences, fixed-mass observables, tidal capability status, and independent turning-point availability when requested |
 | Diagnostics | Applicable radial profiles and deformation-support tables when enabled |
 | Figures | Plots rendered from saved tables and their inventory |
 | Provenance | Environment versions, source hashes, two-step reproduction commands, and exact SHA-256 manifest; machine-specific executable and environment paths are deliberately omitted |
@@ -45,14 +55,25 @@ destination; it is not an optional label.
 
 ## Accepted and rejected cases
 
-An accepted case passed the checks that were actually requested and reached
-the applicable downstream stages. It is not a claim of microscopic
-composition or observational preference.
+An accepted case passed the hard checks that were actually requested and
+reached every applicable hard-valid stage. It is not a promise that every
+optional observable is available, and it is not a claim of microscopic
+composition or observational preference. In particular, a case can retain
+valid requested fixed-mass observables while its maximum mass is unavailable
+because the causal endpoint is reached before a turning point is established.
 
-A rejected case is a valid recorded outcome. It should include the failed
-gate and location. It receives no reconstructed or stellar values; missing
-entries must remain explicitly unavailable rather than being filled with
-zero, interpolated across a failure, or repaired for presentation.
+A rejected or unresolved case is a valid recorded outcome. It includes the
+failed gate or unresolved certificate and available location evidence. The
+complete raw proposal is preserved, but the case receives no reconstructed or
+stellar values; missing entries must remain explicitly unavailable rather
+than being filled with zero, interpolated across a failure, or repaired for
+presentation.
+
+An accepted proposal can have a shorter domain than direct BSk24. Its retained
+endpoint is the first continuously resolved `c_s^2 = 1` crossing, included in
+the profile. Raw samples after that crossing remain evidence only; a later
+return below one does not reopen the usable branch. All reconstructed and
+stellar values must lie at or below the saved case-specific endpoint.
 
 ## Reading thermodynamic plots
 
@@ -70,7 +91,9 @@ other measures how much stellar mass lies inside that position.
 ## Reading stellar results
 
 Only successful stable-prefix rows may be used for fixed-mass interpolation.
-A requested mass without a true bracket is unavailable.
+A requested mass without a true bracket, or whose required central pressure
+would exceed the retained EoS endpoint, is unavailable. Other requested masses
+that were validly solved inside the endpoint remain usable.
 
 The maximum-mass status must distinguish:
 
@@ -82,6 +105,11 @@ The maximum-mass status must distinguish:
 Do not reinterpret the last category as a resolved maximum. Tidal quantities
 must likewise carry an explicit valid capability status; a background TOV
 solution alone does not guarantee a valid tidal result.
+
+Maximum-mass resolution is an availability result, not a substitute for EoS
+validity. When the retained endpoint prevents a turning-point bracket, the
+maximum-mass value and threshold comparison remain unavailable rather than
+false, while independently solved fixed-mass rows are preserved.
 
 ## Saved plots
 
@@ -114,7 +142,9 @@ After a notebook execution completes and the authoritative experiment passes
 validation, the notebook creates a separate `STUDENT_VIEW/` beside the sealed
 experiment directory. It contains copied PNGs, primary CSV data, optional CSV
 diagnostics, a data dictionary, and its own exact checksum manifest. The
-notebook prints clickable locations for the view and the authoritative packet.
+notebook prints clickable locations for the view and the authoritative
+packet. Because the notebook file lives below `notebooks/`, these links use
+`../runs/...` paths so they resolve correctly in both VS Code and Jupyter.
 
 The student view is derived and non-authoritative. It never changes the
 experiment packet, is not included in the packet manifest, and is created
@@ -139,7 +169,17 @@ STUDENT_VIEW/
 
 The PNG and CSV files are byte-for-byte copies of saved artifacts. The two
 Markdown guides and `SHA256SUMS.txt` describe and checksum this derived view;
-they do not become part of the authoritative experiment.
+they do not become part of the authoritative experiment. For a stellar case,
+student-facing eligibility requires all explicitly requested fixed masses to
+have succeeded at the reporting stage; it does not require a resolved maximum
+mass. Fixed-mass and maximum-mass availability remain separate explicit
+statuses in the copied data.
+
+Publication of the completed view remains an atomic same-volume directory
+rename with no overwrite. On Windows, bounded retries handle transient sharing
+violations from an editor or scanner; every retry rechecks that the destination
+has not appeared, and a persistent failure removes the unpublished staging
+directory without changing the sealed packet.
 
 For the exact geometry and case ordering, complete primary-column meanings,
 analysis examples, and leakage-safe machine-learning preparation, read the
@@ -171,7 +211,11 @@ encode ramp width and amplitude, while the final hexadecimal suffix is a
 collision-resistant digest of the complete deformation coordinates. Do not
 decode a case ID as a substitute for the ledger. `case_ledger.csv` is the
 saved mapping from `case_id` to amplitude, geometry, anchor, and lifecycle
-status.
+status. It also records the case-specific retained energy-density and pressure
+endpoints and their reason, final-stage requested-fixed-mass status,
+maximum-mass availability, and student-view eligibility. These statuses are
+separate: all requested fixed masses can succeed, and the case can remain
+student-view eligible, while maximum mass is unavailable.
 
 Case IDs are useful grouping keys inside an experiment, but they are not
 complete provenance identities. When combining separate experiments, retain
@@ -181,7 +225,7 @@ the canonical configuration hash and authoritative packet location as well.
 
 | File | Row meaning | Main grouping or coordinate |
 |---|---|---|
-| `case_ledger.csv` | One declared deformation proposal and its accepted/rejected outcome | `case_id` |
+| `case_ledger.csv` | One declared deformation proposal with lifecycle, retained-endpoint, and final availability statuses | `case_id` |
 | `thermodynamic_profiles.csv` | One sampled total-energy-density point for the direct baseline or one reconstructed case | `case_id`, `epsilon_mev_fm3` |
 | `stellar_sequences.csv` | One stellar-model attempt at a saved central coordinate | `case_id`, stage, central pressure/energy density, calculation status |
 | `fixed_mass_observables.csv` | One requested fixed-mass outcome, either solved from a true stable-branch bracket or explicitly unavailable | `case_id`, stage, `target_mass_msun`, status |

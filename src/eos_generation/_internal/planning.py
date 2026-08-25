@@ -28,6 +28,10 @@ from eos_generation.bsk24.reconstruction import (
     COMPOSE_CORE_ENTRY_EPSILON_MEV_FM3,
     BSk24GridSettings,
 )
+from eos_generation.bsk24._deformation_bounds import (
+    DEFORMATION_SUPPORT_SIGMAS,
+    _meaningful_support_interval,
+)
 from eos_generation.bsk24.deformation import (
     BSK24_RETAINED_EPSILON_MATCH_MEV_FM3,
     BSK24_RETAINED_EPSILON_MAX_MEV_FM3,
@@ -292,6 +296,23 @@ class BSk24TrialConfig:
             raise ValueError("fixed_masses_msun must be below 10 solar masses")
         epsilon0 = _positive_number("epsilon0_mev_fm3", self.epsilon0_mev_fm3)
         sigma = _positive_number("sigma_mev_fm3", self.sigma_mev_fm3)
+        effective_epsilon_match = (
+            BSK24_RETAINED_EPSILON_MATCH_MEV_FM3
+            if epsilon_match is None
+            else epsilon_match
+        )
+        if _meaningful_support_interval(
+            epsilon0_mev_fm3=epsilon0,
+            sigma_mev_fm3=sigma,
+            epsilon_match_mev_fm3=effective_epsilon_match,
+            epsilon_max_mev_fm3=BSK24_RETAINED_EPSILON_MAX_MEV_FM3,
+        ) is None:
+            raise ValueError(
+                "deformation center and width have no meaningful in-domain "
+                f"support: the {DEFORMATION_SUPPORT_SIGMAS:g}-sigma interval "
+                "must overlap the deformable domain strictly above "
+                "epsilon_match and below the retained BSk24 endpoint"
+            )
         central_pressure = _positive_number(
             "central_pressure_min_mev_fm3", self.central_pressure_min_mev_fm3
         )

@@ -16,12 +16,17 @@ from typing import Any, Mapping
 
 import numpy as np
 from scipy.interpolate import PchipInterpolator
-from scipy.optimize import brentq
 
 from eos_generation.bsk24.baseline import MODEL_NAME
 from eos_generation.bsk24._deformation_bounds import (
+    RAW_DISCOVERY_INTERVALS_PER_SCALE,
+    RETAINED_INTERVALS_PER_SCALE,
+    _analytical_pressure_derivative_certificate,
     _continuous_local_minima,
+    _geometry_aware_grid,
     _log_windowed_gaussian_shape_scalar,
+    _meaningful_support_interval,
+    _retained_geometry_grid,
 )
 from eos_generation.bsk24._deformation_core import (
     BSK24_RETAINED_EPSILON_MATCH_MEV_FM3,
@@ -111,12 +116,14 @@ class BSk24WindowedDeformation:
 
 @dataclass(frozen=True)
 class BSk24AmplitudeBounds:
-    """Exact physical amplitude interval for one declared geometry.
+    """Exact full-direct-domain amplitude interval for one geometry.
 
     The lower endpoint is open because the smooth deformation requires
     ``c_s^2 > 0``.  The upper endpoint is closed because ``c_s^2 = 1`` is
-    causal.  Locations and candidate extrema are retained in deterministic
-    increasing-energy order for scientific provenance.
+    causal through the direct endpoint.  A larger positive amplitude is not
+    automatically invalid: it requires a case-specific first causal endpoint.
+    Locations and candidate extrema are retained in deterministic increasing-
+    energy order for scientific provenance.
     """
 
     epsilon0_mev_fm3: float
@@ -149,7 +156,7 @@ class BSk24AmplitudeBounds:
         return True
 
     def contains(self, amplitude: float) -> bool:
-        """Return the exact open-lower/closed-upper interval predicate."""
+        """Return the exact full-direct-domain interval predicate."""
 
         try:
             value = float(amplitude)
@@ -173,6 +180,7 @@ class BSk24AmplitudeBounds:
                 self.epsilon_match_mev_fm3,
                 self.epsilon_max_mev_fm3,
             ],
+            "policy": "full_direct_domain_diagnostic_not_case_acceptance",
             "amplitude_interval": {
                 "A_min": self.amplitude_min,
                 "A_max": self.amplitude_max,
@@ -311,12 +319,15 @@ def calculate_windowed_amplitude_bounds(
     delta_mev_fm3: float,
     discovery_points: int = 32769,
 ) -> BSk24AmplitudeBounds:
-    """Return hard-gate bounds for one ordinary raw-amplitude geometry.
+    """Return full-direct-domain bounds for one raw-amplitude geometry.
 
     The match must lie in the retained homogeneous-core domain, while
     ``epsilon0``, ``sigma``, and ``Delta`` must be finite and positive.  The
-    returned open-lower/closed-upper interval is set only by the continuous
-    raw conditions ``0 < c_s^2 <= 1``.
+    returned open-lower/closed-upper interval is set by the continuous raw
+    conditions ``0 < c_s^2 <= 1`` through the *direct* BSk24 endpoint.  Its
+    lower limit remains a hard mechanical-stability bound.  Exceeding its
+    upper limit instead requires a case-specific first causal endpoint and is
+    not, by itself, a rejection under the retained-branch policy.
 
     Pressure introduces no additional bound here: the deformation is
     integrated from a positive-pressure match and every admitted proposal has
@@ -376,6 +387,16 @@ def _calculate_windowed_amplitude_bounds(
         raise ValueError(
             "ordinary raw-amplitude geometry requires finite positive "
             "epsilon0, sigma, and Delta"
+        )
+    if _meaningful_support_interval(
+        epsilon0_mev_fm3=float(epsilon0_mev_fm3),
+        sigma_mev_fm3=float(sigma_mev_fm3),
+        epsilon_match_mev_fm3=epsilon_match,
+        epsilon_max_mev_fm3=epsilon_max,
+    ) is None:
+        raise ValueError(
+            "ordinary raw-amplitude geometry has no meaningful in-domain "
+            "four-sigma support"
         )
     arrays = tuple(
         np.asarray(getattr(baseline, name), dtype=float)
@@ -447,6 +468,20 @@ def _calculate_windowed_amplitude_bounds(
 
     ramp_end = epsilon_match + float(delta_mev_fm3)
     upper_grid = np.linspace(epsilon_match, epsilon_max, discovery_points)
+    upper_grid, geometry_certificate = _geometry_aware_grid(
+        upper_grid,
+        epsilon0_mev_fm3=float(epsilon0_mev_fm3),
+        sigma_mev_fm3=float(sigma_mev_fm3),
+        delta_mev_fm3=float(delta_mev_fm3),
+        epsilon_match_mev_fm3=epsilon_match,
+        epsilon_max_mev_fm3=epsilon_max,
+        intervals_per_scale=RAW_DISCOVERY_INTERVALS_PER_SCALE,
+    )
+    if geometry_certificate.get("status") != "resolved_geometry_aware_sampling":
+        raise ValueError(
+            "amplitude-bound geometry resolution is unresolved: "
+            f"{geometry_certificate.get('failure_reason')}"
+        )
     upper_grid = np.unique(
         np.concatenate(
             (
@@ -462,7 +497,9 @@ def _calculate_windowed_amplitude_bounds(
             )
         )
     )
-    upper_grid = upper_grid[upper_grid > epsilon_match]
+    upper_grid = upper_grid[
+        (upper_grid > epsilon_match) & (upper_grid <= epsilon_max)
+    ]
 
     def log_shape(value: float) -> float:
         return _log_windowed_gaussian_shape_scalar(
@@ -733,11 +770,11 @@ def raw_local_physics_gate(
     dense_upper_points: int = 65537,
     amplitude_bounds: BSk24AmplitudeBounds | None = None,
 ) -> tuple[dict[str, Any], np.ndarray, np.ndarray]:
-    """Evaluate the raw proposal on the complete retained domain.
+    """Assess the complete raw proposal and select its first causal branch.
 
     Optional ``amplitude_bounds`` supply an independently calculated
-    continuous physical interval.  The dense profile and local refinement are
-    retained as diagnostics and failure-location evidence.
+    full-direct-domain interval.  Its mechanical lower bound remains hard;
+    its upper bound is diagnostic when a first causal endpoint is resolved.
     """
     return _raw_local_physics_gate_impl(
         baseline,
@@ -797,6 +834,257 @@ def full_domain_thermodynamic_admissibility(
     )
 
 
+def _authoritative_retained_endpoint(
+    baseline: BSk24ConsistentBaseline,
+    deformation: BSk24WindowedDeformation,
+    raw_gate_report: Mapping[str, Any],
+) -> tuple[float, bool]:
+    """Validate and return one raw-gate-selected retained endpoint."""
+
+    expected_domain = [float(baseline.epsilon[0]), float(baseline.epsilon[-1])]
+    retained = raw_gate_report.get("retained_domain")
+    if (
+        raw_gate_report.get("status") != "accepted_raw_local_physics_gate"
+        or raw_gate_report.get("selected_retained_domain_authoritative") is not True
+        or raw_gate_report.get("selected_retained_domain_passed") is not True
+        or raw_gate_report.get("case_id") != deformation.case_id
+        or raw_gate_report.get("parameters") != deformation.to_dict()
+        or raw_gate_report.get("complete_proposed_retained_domain_mev_fm3")
+        != expected_domain
+        or not isinstance(retained, Mapping)
+        or retained.get("policy")
+        != "prefix_through_first_continuous_cs2_equals_one"
+        or retained.get("passed") is not True
+        or retained.get("resolution_certified") is not True
+    ):
+        raise ValueError(
+            "reconstruction requires matching authoritative first-causal-branch evidence"
+        )
+    try:
+        endpoint = float(retained["epsilon_max_mev_fm3"])
+        retained_minimum = float(retained["epsilon_min_mev_fm3"])
+        endpoint_pressure = float(retained["pressure_max_mev_fm3"])
+        endpoint_cs2 = float(retained["cs2_at_endpoint"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("raw-gate retained endpoint is malformed") from exc
+    if (
+        not math.isfinite(endpoint)
+        or not math.isfinite(retained_minimum)
+        or not math.isfinite(endpoint_pressure)
+        or not math.isfinite(endpoint_cs2)
+        or retained_minimum != expected_domain[0]
+        or not baseline.anchor.energy_density_mev_fm3 < endpoint
+        or endpoint > float(baseline.epsilon[-1])
+        or endpoint_pressure <= 0.0
+        or not 0.0 < endpoint_cs2 <= 1.0
+    ):
+        raise ValueError("raw-gate retained endpoint is outside the deformable domain")
+    expected_pressure = float(
+        _windowed_pressure(
+            np.asarray([endpoint], dtype=float), baseline, deformation
+        )[0]
+    )
+    expected_cs2 = float(
+        _windowed_cs2(
+            np.asarray([endpoint], dtype=float), baseline, deformation
+        )[0]
+    )
+    comparison_rtol = 64.0 * np.finfo(float).eps
+    if (
+        not math.isclose(
+            endpoint_pressure,
+            expected_pressure,
+            rel_tol=comparison_rtol,
+            abs_tol=comparison_rtol * max(1.0, abs(expected_pressure)),
+        )
+        or not math.isclose(
+            endpoint_cs2,
+            expected_cs2,
+            rel_tol=comparison_rtol,
+            abs_tol=comparison_rtol,
+        )
+    ):
+        raise ValueError(
+            "raw-gate retained endpoint state disagrees with the analytical proposal"
+        )
+    crossing = retained.get("first_causal_crossing")
+    reason = retained.get("endpoint_reason")
+    if reason == "direct_bsk24_causal_endpoint":
+        if (
+            endpoint != expected_domain[1]
+            or crossing is not None
+            or raw_gate_report.get("full_retained_domain_passed") is not True
+            or raw_gate_report.get(
+                "complete_raw_proposal_causal_through_direct_endpoint"
+            )
+            is not True
+        ):
+            raise ValueError(
+                "direct raw-gate endpoint must be the complete BSk24 causal endpoint"
+            )
+        return endpoint, False
+    if reason != "first_continuous_causal_crossing":
+        raise ValueError("raw-gate endpoint reason is not recognized")
+    if not isinstance(crossing, Mapping):
+        raise ValueError("raw-gate causal crossing evidence is missing")
+    try:
+        crossing_epsilon = float(crossing["epsilon_mev_fm3"])
+        crossing_cs2 = float(crossing["cs2_at_endpoint"])
+        bracket = tuple(float(value) for value in crossing["bracket_mev_fm3"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("raw-gate causal crossing evidence is malformed") from exc
+    representable_width = crossing.get(
+        "representable_bracket_width_mev_fm3"
+    )
+    governed_width = crossing.get("governed_root_tolerance_mev_fm3")
+    if representable_width is None and governed_width is None:
+        width_evidence_valid = bool(
+            crossing.get("endpoint_selection") == "exact_representable_contact"
+            and crossing_cs2 == 1.0
+            and len(bracket) == 2
+            and bracket[1] == endpoint
+        )
+    else:
+        try:
+            bracket_width = float(representable_width)
+            governed_tolerance = float(governed_width)
+        except (TypeError, ValueError):
+            width_evidence_valid = False
+        else:
+            common_width_evidence_valid = bool(
+                len(bracket) == 2
+                and math.isfinite(bracket_width)
+                and math.isfinite(governed_tolerance)
+                and bracket_width >= 0.0
+                and bracket_width <= governed_tolerance
+                and math.isclose(
+                    bracket_width,
+                    bracket[1] - bracket[0],
+                    rel_tol=comparison_rtol,
+                    abs_tol=comparison_rtol * max(1.0, abs(endpoint)),
+                )
+            )
+            if common_width_evidence_valid and bracket_width == 0.0:
+                width_evidence_valid = bool(
+                    bracket[0] == endpoint
+                    and bracket[1] == endpoint
+                    and expected_cs2 == 1.0
+                    and crossing.get("first_noncausal_epsilon_mev_fm3")
+                    is None
+                    and crossing.get("first_noncausal_cs2") is None
+                )
+            elif common_width_evidence_valid:
+                noncausal_cs2_values = _windowed_cs2(
+                    np.asarray([bracket[1]], dtype=float),
+                    baseline,
+                    deformation,
+                )
+                analytical_noncausal_cs2 = float(
+                    noncausal_cs2_values[0]
+                )
+                reported_noncausal_epsilon = crossing.get(
+                    "first_noncausal_epsilon_mev_fm3"
+                )
+                reported_noncausal_cs2 = crossing.get(
+                    "first_noncausal_cs2"
+                )
+                try:
+                    reported_noncausal_epsilon = float(
+                        reported_noncausal_epsilon
+                    )
+                    reported_noncausal_cs2 = float(reported_noncausal_cs2)
+                except (TypeError, ValueError):
+                    width_evidence_valid = False
+                else:
+                    width_evidence_valid = bool(
+                        bracket[0] == endpoint
+                        and bracket[1] > endpoint
+                        and math.nextafter(endpoint, bracket[1]) == bracket[1]
+                        and expected_cs2 < 1.0
+                        and analytical_noncausal_cs2 > 1.0
+                        and reported_noncausal_epsilon == bracket[1]
+                        and reported_noncausal_cs2
+                        == analytical_noncausal_cs2
+                    )
+            else:
+                width_evidence_valid = False
+    if (
+        crossing.get("status")
+        != "resolved_first_continuous_causal_crossing"
+        or crossing.get("continuous_crossing_bracketed") is not True
+        or crossing.get("crossing_included_to_governed_tolerance") is not True
+        or crossing.get("cs2_values_modified") is not False
+        or raw_gate_report.get("full_retained_domain_passed") is not False
+        or raw_gate_report.get(
+            "complete_raw_proposal_causal_through_direct_endpoint"
+        )
+        is not False
+        or crossing_epsilon != endpoint
+        or crossing_cs2 != endpoint_cs2
+        or len(bracket) != 2
+        or not all(math.isfinite(value) for value in bracket)
+        or not bracket[0] <= endpoint <= bracket[1]
+        or not width_evidence_valid
+    ):
+        raise ValueError("raw-gate endpoint and first-crossing evidence disagree")
+    return endpoint, True
+
+
+def _retained_resolution_grid(
+    baseline: BSk24ConsistentBaseline,
+    deformation: BSk24WindowedDeformation,
+    *,
+    endpoint: float,
+    has_causal_crossing: bool,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """Construct and certify a bounded geometry-aware retained grid."""
+    return _retained_geometry_grid(
+        baseline.epsilon,
+        amplitude=deformation.amplitude,
+        endpoint_mev_fm3=endpoint,
+        has_causal_crossing=has_causal_crossing,
+        epsilon0_mev_fm3=deformation.epsilon0_mev_fm3,
+        sigma_mev_fm3=deformation.sigma_mev_fm3,
+        delta_mev_fm3=deformation.delta_mev_fm3,
+        epsilon_match_mev_fm3=(
+            baseline.anchor.energy_density_mev_fm3
+        ),
+    )
+
+
+def _analytical_tabulation_certificate(
+    epsilon: np.ndarray,
+    pressure: np.ndarray,
+    baseline: BSk24ConsistentBaseline,
+    deformation: BSk24WindowedDeformation,
+    spacing_certificate: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Compare the tabulated pressure derivative with analytical ``c_s^2``.
+
+    Finite diagnostic residual magnitudes remain nonblocking elsewhere.  This
+    is the narrower hard resolution check: on the declared ramp/support/
+    endpoint sections, a midpoint PCHIP derivative must reproduce the
+    analytical deformation to the deterministic second-order scale implied by
+    the 16-interval-per-feature rule.
+    """
+
+    if deformation.amplitude == 0.0:
+        return {
+            "status": "resolved_exact_baseline_identity_grid",
+            "probe_count": 0,
+            "criterion": "not_applicable_exact_zero_amplitude",
+        }
+    return _analytical_pressure_derivative_certificate(
+        epsilon,
+        pressure,
+        lambda value: float(
+            _windowed_cs2(np.asarray(value), baseline, deformation)
+        ),
+        spacing_certificate,
+        intervals_per_scale=RETAINED_INTERVALS_PER_SCALE,
+    )
+
+
 def build_windowed_eos(
     baseline: BSk24ConsistentBaseline,
     deformation: BSk24WindowedDeformation,
@@ -805,91 +1093,112 @@ def build_windowed_eos(
     require_full_domain: bool = False,
 ) -> BSk24WindowedEos:
     """Build an accepted windowed EoS without clipping, repair, or extrapolation."""
-    if require_full_domain and raw_gate_report is None:
-        raise ValueError(
-            "require_full_domain needs an authoritative raw full-domain gate report"
+    if raw_gate_report is None:
+        raw_gate_report, _gate_epsilon, _gate_cs2 = (
+            _raw_local_physics_gate_impl(baseline, deformation)
         )
-    if require_full_domain and raw_gate_report is not None:
-        expected_domain = [
-            float(baseline.epsilon[0]),
-            float(baseline.epsilon[-1]),
-        ]
-        if (
-            raw_gate_report.get("status")
-            != "accepted_raw_local_physics_gate"
-            or raw_gate_report.get("full_retained_domain_authoritative") is not True
-            or raw_gate_report.get("full_retained_domain_passed") is not True
-            or raw_gate_report.get("case_id") != deformation.case_id
-            or raw_gate_report.get("parameters") != deformation.to_dict()
-            or raw_gate_report.get("complete_proposed_retained_domain_mev_fm3")
-            != expected_domain
-        ):
-            raise ValueError(
-                "require_full_domain received mismatched or non-authoritative "
-                "raw-gate evidence"
-            )
-    if raw_gate_report is not None and not str(
-        raw_gate_report.get("status", "")
-    ).startswith("accepted"):
+    if raw_gate_report.get("status") != "accepted_raw_local_physics_gate":
         raise BSk24MechanicalStabilityError(raw_gate_report)
+    endpoint_epsilon, has_causal_crossing = _authoritative_retained_endpoint(
+        baseline,
+        deformation,
+        raw_gate_report,
+    )
+    if require_full_domain and (
+        raw_gate_report.get("full_retained_domain_passed") is not True
+        or endpoint_epsilon != float(baseline.epsilon[-1])
+    ):
+        raise ValueError(
+            "require_full_domain received a valid but case-truncated raw proposal"
+        )
+
     raw_epsilon = baseline.epsilon.copy()
     raw_pressure = _windowed_pressure(raw_epsilon, baseline, deformation)
     raw_cs2 = _windowed_cs2(raw_epsilon, baseline, deformation)
-    if not np.all(np.isfinite(raw_cs2)) or np.any(raw_cs2 <= 0.0):
+    if (
+        not np.all(np.isfinite(raw_pressure))
+        or not np.all(np.isfinite(raw_cs2))
+        or np.any(raw_pressure <= 0.0)
+        or np.any(raw_cs2 <= 0.0)
+    ):
         diagnostics = {
             "case_id": deformation.case_id,
-            "status": "rejected_nonpositive_raw_sound_speed",
+            "status": "rejected_nonfinite_or_nonpositive_raw_core_state",
             "raw_minimum_cs2": float(np.nanmin(raw_cs2)),
             "clipping_applied": False,
             "raw_profile_retained": True,
         }
         raise BSk24MechanicalStabilityError(diagnostics)
 
-    first_superluminal = np.flatnonzero(raw_cs2 > 1.0)
-    if require_full_domain and len(first_superluminal):
-        index = int(first_superluminal[0])
+    retained_epsilon, tabulation_resolution = _retained_resolution_grid(
+        baseline,
+        deformation,
+        endpoint=endpoint_epsilon,
+        has_causal_crossing=has_causal_crossing,
+    )
+    if tabulation_resolution["status"] not in {
+        "resolved_tabulation_resolution",
+        "resolved_exact_baseline_identity_grid",
+    }:
         raise BSk24MechanicalStabilityError(
             {
                 "case_id": deformation.case_id,
-                "status": "rejected_superluminal_on_full_retained_domain",
-                "first_failing_epsilon_mev_fm3": float(raw_epsilon[index]),
-                "first_failing_cs2": float(raw_cs2[index]),
-                "causal_truncation_applied": False,
+                "status": "unresolved_tabulation_resolution",
+                "tabulation_resolution": tabulation_resolution,
+                "raw_profile_retained": True,
+                "reconstruction_available": False,
+                "stellar_work_permitted": False,
             }
         )
-    if len(first_superluminal):
-        upper_index = int(first_superluminal[0])
-        if upper_index == 0:
-            raise ValueError("raw proposal is superluminal at the lower boundary")
-        lower_epsilon = float(raw_epsilon[upper_index - 1])
-        upper_epsilon = float(raw_epsilon[upper_index])
-        root = brentq(
-            lambda value: float(
-                _windowed_cs2(np.asarray(value), baseline, deformation)
-            )
-            - 1.0,
-            lower_epsilon,
-            upper_epsilon,
-            xtol=baseline.settings.causal_root_xtol_mev_fm3,
-            rtol=baseline.settings.causal_root_rtol,
-        )
-        retained_epsilon = np.concatenate((raw_epsilon[:upper_index], [root]))
-        endpoint = {
-            "observed_upper_causal_crossing": True,
-            "endpoint_reason": "first_upper_causal_crossing",
-            "refined_epsilon_mev_fm3": float(root),
-        }
-    else:
-        retained_epsilon = raw_epsilon.copy()
-        endpoint = {
-            "observed_upper_causal_crossing": False,
-            "endpoint_reason": "retained_causal_production_domain_endpoint",
-            "refined_epsilon_mev_fm3": None,
-        }
+
     pressure = _windowed_pressure(retained_epsilon, baseline, deformation)
     cs2 = _windowed_cs2(retained_epsilon, baseline, deformation)
-    if not np.all(np.diff(pressure) > 0.0):
-        raise ValueError("windowed pressure is not strictly increasing")
+    if (
+        not np.all(np.isfinite(pressure))
+        or not np.all(np.isfinite(cs2))
+        or np.any(pressure <= 0.0)
+        or np.any(cs2 <= 0.0)
+        or not np.all(np.diff(pressure) > 0.0)
+        or (
+            has_causal_crossing
+            and (np.any(cs2[:-1] >= 1.0) or cs2[-1] > 1.0)
+        )
+        or (not has_causal_crossing and np.any(cs2 > 1.0))
+    ):
+        raise BSk24MechanicalStabilityError(
+            {
+                "case_id": deformation.case_id,
+                "status": "rejected_invalid_retained_core_state",
+                "tabulation_resolution": tabulation_resolution,
+                "clipping_applied": False,
+            }
+        )
+    analytical_resolution = _analytical_tabulation_certificate(
+        retained_epsilon,
+        pressure,
+        baseline,
+        deformation,
+        tabulation_resolution,
+    )
+    tabulation_resolution["analytical_comparison"] = analytical_resolution
+    if analytical_resolution["status"] not in {
+        "resolved_analytical_tabulation",
+        "resolved_exact_baseline_identity_grid",
+    }:
+        tabulation_resolution["status"] = "unresolved_tabulation_resolution"
+        tabulation_resolution["failure_reason"] = analytical_resolution.get(
+            "failure_reason"
+        )
+        raise BSk24MechanicalStabilityError(
+            {
+                "case_id": deformation.case_id,
+                "status": "unresolved_tabulation_resolution",
+                "tabulation_resolution": tabulation_resolution,
+                "raw_profile_retained": True,
+                "reconstruction_available": False,
+                "stellar_work_permitted": False,
+            }
+        )
     anchor_index = int(
         np.flatnonzero(
             retained_epsilon == baseline.anchor.energy_density_mev_fm3
@@ -913,6 +1222,19 @@ def build_windowed_eos(
     residuals = _residual_arrays(
         retained_epsilon, pressure, cs2, baryon_density, mu
     )
+    if not residuals or any(
+        np.asarray(values).shape != retained_epsilon.shape
+        or not np.all(np.isfinite(values))
+        for values in residuals.values()
+    ):
+        raise BSk24MechanicalStabilityError(
+            {
+                "case_id": deformation.case_id,
+                "status": "rejected_nonfinite_reconstruction_or_inversion",
+                "tabulation_resolution": tabulation_resolution,
+                "finite_diagnostic_magnitudes_are_nonblocking": True,
+            }
+        )
     below = slice(0, anchor_index)
     ramp_end = (
         baseline.anchor.energy_density_mev_fm3 + deformation.delta_mev_fm3
@@ -922,6 +1244,7 @@ def build_windowed_eos(
         "preserved_existing_generator_id": PURE_GAUSSIAN_GENERATOR_ID,
         "deformation": deformation.to_dict(),
         "raw_gate_report": dict(raw_gate_report) if raw_gate_report is not None else None,
+        "tabulation_resolution": tabulation_resolution,
         "unchanged_below_anchor": {
             "pressure_array_equal": bool(
                 np.array_equal(pressure[below], baseline.pressure[below])
@@ -969,6 +1292,7 @@ def build_windowed_eos(
         },
         "ramp_endpoint": {
             "epsilon_mev_fm3": ramp_end,
+            "inside_retained_domain": bool(ramp_end <= retained_epsilon[-1]),
             "window_exact_one": bool(
                 float(
                     smootherstep_window(
@@ -994,7 +1318,16 @@ def build_windowed_eos(
             "direct_C1_splice": False,
         },
         "causal_domain": {
-            **endpoint,
+            "observed_upper_causal_crossing": has_causal_crossing,
+            "endpoint_reason": (
+                "first_continuous_causal_crossing"
+                if has_causal_crossing
+                else "direct_bsk24_causal_endpoint"
+            ),
+            "refined_epsilon_mev_fm3": (
+                endpoint_epsilon if has_causal_crossing else None
+            ),
+            "raw_gate_endpoint_consumed_without_rediscovery": True,
             "retained_epsilon_max_mev_fm3": float(retained_epsilon[-1]),
             "retained_pressure_max_mev_fm3": float(pressure[-1]),
             "retained_cs2_endpoint": float(cs2[-1]),
@@ -1005,30 +1338,78 @@ def build_windowed_eos(
         "species_chemical_potential_status": "unavailable",
         "beta_equilibrium_status": "unassessed",
     }
-    eos = BSk24WindowedEos(
-        baseline=baseline,
-        deformation=deformation,
-        epsilon=retained_epsilon,
-        pressure=pressure,
-        cs2=cs2,
-        baryon_density=baryon_density,
-        chemical_potential=mu,
-        adiabatic_index=gamma,
-        energy_per_baryon_minus_neutron_rest=energy_per_baryon,
-        raw_epsilon=raw_epsilon,
-        raw_pressure=raw_pressure,
-        raw_cs2=raw_cs2,
-        residuals=residuals,
-        diagnostics=diagnostics,
-    )
-    eos.diagnostics["residual_summary"] = summarize_windowed_residuals(eos)
-    if require_full_domain:
-        admissibility = full_domain_thermodynamic_admissibility(
-            baseline,
-            eos,
-            raw_gate_report=raw_gate_report,
+    try:
+        eos = BSk24WindowedEos(
+            baseline=baseline,
+            deformation=deformation,
+            epsilon=retained_epsilon,
+            pressure=pressure,
+            cs2=cs2,
+            baryon_density=baryon_density,
+            chemical_potential=mu,
+            adiabatic_index=gamma,
+            energy_per_baryon_minus_neutron_rest=energy_per_baryon,
+            raw_epsilon=raw_epsilon,
+            raw_pressure=raw_pressure,
+            raw_cs2=raw_cs2,
+            residuals=residuals,
+            diagnostics=diagnostics,
         )
-        eos.diagnostics["full_domain_thermodynamic_admissibility"] = admissibility
+        pressure_probe = np.sqrt(pressure[:-1] * pressure[1:])
+        recovered = np.asarray(
+            eos.energy_density_from_pressure(pressure_probe), dtype=float
+        )
+        forward = np.asarray(
+            eos.pressure_from_energy_density(recovered), dtype=float
+        )
+        inversion_usable = bool(
+            np.all(np.isfinite(recovered))
+            and np.all(np.isfinite(forward))
+            and np.all(recovered > retained_epsilon[:-1])
+            and np.all(recovered < retained_epsilon[1:])
+            and np.all(np.diff(recovered) > 0.0)
+        )
+    except (TypeError, ValueError, ArithmeticError) as exc:
+        raise BSk24MechanicalStabilityError(
+            {
+                "case_id": deformation.case_id,
+                "status": "rejected_unusable_reconstruction_interpolation",
+                "reason": f"{type(exc).__name__}:{exc}",
+                "tabulation_resolution": tabulation_resolution,
+            }
+        ) from exc
+    if not inversion_usable:
+        raise BSk24MechanicalStabilityError(
+            {
+                "case_id": deformation.case_id,
+                "status": "rejected_unusable_reconstruction_inversion",
+                "tabulation_resolution": tabulation_resolution,
+            }
+        )
+    eos.diagnostics["tabulation_resolution"][
+        "interpolation_inversion_status"
+    ] = "resolved_finite_monotone_nonextrapolating"
+    eos.diagnostics["residual_summary"] = summarize_windowed_residuals(eos)
+    admissibility = full_domain_thermodynamic_admissibility(
+        baseline,
+        eos,
+        raw_gate_report=raw_gate_report,
+    )
+    eos.diagnostics["retained_domain_thermodynamic_admissibility"] = (
+        admissibility
+    )
+    accepted_admissibility_statuses = {
+        "accepted_full_domain_thermodynamic_gate",
+        "accepted_selected_domain_thermodynamic_gate",
+    }
+    if admissibility["status"] not in accepted_admissibility_statuses:
+        raise BSk24MechanicalStabilityError(admissibility)
+    if require_full_domain:
+        # Preserve the established diagnostic key and status for callers that
+        # explicitly request direct-endpoint compatibility.
+        eos.diagnostics["full_domain_thermodynamic_admissibility"] = (
+            admissibility
+        )
         if admissibility["status"] != "accepted_full_domain_thermodynamic_gate":
             raise BSk24MechanicalStabilityError(admissibility)
     return eos

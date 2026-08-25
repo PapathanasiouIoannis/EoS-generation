@@ -146,6 +146,8 @@ Validate the JSON syntax, then compare the fields with
 - an unknown or misspelled field;
 - a nonpositive width or ramp width;
 - a nonpositive center;
+- a center/width pair whose nominal four-sigma support has no nonzero overlap
+  with the deformable domain above the selected anchor;
 - diagnostics `on` with a thermodynamics-only calculation;
 - a numeric anchor outside its allowed homogeneous-core interval;
 - `NaN` or infinity, which JSON settings do not permit.
@@ -171,10 +173,16 @@ before deciding what to do with it. Do not delete an uncertain destination.
 
 ## A proposal was rejected
 
-This often reflects a real raw-domain violation rather than a software
-failure. Inspect the exact reason and raw gate table. The workflow rejects
-before reconstruction when, for example, `dP/dε` becomes nonpositive or
-exceeds the causal bound.
+This often reflects a real raw-domain violation or an unresolved continuous
+assessment rather than a software failure. Inspect the exact reason, complete
+raw gate table, continuous-extremum evidence, and resolution certificate. The
+workflow rejects before reconstruction when, for example, `dP/dε` becomes
+nonpositive or a narrow feature cannot be resolved reliably.
+
+Reaching `c_s^2 = 1` before direct BSk24 is not by itself a rejection. For an
+otherwise valid proposal, the first continuously resolved crossing is included
+as the case-specific endpoint. Raw values after that crossing remain saved
+evidence, but even a later return below one does not reopen the usable branch.
 
 Do not clip the failed points, discard a small violating region, or infer that
 an isolated feature is harmless without a scientific analysis of its origin
@@ -188,7 +196,8 @@ Check, in order:
 2. the raw proposal was accepted;
 3. the reconstructed barotrope covered the required domain;
 4. the background solver completed the successful stable prefix;
-5. a requested fixed mass was truly bracketed;
+5. a requested fixed mass was truly bracketed at a central pressure inside the
+   retained case-specific EoS endpoint;
 6. the tidal capability status was valid.
 
 Unavailable output must have an explicit reason. It should not be replaced by
@@ -214,6 +223,25 @@ ends first, the packet must say that the maximum is unresolved.
 A denser run is useful only when the current result indicates inadequate
 sampling inside an otherwise valid bracket. It cannot repair domain
 truncation or an unphysical proposal.
+
+Maximum-mass unavailability does not erase independently valid fixed-mass
+results. Check the fixed-mass status at the final reporting stage and the
+separate `maximum_mass_availability_status`. If every explicitly requested
+fixed mass succeeded, `student_view_eligibility_status` can remain eligible
+even though the turning point is unresolved.
+
+## STUDENT_VIEW finalization reports `PermissionError` on Windows
+
+VS Code, File Explorer, antivirus software, or an indexing service can briefly
+hold a sharing handle on the staging directory. Publication uses a bounded
+retry schedule for this transient Windows condition, keeps the rename on the
+same volume, and rechecks no-overwrite before every attempt.
+
+If all retries fail, the unpublished staging directory is cleaned up and the
+already sealed authoritative experiment remains unchanged. Close previews or
+Explorer windows holding the result directory and retry only the student-view
+creation from that validated packet. Do not delete or edit the authoritative
+packet, and do not reuse an existing `STUDENT_VIEW/` destination.
 
 ## Validation reports source drift
 

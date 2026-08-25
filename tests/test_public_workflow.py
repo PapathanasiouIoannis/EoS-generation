@@ -96,6 +96,29 @@ class PublicWorkflowTests(unittest.TestCase):
         self.assertEqual([0.0, 0.01], amplitudes)
         self.assertTrue(plan.child_plans[0].a0_identity_control_injected)
 
+    def test_below_anchor_geometry_plans_passively_when_its_tail_overlaps(
+        self,
+    ) -> None:
+        output_root = ROOT / "runs" / "test-below-anchor-plan"
+        self.assertFalse(output_root.exists())
+        settings = ExperimentSettings.from_values(
+            amplitudes=(0.0, 0.01),
+            center=140.0,
+            width=5.0,
+            ramp_width=40.0,
+        )
+        plan = plan_experiment(settings, output_root=output_root)
+        payload = plan.to_dict()
+        expanded = payload["children"][0]["expanded_configuration"]
+        self.assertLess(
+            expanded["epsilon0_mev_fm3"],
+            expanded["effective_epsilon_match_mev_fm3"],
+        )
+        self.assertTrue(payload["planning_is_passive"])
+        self.assertEqual(0, payload["scientific_solver_calls"])
+        self.assertEqual(0, payload["filesystem_writes"])
+        self.assertFalse(output_root.exists())
+
     def test_execution_requires_a_reviewed_plan_and_explicit_gate(self) -> None:
         settings = ExperimentSettings.from_values(amplitudes=(0.0,), precision="quick")
         with self.assertRaises(TypeError):

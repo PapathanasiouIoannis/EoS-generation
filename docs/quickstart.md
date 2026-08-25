@@ -114,9 +114,13 @@ destination. The run prints the exact deterministic
 overwritten. To repeat the same settings independently, plan and run with a
 new output root such as `runs/repeat-01`.
 
-Execution assesses every raw proposal before reconstruction. A rejected case
-is a recorded scientific outcome, not automatically a software error. It
-keeps its exact reason and receives no downstream calculation.
+Execution assesses and saves every complete raw proposal before
+reconstruction. It locates the first continuous `c_s^2 = 1` crossing and, for
+an otherwise valid case, includes that crossing as the retained endpoint. A
+later return below one is outside the usable branch. A rejected or unresolved
+case is a recorded scientific outcome, not automatically a software error. It
+keeps its raw evidence and exact reason and receives no downstream
+calculation; no result is clipped, repaired, or extrapolated into acceptance.
 
 ## 5. Validate and inspect
 
@@ -127,10 +131,13 @@ bsk24-trial status $experiment
 bsk24-trial plot $experiment
 ```
 
-Validation is read-only and checks the result structure, hashes, and declared
-scientific completeness. `status` presents the result summary. The passive
-`plot` invocation reports the saved plot inventory; it does not rerun the
-calculation.
+Validation is read-only and checks the result structure, hashes, and hard
+scientific validity while reporting observable availability separately.
+`status` presents that summary. A valid packet may be scientifically partial,
+for example when requested fixed masses were solved inside the retained EoS
+domain but the endpoint prevented a maximum-mass turning point from being
+resolved. The passive `plot` invocation reports the saved plot inventory; it
+does not rerun the calculation.
 
 Read [`results.md`](results.md) before interpreting accepted/rejected cases,
 stellar branches, or missing observables. Read
@@ -186,7 +193,13 @@ drift requires a new passive pass.
 On a successful authorized pass, the notebook validates the completed
 experiment and then creates a separate `STUDENT_VIEW/` with obvious links to
 plots, primary CSV data, and the authoritative technical packet. This derived
-view is outside the sealed packet and has its own checksum manifest.
+view is outside the sealed packet and has its own checksum manifest. The
+notebook uses `../runs/...` links because it is stored in `notebooks/`; those
+links resolve correctly in both VS Code and browser Jupyter. A stellar case
+remains student-view eligible when every explicitly requested fixed mass
+succeeded even if maximum mass is explicitly unavailable. The copied
+`case_ledger.csv` exposes the retained endpoint, requested-fixed-mass,
+maximum-mass-availability, and student-view-eligibility statuses separately.
 
 Start with `STUDENT_VIEW/01_READ_ME_FIRST.md`. For portable EoS analysis,
 keep `case_ledger.csv` and `thermodynamic_profiles.csv` from the same

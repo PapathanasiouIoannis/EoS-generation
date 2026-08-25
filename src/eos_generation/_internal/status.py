@@ -54,6 +54,19 @@ def _blocked_validation_report(
         "scientific_output_completeness": {
             "status": "not_assessed",
             "failures": [],
+            "limitations": [],
+            "warnings": [],
+            "checks": {},
+        },
+        "scientific_output_validity": {
+            "status": "not_assessed",
+            "failures": [],
+            "warnings": [],
+            "checks": {},
+        },
+        "scientific_output_availability": {
+            "status": "not_assessed",
+            "limitations": [],
             "warnings": [],
             "checks": {},
         },
@@ -95,6 +108,19 @@ def _source_blocked_validation_report(
         "scientific_output_completeness": {
             "status": "not_assessed",
             "failures": [],
+            "limitations": [],
+            "warnings": [],
+            "checks": {},
+        },
+        "scientific_output_validity": {
+            "status": "not_assessed",
+            "failures": [],
+            "warnings": [],
+            "checks": {},
+        },
+        "scientific_output_availability": {
+            "status": "not_assessed",
+            "limitations": [],
             "warnings": [],
             "checks": {},
         },
@@ -110,11 +136,23 @@ def _status_payload(
     summary: Mapping[str, Any] | None,
     summary_blocked_reason: str | None = None,
 ) -> dict[str, Any]:
+    scientific = validation.get("scientific_output_completeness")
+    availability = validation.get("scientific_output_availability")
+    if not isinstance(availability, Mapping) and isinstance(scientific, Mapping):
+        availability = scientific.get("availability")
+    if not isinstance(availability, Mapping):
+        availability = {
+            "status": "not_assessed",
+            "limitations": [],
+            "warnings": [],
+            "checks": {},
+        }
     payload: dict[str, Any] = {
         "schema_id": STATUS_SCHEMA_ID,
         "packet_path": str(packet),
         "packet_validity": packet_validity,
         "validation": dict(validation),
+        "scientific_availability": dict(availability),
         "summary_source": summary_source,
         "summary": None if summary is None else dict(summary),
     }
@@ -190,8 +228,8 @@ def build_bsk24_trial_status(
     Exact manifest coverage and hashes are checked before the layered packet
     validator runs.  The shared summary model is built only after both
     internal integrity and recognized current-source compatibility pass.
-    Scientifically incomplete packets may then be summarized, but are marked
-    invalid for status-command exit-code purposes.
+    Scientifically partial but hard-valid packets may then be summarized and
+    remain valid, with their availability reported separately.
     """
 
     if repository_root is not None:
@@ -325,11 +363,19 @@ def build_bsk24_trial_status(
         )
 
     scientific = validation.get("scientific_output_completeness")
-    complete = (
-        validation.get("status") == "pass"
-        and isinstance(scientific, Mapping)
-        and scientific.get("status") == "complete"
-    )
+    validity = validation.get("scientific_output_validity")
+    if not isinstance(validity, Mapping) and isinstance(scientific, Mapping):
+        validity = scientific.get("hard_validity")
+    if isinstance(validity, Mapping):
+        hard_valid = validity.get("status") == "pass"
+    else:
+        # Historical reports did not separate validity from completeness, so
+        # only their unambiguously complete state remains loadable.
+        hard_valid = bool(
+            isinstance(scientific, Mapping)
+            and scientific.get("status") == "complete"
+        )
+    complete = validation.get("status") == "pass" and hard_valid
     return _status_payload(
         packet,
         validation=validation,
@@ -347,6 +393,12 @@ def render_bsk24_trial_status_text(status: Mapping[str, Any]) -> str:
         f"BSk24 trial packet: {validity.upper()}",
         f"Packet: {status.get('packet_path', '<unknown>')}",
     ]
+    availability = status.get("scientific_availability")
+    if isinstance(availability, Mapping):
+        lines.append(
+            "Scientific availability: "
+            + str(availability.get("status", "not_assessed")).upper()
+        )
     summary = status.get("summary")
     if not isinstance(summary, Mapping):
         lines.append(

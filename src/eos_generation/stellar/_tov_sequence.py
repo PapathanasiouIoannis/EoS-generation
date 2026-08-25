@@ -259,11 +259,59 @@ def solve_sequence(
     if not isinstance(calculate_tidal, bool):
         raise ValueError("calculate_tidal must be boolean")
     p_max = p_max_causal if p_max_causal is not None else _ABSOLUTE_P_MAX_FALLBACK
+    try:
+        p_max = float(p_max)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("p_max_causal must be a finite positive pressure") from exc
+    if not np.isfinite(p_max) or p_max <= 0.0:
+        raise ValueError("p_max_causal must be a finite positive pressure")
+    pressure_floor = float(resolved.grid_pressure_min_log)
+    if not np.isfinite(pressure_floor) or pressure_floor <= 0.0:
+        raise ValueError("sequence central-pressure floor must be finite and positive")
+    if p_max_causal is not None and p_max <= pressure_floor:
+        reason = (
+            "retained EoS endpoint does not exceed the configured "
+            "central-pressure floor"
+        )
+        if return_sequence_evidence:
+            return _build_sequence_evidence(
+                full_sequence=(),
+                stable_sequence=(),
+                full_dense_profiles=(),
+                stable_dense_profiles=(),
+                full_tidal_diagnostics=() if return_tidal_diagnostics else None,
+                stable_tidal_diagnostics=() if return_tidal_diagnostics else None,
+                full_lambda_diagnostics=() if return_tidal_diagnostics else None,
+                stable_lambda_diagnostics=() if return_tidal_diagnostics else None,
+                attempted_central_pressures=[p_max],
+                failed_central_pressures=[
+                    TovFailureDetail(
+                        central_pressure=p_max,
+                        category="eos_endpoint_below_sequence_floor",
+                        reason=reason,
+                        solver_status=None,
+                    )
+                ],
+                sampled_peak_index=None,
+                sampled_secants=(),
+                eos_endpoint_pressure=p_max,
+                max_mass_stable=0.0,
+            )
+        if return_tidal_diagnostics:
+            return [], [], 0.0, []
+        return [], [], 0.0
     pressures = np.geomspace(
-        resolved.grid_pressure_min_log,
+        pressure_floor,
         p_max if p_max_causal is not None else 1000.0,
         resolved.sequence_points,
     )
+    if p_max_causal is not None:
+        pressures[-1] = p_max
+        if np.any(pressures > p_max) or not np.all(np.diff(pressures) > 0.0):
+            raise ValueError(
+                "central-pressure sequence is not strictly increasing within "
+                "the retained EoS endpoint"
+            )
 
     curve_data = []
     dense_profiles = []

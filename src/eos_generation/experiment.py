@@ -647,6 +647,64 @@ def run_experiment(plan: ExperimentPlan, *, execute: bool = False) -> Experiment
     )
 
 
+def _child_validation_allows_loading(
+    validation: Mapping[str, Any],
+) -> bool:
+    """Require integrity, source equivalence, and hard scientific validity."""
+
+    top_status = validation.get("status", validation.get("overall_status"))
+    if top_status not in {"pass", "complete", "validated"}:
+        return False
+    layered_keys = {
+        "internal_packet_integrity",
+        "current_source_equivalence",
+        "scientific_output_validity",
+        "scientific_output_completeness",
+    }
+    if not layered_keys.intersection(validation):
+        # Narrow compatibility for injected validators using the historical
+        # top-level pass/fail contract.
+        return True
+    internal = validation.get("internal_packet_integrity")
+    source = validation.get("current_source_equivalence")
+    scientific = validation.get("scientific_output_completeness")
+    validity = validation.get("scientific_output_validity")
+    if not isinstance(validity, Mapping) and isinstance(scientific, Mapping):
+        validity = scientific.get("hard_validity")
+    if not isinstance(validity, Mapping) and isinstance(scientific, Mapping):
+        validity = {
+            "status": (
+                "pass" if scientific.get("status") == "complete" else "fail"
+            )
+        }
+    return bool(
+        isinstance(internal, Mapping)
+        and internal.get("status") == "pass"
+        and isinstance(source, Mapping)
+        and source.get("status") == "equivalent"
+        and isinstance(validity, Mapping)
+        and validity.get("status") == "pass"
+    )
+
+
+def _child_scientific_availability_status(
+    validation: Mapping[str, Any],
+) -> str:
+    availability = validation.get("scientific_output_availability")
+    scientific = validation.get("scientific_output_completeness")
+    if not isinstance(availability, Mapping) and isinstance(scientific, Mapping):
+        availability = scientific.get("availability")
+    if isinstance(availability, Mapping):
+        status = availability.get("status")
+        if status in {"complete", "partial"}:
+            return str(status)
+    if isinstance(scientific, Mapping):
+        status = scientific.get("status")
+        if status in {"complete", "partial"}:
+            return str(status)
+    return "not_assessed"
+
+
 def load_experiment(
     path: str | Path,
     *,
@@ -825,7 +883,7 @@ def load_experiment(
         child_path = (experiment_path / value).resolve(strict=False)
         if _require_child_validation:
             validation = validate_trial(child_path, repository_root=root)
-            if validation.get("status") != "pass":
+            if not _child_validation_allows_loading(validation):
                 failures = validation.get("failures", [])
                 detail = failures[0] if failures else "unspecified validation failure"
                 raise ValueError(f"saved child packet failed validation: {detail}")
@@ -859,14 +917,22 @@ def validate_experiment(path: str | Path) -> dict[str, Any]:
         validate_trial(packet, repository_root=result.repository_root)
         for packet in result.packet_paths
     ]
-    passed = all(
-        item.get("status") in {"pass", "complete", "validated"}
-        or item.get("overall_status") in {"pass", "complete", "validated"}
-        for item in children
+    passed = all(_child_validation_allows_loading(item) for item in children)
+    availability_statuses = [
+        _child_scientific_availability_status(item) for item in children
+    ]
+    availability_status = (
+        "partial"
+        if "partial" in availability_statuses
+        else "complete"
+        if availability_statuses
+        and all(status == "complete" for status in availability_statuses)
+        else "not_assessed"
     )
     return {
         "schema_id": "eos_generation_validation_v1",
         "status": "pass" if passed else "fail",
+        "scientific_availability_status": availability_status,
         "experiment_path": str(result.experiment_path),
         "child_packet_count": len(children),
         "children": children,

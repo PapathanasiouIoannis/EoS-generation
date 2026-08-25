@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 from collections.abc import Mapping
 from pathlib import Path
@@ -27,9 +28,8 @@ STELLAR_STATUS_SCHEMA = "eos_generation_stellar_status_summary_v1"
 
 _FIXED_MASS_FAIL_CLOSED_STATUSES = frozenset(
     {
-        "unavailable_failed_maximum_mass_screen",
-        "unavailable_maximum_mass_not_resolved",
         "unavailable_not_bracketed",
+        "unavailable_outside_retained_eos_domain",
     }
 )
 _FIXED_MASS_RESULT_COLUMNS = (
@@ -41,13 +41,70 @@ _FIXED_MASS_RESULT_COLUMNS = (
     "central_sound_speed_squared",
     "k2",
     "lambda_dimensionless",
+    "bracket_pressure_mev_fm3",
+    "root_xtol_mev_fm3",
     "root_evaluation_count",
+)
+_FIXED_MASS_BACKGROUND_COLUMNS = (
+    "mass_msun",
+    "mass_residual_msun",
+    "radius_km",
+    "central_pressure_mev_fm3",
+    "central_energy_density_mev_fm3",
+    "central_sound_speed_squared",
+    "root_xtol_mev_fm3",
+    "root_evaluation_count",
+)
+_SEQUENCE_BACKGROUND_COLUMNS = (
+    "Mass",
+    "Radius",
+    "P_Central",
+    "Eps_Central",
+    "CS2_Central",
+    "eps_surf",
+    "central_pressure_mev_fm3",
+)
+_SEQUENCE_RESULT_COLUMNS = (
+    *_SEQUENCE_BACKGROUND_COLUMNS,
+    "Lambda",
+    "k2",
+    "is_sampled_peak",
+    "is_domain_end",
 )
 
 STELLAR_REQUIRED_FILES = (
     "stellar_sequences.csv",
     "fixed_mass_observables.csv",
     "stellar_convergence.json",
+)
+
+_THERMODYNAMIC_PROFILE_REQUIRED_NUMERIC_COLUMNS = (
+    "epsilon_mev_fm3",
+    "pressure_mev_fm3",
+    "cs2",
+    "delta_cs2",
+    "baryon_density_fm3",
+    "effective_baryon_enthalpy_mev",
+    "gamma_eff",
+    "energy_per_baryon_minus_neutron_rest_mev",
+    "pressure_relative_to_direct",
+    "baryon_density_relative_to_direct",
+    "enthalpy_relative_to_direct",
+)
+_THERMODYNAMIC_RESIDUAL_REQUIRED_NUMERIC_COLUMNS = (
+    "amplitude",
+    "delta_mev_fm3",
+    "epsilon_mev_fm3",
+    "r_p_algebraic",
+    "r_mu_algebraic",
+    "r_p_independent",
+    "r_p_independent_normalized",
+    "r_mu_independent",
+    "r_mu_independent_normalized",
+    "r_c",
+    "first_law_normalized",
+    "dP_dEpsilon_independent",
+    "mu_from_dEpsilon_dn_independent",
 )
 
 CURRENT_STELLAR_STATUS_FILES = (
@@ -67,6 +124,37 @@ def _float_or_none(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return result if math.isfinite(result) else None
+
+
+def _has_saved_value(value: Any) -> bool:
+    return value is not None and bool(str(value).strip())
+
+
+def _boolean_or_none(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if not _has_saved_value(value):
+        return None
+    normalized = str(value).strip().lower()
+    if normalized == "true":
+        return True
+    if normalized == "false":
+        return False
+    return None
+
+
+def _two_floats_or_none(value: Any) -> tuple[float, float] | None:
+    try:
+        parsed = json.loads(value) if isinstance(value, str) else value
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(parsed, (list, tuple)) or len(parsed) != 2:
+        return None
+    lower = _float_or_none(parsed[0])
+    upper = _float_or_none(parsed[1])
+    if lower is None or upper is None:
+        return None
+    return lower, upper
 
 
 def _extended_output_claimed(configuration: Any, metadata: Any) -> bool:
@@ -92,7 +180,9 @@ def _validate_fixed_mass_completeness(
     accepted: set[str],
     layer: _Layer,
     *,
+    availability: _Layer,
     require_tides: bool = True,
+    retained_pressure_endpoints: Mapping[str, float] | None = None,
 ) -> None:
     rows = _read_csv(packet, "fixed_mass_observables.csv", layer)
     if rows is None:
@@ -114,6 +204,13 @@ def _validate_fixed_mass_completeness(
         if (value := _float_or_none(item)) is not None
     ]
     case_ids = {"direct", *accepted}
+    if retained_pressure_endpoints is not None:
+        missing_endpoints = case_ids - set(retained_pressure_endpoints)
+        if missing_endpoints:
+            layer.fail(
+                "fixed_mass:retained_endpoints_missing:"
+                f"{sorted(missing_endpoints)}"
+            )
     expected = {
         (case_id, stage, mass.hex())
         for case_id in case_ids
@@ -123,8 +220,10 @@ def _validate_fixed_mass_completeness(
     actual: set[tuple[str, str, str]] = set()
     duplicates: set[tuple[str, str, str]] = set()
     background_unavailable = 0
+    valid_background_unavailable = 0
     unavailable_reasons: dict[str, int] = {}
-    tidal_failures = 0
+    tidal_unavailable = 0
+    hard_tidal_invalid = 0
     missing_reason = 0
     has_tidal_failure_reason = not rows or "tidal_failure_reason" in rows[0]
     if not has_tidal_failure_reason:
@@ -144,13 +243,16 @@ def _validate_fixed_mass_completeness(
             background_unavailable += 1
             status = str(row.get("status", ""))
             reason = str(row.get("reason") or "").strip()
+            unavailable_row_valid = True
             if status not in _FIXED_MASS_FAIL_CLOSED_STATUSES:
+                unavailable_row_valid = False
                 layer.fail(
                     "fixed_mass:invalid_background_status:"
                     f"{row.get('case_id', '')}:{row.get('stage', '')}:"
                     f"{row.get('target_mass_msun', '')}:{status}"
                 )
             elif not reason:
+                unavailable_row_valid = False
                 layer.fail(
                     "fixed_mass:unavailable_reason_missing:"
                     f"{row.get('case_id', '')}:{row.get('stage', '')}:"
@@ -163,9 +265,10 @@ def _validate_fixed_mass_completeness(
             contaminated = [
                 column
                 for column in _FIXED_MASS_RESULT_COLUMNS
-                if _float_or_none(row.get(column)) is not None
+                if _has_saved_value(row.get(column))
             ]
             if contaminated:
+                unavailable_row_valid = False
                 layer.fail(
                     "fixed_mass:unavailable_row_has_observables:"
                     f"{row.get('case_id', '')}:{row.get('stage', '')}:"
@@ -175,35 +278,123 @@ def _validate_fixed_mass_completeness(
             if str(row.get("tidal_status") or "").strip() or str(
                 row.get("tidal_failure_reason") or ""
             ).strip():
+                unavailable_row_valid = False
                 layer.fail(
                     "fixed_mass:unavailable_row_has_tidal_claim:"
                     f"{row.get('case_id', '')}:{row.get('stage', '')}:"
                     f"{row.get('target_mass_msun', '')}"
                 )
-        tidal_ok = bool(classification["tidal_valid"])
-        if background_ok and require_tides and not tidal_ok:
-            tidal_failures += 1
-            reason = str(classification["tidal_validity_reason"])
-            layer.fail(
-                "fixed_mass:invalid_tidal_row:"
-                f"{row.get('case_id', '')}:{row.get('stage', '')}:"
-                f"{row.get('target_mass_msun', '')}:{reason}"
+            if unavailable_row_valid:
+                valid_background_unavailable += 1
+        else:
+            invalid_background_columns = [
+                column
+                for column in _FIXED_MASS_BACKGROUND_COLUMNS
+                if _float_or_none(row.get(column)) is None
+            ]
+            mass_value = _float_or_none(row.get("mass_msun"))
+            radius = _float_or_none(row.get("radius_km"))
+            pressure = _float_or_none(row.get("central_pressure_mev_fm3"))
+            energy = _float_or_none(
+                row.get("central_energy_density_mev_fm3")
+            )
+            sound_speed = _float_or_none(
+                row.get("central_sound_speed_squared")
+            )
+            bracket = _two_floats_or_none(
+                row.get("bracket_pressure_mev_fm3")
+            )
+            root_xtol = _float_or_none(row.get("root_xtol_mev_fm3"))
+            evaluations = _integer_or_none(row.get("root_evaluation_count"))
+            endpoint = (
+                retained_pressure_endpoints.get(str(row.get("case_id") or ""))
+                if retained_pressure_endpoints is not None
+                else None
             )
             if (
-                row.get("tidal_status") == "failed_closed"
-                and not row.get("tidal_failure_reason")
+                invalid_background_columns
+                or mass_value is None
+                or mass_value <= 0.0
+                or radius is None
+                or radius <= 0.0
+                or pressure is None
+                or pressure <= 0.0
+                or energy is None
+                or energy <= 0.0
+                or sound_speed is None
+                or not 0.0 < sound_speed <= 1.0
+                or bracket is None
+                or bracket[0] <= 0.0
+                or bracket[0] >= bracket[1]
+                or not bracket[0] <= pressure <= bracket[1]
+                or root_xtol is None
+                or root_xtol <= 0.0
+                or evaluations is None
+                or evaluations <= 0
+                or _has_saved_value(row.get("reason"))
+                or (
+                    retained_pressure_endpoints is not None
+                    and (
+                        endpoint is None
+                        or pressure > endpoint
+                        or bracket[1] > endpoint
+                    )
+                )
             ):
+                layer.fail(
+                    "fixed_mass:invalid_solved_background_row:"
+                    f"{row.get('case_id', '')}:{row.get('stage', '')}:"
+                    f"{row.get('target_mass_msun', '')}:"
+                    f"{','.join(invalid_background_columns)}"
+                )
+        tidal_ok = bool(classification["tidal_valid"])
+        if background_ok and require_tides and not tidal_ok:
+            reason = str(classification["tidal_validity_reason"])
+            tidal_status = str(row.get("tidal_status") or "").strip()
+            tidal_failure_reason = str(
+                row.get("tidal_failure_reason") or ""
+            ).strip()
+            tidal_claims = [
+                column
+                for column in ("k2", "lambda_dimensionless")
+                if _has_saved_value(row.get(column))
+            ]
+            if (
+                tidal_status == "failed_closed"
+                and tidal_failure_reason
+                and not tidal_claims
+            ):
+                tidal_unavailable += 1
+            else:
+                hard_tidal_invalid += 1
+                layer.fail(
+                    "fixed_mass:invalid_tidal_row:"
+                    f"{row.get('case_id', '')}:{row.get('stage', '')}:"
+                    f"{row.get('target_mass_msun', '')}:{reason}:"
+                    f"claims={','.join(tidal_claims)}"
+                )
+            if tidal_status == "failed_closed" and not tidal_failure_reason:
                 missing_reason += 1
-        elif (
-            background_ok
-            and not require_tides
-            and row.get("tidal_status") != "not_requested_background_only"
-        ):
-            layer.fail(
-                "fixed_mass:unexpected_tidal_work:"
-                f"{row.get('case_id', '')}:{row.get('stage', '')}:"
-                f"{row.get('target_mass_msun', '')}"
+        elif background_ok and require_tides and tidal_ok:
+            if _has_saved_value(row.get("tidal_failure_reason")):
+                layer.fail(
+                    "fixed_mass:validated_tidal_row_has_failure_reason:"
+                    f"{row.get('case_id', '')}:{row.get('stage', '')}:"
+                    f"{row.get('target_mass_msun', '')}"
+                )
+        elif background_ok and not require_tides:
+            unexpected_tidal = bool(
+                row.get("tidal_status") != "not_requested_background_only"
+                or _has_saved_value(row.get("tidal_failure_reason"))
+                or _has_saved_value(row.get("k2"))
+                or _has_saved_value(row.get("lambda_dimensionless"))
             )
+            if unexpected_tidal:
+                layer.fail(
+                    "fixed_mass:unexpected_tidal_work:"
+                    f"{row.get('case_id', '')}:{row.get('stage', '')}:"
+                    f"{row.get('target_mass_msun', '')}"
+                )
     if duplicates:
         layer.fail(f"fixed_mass:duplicate_targets:{len(duplicates)}")
     missing = expected - actual
@@ -212,17 +403,28 @@ def _validate_fixed_mass_completeness(
         layer.fail(f"fixed_mass:missing_requested_rows:{len(missing)}")
     if unexpected:
         layer.fail(f"fixed_mass:unexpected_rows:{len(unexpected)}")
-    if tidal_failures:
-        layer.fail(f"fixed_mass:tidal_incomplete_failed_closed:{tidal_failures}")
     if missing_reason:
         layer.fail(f"fixed_mass:tidal_failure_reason_missing:{missing_reason}")
+    if valid_background_unavailable:
+        availability.fail(
+            "fixed_mass:background_unavailable:"
+            f"{valid_background_unavailable}"
+        )
+    if tidal_unavailable:
+        availability.fail(
+            f"fixed_mass:tidal_unavailable_failed_closed:{tidal_unavailable}"
+        )
     layer.checks["fixed_mass_requested_rows"] = len(expected)
     layer.checks["fixed_mass_present_rows"] = len(actual)
     layer.checks["fixed_mass_background_failures"] = background_unavailable
+    layer.checks["fixed_mass_valid_background_unavailable"] = (
+        valid_background_unavailable
+    )
     layer.checks["fixed_mass_fail_closed_reasons"] = dict(
         sorted(unavailable_reasons.items())
     )
-    layer.checks["fixed_mass_tidal_failures"] = tidal_failures
+    layer.checks["fixed_mass_tidal_unavailable"] = tidal_unavailable
+    layer.checks["fixed_mass_hard_tidal_invalid"] = hard_tidal_invalid
     layer.checks["fixed_mass_tidal_invalidity_reasons"] = {
         str(key): int(value)
         for key, value in tidal_classification.loc[
@@ -242,8 +444,10 @@ def _validate_sequence_completeness(
     accepted: set[str],
     layer: _Layer,
     *,
+    availability: _Layer,
     require_tides: bool = True,
     require_configured_count: bool = True,
+    retained_pressure_endpoints: Mapping[str, float] | None = None,
 ) -> None:
     rows = _read_csv(packet, "stellar_sequences.csv", layer)
     if rows is None:
@@ -255,7 +459,15 @@ def _validate_sequence_completeness(
         frame, schema="sequence"
     )
     expected_groups: dict[tuple[str, str], int] = {}
-    for case_id in {"direct", *accepted}:
+    case_ids = {"direct", *accepted}
+    if retained_pressure_endpoints is not None:
+        missing_endpoints = case_ids - set(retained_pressure_endpoints)
+        if missing_endpoints:
+            layer.fail(
+                "stellar_sequences:retained_endpoints_missing:"
+                f"{sorted(missing_endpoints)}"
+            )
+    for case_id in case_ids:
         for stage in configuration.get("tov_stages", []):
             if not isinstance(stage, dict) or not stage.get("name"):
                 continue
@@ -264,8 +476,11 @@ def _validate_sequence_completeness(
                 expected_groups[(case_id, str(stage["name"]))] = points
     actual_groups: dict[tuple[str, str], int] = {}
     background_failures = 0
-    tidal_failures = 0
-    tidal_failures_without_reason = 0
+    valid_background_unavailable = 0
+    tidal_unavailable = 0
+    hard_tidal_invalid = 0
+    endpoint_below_floor_groups: set[tuple[str, str]] = set()
+    invalid_endpoint_below_floor_groups: set[tuple[str, str]] = set()
     for position, row in enumerate(rows):
         key = (row.get("case_id", ""), row.get("stage", ""))
         actual_groups[key] = actual_groups.get(key, 0) + 1
@@ -274,35 +489,171 @@ def _validate_sequence_completeness(
         tidal_ok = bool(classification["tidal_valid"])
         if not background_ok:
             background_failures += 1
-        elif require_tides and not tidal_ok:
-            tidal_failures += 1
-            reason = str(classification["tidal_validity_reason"])
-            layer.fail(
-                "stellar_sequences:invalid_tidal_row:"
-                f"{row.get('case_id', '')}:{row.get('stage', '')}:"
-                f"{row.get('attempted_index', '')}:{reason}"
+            status = str(row.get("calculation_status") or "").strip()
+            category = str(row.get("failure_category") or "").strip()
+            reason = str(row.get("failure_reason") or "").strip()
+            pressure = _float_or_none(
+                row.get("central_pressure_mev_fm3")
             )
-            if (
-                row.get("tidal_status") == "failed_closed"
-                and not row.get("tidal_failure_reason")
-            ):
-                tidal_failures_without_reason += 1
-        elif (
-            not require_tides
-            and row.get("tidal_status") != "not_requested_background_only"
+            endpoint = (
+                retained_pressure_endpoints.get(str(row.get("case_id") or ""))
+                if retained_pressure_endpoints is not None
+                else None
+            )
+            contaminated = [
+                column
+                for column in _SEQUENCE_RESULT_COLUMNS
+                if column != "central_pressure_mev_fm3"
+                and _has_saved_value(row.get(column))
+            ]
+            tidal_claimed = any(
+                _has_saved_value(row.get(column))
+                for column in ("tidal_status", "tidal_failure_reason")
+            )
+            valid_failure = bool(
+                status == "failed"
+                and category
+                and reason
+                and pressure is not None
+                and pressure > 0.0
+                and (
+                    retained_pressure_endpoints is None
+                    or (endpoint is not None and pressure <= endpoint)
+                )
+                and not contaminated
+                and not tidal_claimed
+            )
+            if valid_failure:
+                valid_background_unavailable += 1
+                if category == "eos_endpoint_below_sequence_floor":
+                    endpoint_below_floor_groups.add(key)
+            else:
+                layer.fail(
+                    "stellar_sequences:invalid_failed_background_row:"
+                    f"{row.get('case_id', '')}:{row.get('stage', '')}:"
+                    f"{row.get('attempted_index', '')}:status={status}:"
+                    f"category={category}:claims={','.join(contaminated)}"
+                )
+                if category == "eos_endpoint_below_sequence_floor":
+                    invalid_endpoint_below_floor_groups.add(key)
+            continue
+        if str(row.get("calculation_status") or "").strip() != "success":
+            layer.fail(
+                "stellar_sequences:invalid_background_status:"
+                f"{row.get('case_id', '')}:{row.get('stage', '')}:"
+                f"{row.get('attempted_index', '')}:"
+                f"{row.get('calculation_status', '')}"
+            )
+            continue
+        invalid_background_columns = [
+            column
+            for column in _SEQUENCE_BACKGROUND_COLUMNS
+            if _float_or_none(row.get(column)) is None
+        ]
+        mass_value = _float_or_none(row.get("Mass"))
+        radius = _float_or_none(row.get("Radius"))
+        pressure = _float_or_none(row.get("P_Central"))
+        labelled_pressure = _float_or_none(
+            row.get("central_pressure_mev_fm3")
+        )
+        energy = _float_or_none(row.get("Eps_Central"))
+        sound_speed = _float_or_none(row.get("CS2_Central"))
+        surface_energy = _float_or_none(row.get("eps_surf"))
+        endpoint = (
+            retained_pressure_endpoints.get(str(row.get("case_id") or ""))
+            if retained_pressure_endpoints is not None
+            else None
+        )
+        if (
+            invalid_background_columns
+            or mass_value is None
+            or mass_value <= 0.0
+            or radius is None
+            or radius <= 0.0
+            or pressure is None
+            or pressure <= 0.0
+            or labelled_pressure != pressure
+            or energy is None
+            or energy <= 0.0
+            or sound_speed is None
+            or not 0.0 < sound_speed <= 1.0
+            or surface_energy is None
+            or surface_energy < 0.0
+            or (
+                retained_pressure_endpoints is not None
+                and (endpoint is None or pressure > endpoint)
+            )
+            or _has_saved_value(row.get("failure_category"))
+            or _has_saved_value(row.get("failure_reason"))
         ):
             layer.fail(
-                "stellar_sequences:unexpected_tidal_work:"
+                "stellar_sequences:invalid_successful_background_row:"
                 f"{row.get('case_id', '')}:{row.get('stage', '')}:"
-                f"{row.get('attempted_index', '')}"
+                f"{row.get('attempted_index', '')}:"
+                f"{','.join(invalid_background_columns)}"
             )
+        elif require_tides and not tidal_ok:
+            reason = str(classification["tidal_validity_reason"])
+            tidal_status = str(row.get("tidal_status") or "").strip()
+            tidal_failure_reason = str(
+                row.get("tidal_failure_reason") or ""
+            ).strip()
+            tidal_claims = [
+                column
+                for column in ("k2", "Lambda")
+                if _has_saved_value(row.get(column))
+            ]
+            if (
+                tidal_status == "failed_closed"
+                and tidal_failure_reason
+                and not tidal_claims
+            ):
+                tidal_unavailable += 1
+            else:
+                hard_tidal_invalid += 1
+                layer.fail(
+                    "stellar_sequences:invalid_tidal_row:"
+                    f"{row.get('case_id', '')}:{row.get('stage', '')}:"
+                    f"{row.get('attempted_index', '')}:{reason}:"
+                    f"claims={','.join(tidal_claims)}"
+                )
+        elif require_tides and tidal_ok:
+            if _has_saved_value(row.get("tidal_failure_reason")):
+                layer.fail(
+                    "stellar_sequences:validated_tidal_row_has_failure_reason:"
+                    f"{row.get('case_id', '')}:{row.get('stage', '')}:"
+                    f"{row.get('attempted_index', '')}"
+                )
+        elif not require_tides:
+            unexpected_tidal = bool(
+                row.get("tidal_status") != "not_requested_background_only"
+                or _has_saved_value(row.get("tidal_failure_reason"))
+                or _has_saved_value(row.get("k2"))
+                or _has_saved_value(row.get("Lambda"))
+            )
+            if unexpected_tidal:
+                layer.fail(
+                    "stellar_sequences:unexpected_tidal_work:"
+                    f"{row.get('case_id', '')}:{row.get('stage', '')}:"
+                    f"{row.get('attempted_index', '')}"
+                )
     for key, expected_count in expected_groups.items():
         actual_count = actual_groups.get(key, 0)
         if require_configured_count and actual_count != expected_count:
-            layer.fail(
-                "stellar_sequences:requested_count_mismatch:"
-                f"{key[0]}:{key[1]}:{actual_count}:{expected_count}"
-            )
+            if (
+                actual_count == 1
+                and key in endpoint_below_floor_groups
+                and key not in invalid_endpoint_below_floor_groups
+            ):
+                availability.fail(
+                    "stellar_sequences:endpoint_below_sequence_floor:"
+                    f"{key[0]}:{key[1]}"
+                )
+            else:
+                layer.fail(
+                    "stellar_sequences:requested_count_mismatch:"
+                    f"{key[0]}:{key[1]}:{actual_count}:{expected_count}"
+                )
         elif not require_configured_count and actual_count == 0:
             layer.fail(
                 "stellar_sequences:background_group_missing:"
@@ -310,17 +661,16 @@ def _validate_sequence_completeness(
             )
     for key in sorted(set(actual_groups) - set(expected_groups)):
         layer.fail(f"stellar_sequences:unexpected_group:{key[0]}:{key[1]}")
-    if background_failures:
-        # Failed rows may be valid fail-closed evidence, but the requested
-        # sequence is not a complete set of solved backgrounds.
-        layer.fail(f"stellar_sequences:background_failures:{background_failures}")
-    if tidal_failures_without_reason:
-        layer.fail(
-            "stellar_sequences:tidal_failures_without_reason:"
-            f"{tidal_failures_without_reason}"
+    if valid_background_unavailable:
+        availability.fail(
+            "stellar_sequences:background_unavailable:"
+            f"{valid_background_unavailable}"
         )
-    if tidal_failures:
-        layer.fail(f"stellar_sequences:tidal_incomplete_failed_closed:{tidal_failures}")
+    if tidal_unavailable:
+        availability.fail(
+            "stellar_sequences:tidal_unavailable_failed_closed:"
+            f"{tidal_unavailable}"
+        )
     layer.checks["stellar_sequence_requested_rows"] = (
         sum(expected_groups.values())
         if require_configured_count
@@ -328,7 +678,11 @@ def _validate_sequence_completeness(
     )
     layer.checks["stellar_sequence_present_rows"] = len(rows)
     layer.checks["stellar_sequence_background_failures"] = background_failures
-    layer.checks["stellar_sequence_tidal_failures"] = tidal_failures
+    layer.checks["stellar_sequence_valid_background_unavailable"] = (
+        valid_background_unavailable
+    )
+    layer.checks["stellar_sequence_tidal_unavailable"] = tidal_unavailable
+    layer.checks["stellar_sequence_hard_tidal_invalid"] = hard_tidal_invalid
     layer.checks["stellar_sequence_tidal_invalidity_reasons"] = {
         str(key): int(value)
         for key, value in tidal_classification.loc[
@@ -407,26 +761,33 @@ def _validate_final_lifecycle(
     rows = _read_csv(packet, "case_ledger.csv", layer)
     if rows is None:
         return
+    import pandas as pd
+
+    from eos_generation._internal.lifecycle import (
+        _completed_stellar_case_ids,
+        _maximum_mass_availability_status,
+        _requested_fixed_masses_status,
+    )
+
     stellar_enabled = _configuration_background_tov_requested(configuration)
+    saved_config = _saved_lifecycle_configuration(configuration)
+    fixed = (
+        pd.read_csv(packet / "fixed_mass_observables.csv")
+        if (packet / "fixed_mass_observables.csv").is_file()
+        else None
+    )
+    maximum = (
+        pd.read_csv(packet / "maximum_mass_screening.csv")
+        if (packet / "maximum_mass_screening.csv").is_file()
+        else None
+    )
     completed_stellar: set[str] = set()
     if stellar_enabled:
-        import pandas as pd
-
-        from eos_generation._internal.lifecycle import (
-            _completed_stellar_case_ids,
-        )
-
         sequences = (
             pd.read_csv(packet / "stellar_sequences.csv")
             if (packet / "stellar_sequences.csv").is_file()
             else None
         )
-        fixed = (
-            pd.read_csv(packet / "fixed_mass_observables.csv")
-            if (packet / "fixed_mass_observables.csv").is_file()
-            else None
-        )
-        saved_config = _saved_lifecycle_configuration(configuration)
         accepted_physical_ids = tuple(
             dict.fromkeys(
                 str(row.get("physical_case_id") or row.get("case_id", ""))
@@ -474,6 +835,52 @@ def _validate_final_lifecycle(
                 "case_lifecycle:reconstruction_status_mismatch:"
                 f"{case_id}:{row.get('pressure_reconstruction', '')}:"
                 f"{expected_reconstruction}"
+            )
+        try:
+            expected_fixed = _requested_fixed_masses_status(
+                saved_config,
+                case_id,
+                accepted=accepted_row,
+                fixed_mass_rows=fixed,
+            )
+            expected_maximum = _maximum_mass_availability_status(
+                saved_config,
+                case_id,
+                accepted=accepted_row,
+                maximum_mass_rows=maximum,
+            )
+        except Exception as exc:
+            layer.fail(
+                "case_lifecycle:availability_derivation_failed:"
+                f"{case_id}:{type(exc).__name__}:{exc}"
+            )
+            continue
+        if row.get("requested_fixed_masses_status") != expected_fixed:
+            layer.fail(
+                "case_lifecycle:fixed_mass_status_mismatch:"
+                f"{case_id}:{row.get('requested_fixed_masses_status', '')}:"
+                f"{expected_fixed}"
+            )
+        if row.get("maximum_mass_availability_status") != expected_maximum:
+            layer.fail(
+                "case_lifecycle:maximum_mass_status_mismatch:"
+                f"{case_id}:{row.get('maximum_mass_availability_status', '')}:"
+                f"{expected_maximum}"
+            )
+        expected_eligibility = (
+            "evidence_only_raw_gate_not_accepted"
+            if not accepted_row
+            else "eligible_thermodynamic_case"
+            if not stellar_enabled
+            else "eligible_all_requested_fixed_masses_succeeded"
+            if expected_fixed == "all_requested_fixed_masses_succeeded"
+            else "ineligible_requested_fixed_masses_incomplete"
+        )
+        if row.get("student_view_eligibility_status") != expected_eligibility:
+            layer.fail(
+                "case_lifecycle:student_eligibility_mismatch:"
+                f"{case_id}:{row.get('student_view_eligibility_status', '')}:"
+                f"{expected_eligibility}"
             )
 
 
@@ -696,7 +1103,96 @@ def _validate_response_population_reporting(
             )
     layer.checks["response_populations"] = checks
 
+_MAXIMUM_MODEL_FIELDS = (
+    "central_pressure_mev_fm3",
+    "mass_msun",
+    "radius_km",
+    "central_energy_density_mev_fm3",
+    "central_sound_speed_squared",
+)
+_MAXIMUM_BRACKET_FIELDS = (
+    "lower_pressure_mev_fm3",
+    "middle_pressure_mev_fm3",
+    "upper_pressure_mev_fm3",
+    "lower_mass_msun",
+    "middle_mass_msun",
+    "upper_mass_msun",
+    "left_dM_dPc_secant",
+    "right_dM_dPc_secant",
+)
 
+
+def _maximum_model_tuple(
+    value: Any,
+    *,
+    eos_endpoint: float,
+) -> tuple[float, float, float, float, float] | None:
+    if not isinstance(value, Mapping):
+        return None
+    resolved = tuple(_float_or_none(value.get(field)) for field in _MAXIMUM_MODEL_FIELDS)
+    if any(item is None for item in resolved):
+        return None
+    pressure, mass, radius, energy, sound_speed = (
+        float(item) for item in resolved if item is not None
+    )
+    if (
+        not 0.0 < pressure <= eos_endpoint
+        or mass <= 0.0
+        or radius <= 0.0
+        or energy <= 0.0
+        or not 0.0 < sound_speed <= 1.0
+    ):
+        return None
+    return pressure, mass, radius, energy, sound_speed
+
+
+def _maximum_bracket_tuple(
+    value: Any,
+    *,
+    eos_endpoint: float,
+) -> tuple[float, float, float, float, float, float, float, float] | None:
+    if not isinstance(value, Mapping):
+        return None
+    resolved = tuple(
+        _float_or_none(value.get(field)) for field in _MAXIMUM_BRACKET_FIELDS
+    )
+    if any(item is None for item in resolved):
+        return None
+    bracket = tuple(float(item) for item in resolved if item is not None)
+    lower, middle, upper, lower_mass, middle_mass, upper_mass, left, right = bracket
+    if (
+        not 0.0 < lower < middle < upper <= eos_endpoint
+        or lower_mass <= 0.0
+        or middle_mass <= 0.0
+        or upper_mass <= 0.0
+    ):
+        return None
+    expected_left = (middle_mass - lower_mass) / (middle - lower)
+    expected_right = (upper_mass - middle_mass) / (upper - middle)
+    tolerance = 128.0 * math.ulp(1.0)
+    if (
+        not math.isclose(
+            left,
+            expected_left,
+            rel_tol=tolerance,
+            abs_tol=tolerance * max(1.0, abs(expected_left)),
+        )
+        or not math.isclose(
+            right,
+            expected_right,
+            rel_tol=tolerance,
+            abs_tol=tolerance * max(1.0, abs(expected_right)),
+        )
+    ):
+        return None
+    return bracket
+
+
+def _optional_evidence_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def _validate_maximum_mass_artifacts(
@@ -705,6 +1201,8 @@ def _validate_maximum_mass_artifacts(
     configuration: Mapping[str, Any],
     accepted: set[str],
     layer: _Layer,
+    availability: _Layer,
+    retained_pressure_endpoints: Mapping[str, float] | None = None,
 ) -> None:
     """Validate one complete set of saved maximum-mass evidence."""
 
@@ -726,56 +1224,195 @@ def _validate_maximum_mass_artifacts(
         for case_id in {"direct", *accepted}
         for stage in stage_names
     }
+    if retained_pressure_endpoints is not None:
+        expected_case_ids = {case_id for case_id, _stage in expected_pairs}
+        missing_endpoints = expected_case_ids - set(retained_pressure_endpoints)
+        if missing_endpoints:
+            layer.fail(
+                "maximum_mass:retained_endpoints_missing:"
+                f"{sorted(missing_endpoints)}"
+            )
     observed_pairs: set[tuple[str, str]] = set()
+    duplicate_pairs: set[tuple[str, str]] = set()
+    rows_by_report_id: dict[str, Mapping[str, Any]] = {}
+    unresolved_count = 0
+    unresolved_statuses: dict[str, int] = {}
     if maximum_rows is not None:
         for row in maximum_rows:
             pair = (
                 str(row.get("case_id", "")),
                 str(row.get("stage", "")),
             )
+            if pair in observed_pairs:
+                duplicate_pairs.add(pair)
             observed_pairs.add(pair)
-            resolved = (
-                str(row.get("maximum_mass_resolved", "")).lower() == "true"
-            )
+            rows_by_report_id[f"{pair[0]}:{pair[1]}"] = row
+            status = str(row.get("status") or "").strip()
+            availability_status = str(
+                row.get("maximum_mass_availability_status") or ""
+            ).strip()
+            resolved = _boolean_or_none(row.get("maximum_mass_resolved"))
+            if resolved is None:
+                layer.fail(
+                    "maximum_mass:invalid_resolution_boolean:"
+                    f"{pair[0]}:{pair[1]}"
+                )
+                continue
             mass = _float_or_none(row.get("maximum_mass_msun"))
             pressure = _float_or_none(row.get("central_pressure_mev_fm3"))
+            energy = _float_or_none(
+                row.get("central_energy_density_mev_fm3")
+            )
+            sound_speed = _float_or_none(
+                row.get("central_sound_speed_squared")
+            )
+            radius = _float_or_none(row.get("radius_km"))
+            threshold = _float_or_none(
+                row.get("maximum_mass_threshold_msun")
+            )
+            threshold_claimed = _has_saved_value(
+                row.get("passes_maximum_mass_threshold")
+            )
+            threshold_result = _boolean_or_none(
+                row.get("passes_maximum_mass_threshold")
+            )
             left = _float_or_none(row.get("positive_left_secant"))
             right = _float_or_none(row.get("negative_right_secant"))
+            endpoint = _float_or_none(
+                row.get("eos_endpoint_pressure_mev_fm3")
+            )
+            expected_endpoint = (
+                retained_pressure_endpoints.get(pair[0])
+                if retained_pressure_endpoints is not None
+                else None
+            )
+            if threshold is None or threshold <= 0.0:
+                layer.fail(
+                    "maximum_mass:invalid_threshold:"
+                    f"{pair[0]}:{pair[1]}"
+                )
+            if threshold_claimed and threshold_result is None:
+                layer.fail(
+                    "maximum_mass:invalid_threshold_boolean:"
+                    f"{pair[0]}:{pair[1]}"
+                )
+            if endpoint is None or endpoint <= 0.0:
+                layer.fail(
+                    "maximum_mass:invalid_eos_endpoint:"
+                    f"{pair[0]}:{pair[1]}"
+                )
+            elif (
+                retained_pressure_endpoints is not None
+                and endpoint != expected_endpoint
+            ):
+                layer.fail(
+                    "maximum_mass:retained_endpoint_mismatch:"
+                    f"{pair[0]}:{pair[1]}"
+                )
             if resolved and (
                 mass is None
+                or mass <= 0.0
                 or pressure is None
+                or pressure <= 0.0
+                or energy is None
+                or energy <= 0.0
+                or sound_speed is None
+                or not 0.0 < sound_speed <= 1.0
+                or radius is None
+                or radius <= 0.0
+                or endpoint is None
+                or endpoint <= 0.0
+                or pressure > endpoint
                 or left is None
                 or right is None
                 or not left > 0.0
                 or not right < 0.0
+                or threshold_result is None
+                or not status.startswith("resolved_")
+                or availability_status != "resolved_bracketed_and_refined"
             ):
                 layer.fail(
                     "maximum_mass:resolved_without_turning_point_evidence:"
                     f"{pair[0]}:{pair[1]}"
                 )
-            if not resolved and mass is not None:
+            if not resolved:
+                expected_availability = f"unavailable_{status}"
+                contaminated = [
+                    column
+                    for column in (
+                        "maximum_mass_msun",
+                        "central_pressure_mev_fm3",
+                        "central_energy_density_mev_fm3",
+                        "central_sound_speed_squared",
+                        "radius_km",
+                        "positive_left_secant",
+                        "negative_right_secant",
+                    )
+                    if _has_saved_value(row.get(column))
+                ]
+                unresolved_row_valid = bool(
+                    status.startswith("unresolved_")
+                    and availability_status == expected_availability
+                    and not contaminated
+                    and not threshold_claimed
+                    and str(row.get("endpoint_limitation") or "").strip()
+                    and str(row.get("refinement_status") or "").strip()
+                    and endpoint is not None
+                    and endpoint > 0.0
+                )
+                if not unresolved_row_valid:
+                    layer.fail(
+                        "maximum_mass:malformed_unresolved_row:"
+                        f"{pair[0]}:{pair[1]}:status={status}:"
+                        f"availability={availability_status}:"
+                        f"claims={','.join(contaminated)}"
+                    )
+                else:
+                    unresolved_count += 1
+                    unresolved_statuses[status] = (
+                        unresolved_statuses.get(status, 0) + 1
+                    )
+            turning_points = _integer_or_none(
+                row.get("turning_point_count")
+            )
+            if (
+                turning_points is None
+                or turning_points < 0
+                or (resolved and turning_points < 1)
+            ):
                 layer.fail(
-                    "maximum_mass:unresolved_row_claims_mass:"
+                    "maximum_mass:invalid_turning_point_count:"
                     f"{pair[0]}:{pair[1]}"
                 )
             maximum_mass_tidal_calls = _integer_or_none(
                 row.get("tidal_solver_calls_for_maximum_mass")
             )
-            if (
-                maximum_mass_tidal_calls is not None
-                and maximum_mass_tidal_calls != 0
-            ):
+            if maximum_mass_tidal_calls != 0:
                 layer.fail(
                     "maximum_mass:refinement_used_tidal_solver:"
                     f"{pair[0]}:{pair[1]}"
                 )
+        if duplicate_pairs:
+            layer.fail(
+                "maximum_mass:duplicate_case_stage_rows:"
+                f"{sorted(duplicate_pairs)}"
+            )
         if observed_pairs != expected_pairs:
             layer.fail(
                 "maximum_mass:case_stage_coverage_mismatch:"
                 f"missing={sorted(expected_pairs - observed_pairs)}:"
                 f"extra={sorted(observed_pairs - expected_pairs)}"
             )
+    if unresolved_count:
+        availability.fail(
+            f"maximum_mass:unavailable:{unresolved_count}"
+        )
+    availability.checks["maximum_mass_unavailable_status_counts"] = dict(
+        sorted(unresolved_statuses.items())
+    )
     if isinstance(reports, dict):
+        if reports.get("schema_id") != "bsk24_maximum_mass_reports_v2":
+            layer.fail("maximum_mass:unsupported_report_schema")
         report_cases = reports.get("cases")
         expected_report_ids = {
             f"{case_id}:{stage}" for case_id, stage in expected_pairs
@@ -785,15 +1422,767 @@ def _validate_maximum_mass_artifacts(
         elif isinstance(report_cases, dict):
             for report_id, maximum_report in report_cases.items():
                 if not isinstance(maximum_report, dict):
+                    layer.fail(
+                        f"maximum_mass:malformed_report:{report_id}"
+                    )
                     continue
+                row = rows_by_report_id.get(report_id)
+                if row is None:
+                    continue
+                problems: list[str] = []
+
+                required_fields = {
+                    "schema_id",
+                    "status",
+                    "maximum_mass_resolved",
+                    "decision_basis",
+                    "sampled_argmax_is_maximum_mass",
+                    "maximum_mass_threshold_msun",
+                    "passes_maximum_mass_threshold",
+                    "maximum_mass_msun",
+                    "central_pressure_mev_fm3",
+                    "central_energy_density_mev_fm3",
+                    "central_sound_speed_squared",
+                    "radius_km",
+                    "turning_point_count",
+                    "turning_point_brackets",
+                    "selected_bracket",
+                    "positive_left_secant",
+                    "negative_right_secant",
+                    "stable_branch_extent",
+                    "sampled_models",
+                    "eos_endpoint",
+                    "convergence",
+                    "tidal_calculations_performed",
+                }
+                missing = sorted(required_fields - set(maximum_report))
+                if missing:
+                    problems.append(f"missing_fields={missing}")
+
+                report_resolved = maximum_report.get(
+                    "maximum_mass_resolved"
+                )
+                row_resolved = _boolean_or_none(
+                    row.get("maximum_mass_resolved")
+                )
+                if (
+                    maximum_report.get("schema_id")
+                    != "tov_resolved_maximum_mass_v2"
+                    or maximum_report.get("status") != row.get("status")
+                    or not isinstance(report_resolved, bool)
+                    or report_resolved != row_resolved
+                    or maximum_report.get("sampled_argmax_is_maximum_mass")
+                    is not False
+                ):
+                    problems.append("identity_or_resolution")
+
+                report_threshold = maximum_report.get(
+                    "passes_maximum_mass_threshold"
+                )
+                row_threshold = _boolean_or_none(
+                    row.get("passes_maximum_mass_threshold")
+                )
+                if report_threshold is not row_threshold:
+                    problems.append("threshold_decision")
+
+                for field in (
+                    "maximum_mass_threshold_msun",
+                    "maximum_mass_msun",
+                    "central_pressure_mev_fm3",
+                    "central_energy_density_mev_fm3",
+                    "central_sound_speed_squared",
+                    "radius_km",
+                    "positive_left_secant",
+                    "negative_right_secant",
+                ):
+                    if _float_or_none(maximum_report.get(field)) != _float_or_none(
+                        row.get(field)
+                    ):
+                        problems.append(f"csv_json_{field}")
+
+                endpoint = _float_or_none(
+                    row.get("eos_endpoint_pressure_mev_fm3")
+                )
+                endpoint_evidence = maximum_report.get("eos_endpoint")
+                endpoint_reached: bool | None = None
+                if not isinstance(endpoint_evidence, Mapping):
+                    problems.append("eos_endpoint_object")
+                else:
+                    endpoint_reached_value = endpoint_evidence.get(
+                        "reached_by_search"
+                    )
+                    if isinstance(endpoint_reached_value, bool):
+                        endpoint_reached = endpoint_reached_value
+                    else:
+                        problems.append("endpoint_reached_boolean")
+                    if (
+                        _float_or_none(
+                            endpoint_evidence.get("pressure_mev_fm3")
+                        )
+                        != endpoint
+                        or _optional_evidence_text(
+                            endpoint_evidence.get("limitation")
+                        )
+                        != _optional_evidence_text(
+                            row.get("endpoint_limitation")
+                        )
+                    ):
+                        problems.append("eos_endpoint_csv_json")
+
+                brackets: list[tuple[float, ...]] = []
+                bracket_values = maximum_report.get(
+                    "turning_point_brackets"
+                )
+                if endpoint is None or endpoint <= 0.0 or not isinstance(
+                    bracket_values, list
+                ):
+                    problems.append("turning_point_brackets")
+                else:
+                    for value in bracket_values:
+                        parsed = _maximum_bracket_tuple(
+                            value,
+                            eos_endpoint=endpoint,
+                        )
+                        if parsed is None:
+                            problems.append("invalid_turning_point_bracket")
+                            break
+                        brackets.append(parsed)
+                report_turning_count = _integer_or_none(
+                    maximum_report.get("turning_point_count")
+                )
+                row_turning_count = _integer_or_none(
+                    row.get("turning_point_count")
+                )
+                if (
+                    report_turning_count is None
+                    or report_turning_count != row_turning_count
+                    or report_turning_count != len(brackets)
+                ):
+                    problems.append("turning_point_count")
+
+                selected_value = maximum_report.get("selected_bracket")
+                selected: tuple[float, ...] | None = None
+                if selected_value is not None:
+                    if endpoint is None or endpoint <= 0.0:
+                        problems.append("selected_bracket_without_endpoint")
+                    else:
+                        selected = _maximum_bracket_tuple(
+                            selected_value,
+                            eos_endpoint=endpoint,
+                        )
+                        if selected is None or selected not in brackets:
+                            problems.append("selected_bracket")
+
+                sampled: list[tuple[float, ...]] = []
+                sampled_values = maximum_report.get("sampled_models")
+                if endpoint is None or endpoint <= 0.0 or not isinstance(
+                    sampled_values, list
+                ):
+                    problems.append("sampled_models")
+                else:
+                    for value in sampled_values:
+                        parsed = _maximum_model_tuple(
+                            value,
+                            eos_endpoint=endpoint,
+                        )
+                        if parsed is None:
+                            problems.append("invalid_sampled_model")
+                            break
+                        sampled.append(parsed)
+                if any(
+                    right[0] <= left[0]
+                    for left, right in zip(sampled[:-1], sampled[1:])
+                ):
+                    problems.append("sampled_model_ordering")
+                sampled_sequence_count = _integer_or_none(
+                    row.get("sampled_sequence_model_count")
+                )
+                if (
+                    sampled_sequence_count is None
+                    or sampled_sequence_count < 0
+                    or sampled_sequence_count > len(sampled)
+                ):
+                    problems.append("sampled_sequence_model_count")
+                if endpoint_reached is not None and endpoint is not None:
+                    sampled_reaches_endpoint = any(
+                        model[0] == endpoint for model in sampled
+                    )
+                    if endpoint_reached != sampled_reaches_endpoint:
+                        problems.append("endpoint_reach_model_consistency")
+
+                stable: list[tuple[float, ...]] = []
+                stable_extent = maximum_report.get(
+                    "stable_branch_extent"
+                )
+                if not isinstance(stable_extent, Mapping):
+                    problems.append("stable_branch_extent")
+                else:
+                    stable_values = stable_extent.get("models")
+                    if endpoint is None or endpoint <= 0.0 or not isinstance(
+                        stable_values, list
+                    ):
+                        problems.append("stable_branch_models")
+                    else:
+                        for value in stable_values:
+                            parsed = _maximum_model_tuple(
+                                value,
+                                eos_endpoint=endpoint,
+                            )
+                            if parsed is None:
+                                problems.append("invalid_stable_model")
+                                break
+                            stable.append(parsed)
+                    if any(
+                        right[0] <= left[0]
+                        for left, right in zip(stable[:-1], stable[1:])
+                    ):
+                        problems.append("stable_model_ordering")
+                    stable_count = _integer_or_none(
+                        stable_extent.get("model_count")
+                    )
+                    stable_maximum_pressure = _float_or_none(
+                        stable_extent.get(
+                            "maximum_central_pressure_mev_fm3"
+                        )
+                    )
+                    expected_stable_maximum = stable[-1][0] if stable else None
+                    if (
+                        stable_count != len(stable)
+                        or stable_maximum_pressure
+                        != expected_stable_maximum
+                    ):
+                        problems.append("stable_branch_summary")
+
+                convergence = maximum_report.get("convergence")
+                if not isinstance(convergence, Mapping):
+                    problems.append("convergence_object")
+                else:
+                    refinement_iterations = _integer_or_none(
+                        convergence.get("refinement_iterations")
+                    )
+                    global_rounds = _integer_or_none(
+                        convergence.get("global_refinement_rounds")
+                    )
+                    solver_calls = _integer_or_none(
+                        convergence.get("solver_call_count")
+                    )
+                    solver_failure_count = _integer_or_none(
+                        convergence.get("solver_failure_count")
+                    )
+                    solver_failures = convergence.get("solver_failures")
+                    if (
+                        convergence.get("refinement_status")
+                        != row.get("refinement_status")
+                        or refinement_iterations is None
+                        or refinement_iterations < 0
+                        or global_rounds is None
+                        or global_rounds < 0
+                        or solver_calls is None
+                        or solver_calls < 0
+                        or solver_calls
+                        != _integer_or_none(
+                            row.get("local_background_solver_call_count")
+                        )
+                        or solver_failure_count is None
+                        or solver_failure_count < 0
+                        or not isinstance(solver_failures, list)
+                        or solver_failure_count
+                        != (
+                            len(solver_failures)
+                            if isinstance(solver_failures, list)
+                            else -1
+                        )
+                    ):
+                        problems.append("convergence_summary")
+                    if isinstance(solver_failures, list):
+                        failure_pressures: list[float] = []
+                        for failure in solver_failures:
+                            if not isinstance(failure, Mapping):
+                                problems.append("solver_failure_record")
+                                break
+                            failure_pressure = _float_or_none(
+                                failure.get("central_pressure_mev_fm3")
+                            )
+                            if (
+                                endpoint is None
+                                or failure_pressure is None
+                                or not 0.0 < failure_pressure <= endpoint
+                                or not _optional_evidence_text(
+                                    failure.get("reason")
+                                )
+                            ):
+                                problems.append("solver_failure_record")
+                                break
+                            failure_pressures.append(failure_pressure)
+                        if len(set(failure_pressures)) != len(failure_pressures):
+                            problems.append("duplicate_solver_failure_pressure")
+
                 report_tidal_calls = _integer_or_none(
                     maximum_report.get("tidal_calculations_performed")
                 )
-                if report_tidal_calls is not None and report_tidal_calls != 0:
-                    layer.fail(
-                        "maximum_mass:refinement_used_tidal_solver:"
-                        f"{report_id}"
+                if report_tidal_calls != 0:
+                    problems.append("tidal_solver_use")
+
+                report_mass = _float_or_none(
+                    maximum_report.get("maximum_mass_msun")
+                )
+                report_pressure = _float_or_none(
+                    maximum_report.get("central_pressure_mev_fm3")
+                )
+                report_radius = _float_or_none(
+                    maximum_report.get("radius_km")
+                )
+                report_energy = _float_or_none(
+                    maximum_report.get(
+                        "central_energy_density_mev_fm3"
                     )
+                )
+                report_sound_speed = _float_or_none(
+                    maximum_report.get("central_sound_speed_squared")
+                )
+                left_secant = _float_or_none(
+                    maximum_report.get("positive_left_secant")
+                )
+                right_secant = _float_or_none(
+                    maximum_report.get("negative_right_secant")
+                )
+                report_threshold_msun = _float_or_none(
+                    maximum_report.get("maximum_mass_threshold_msun")
+                )
+                maximum_model = (
+                    report_pressure,
+                    report_mass,
+                    report_radius,
+                    report_energy,
+                    report_sound_speed,
+                )
+                resolved_secants_match = False
+                if (
+                    selected is not None
+                    and report_pressure is not None
+                    and report_mass is not None
+                    and left_secant is not None
+                    and right_secant is not None
+                    and selected[0] < report_pressure < selected[2]
+                ):
+                    expected_left_secant = (
+                        report_mass - selected[3]
+                    ) / (report_pressure - selected[0])
+                    expected_right_secant = (
+                        selected[5] - report_mass
+                    ) / (selected[2] - report_pressure)
+                    secant_tolerance = 128.0 * math.ulp(1.0)
+                    resolved_secants_match = bool(
+                        math.isclose(
+                            left_secant,
+                            expected_left_secant,
+                            rel_tol=secant_tolerance,
+                            abs_tol=secant_tolerance
+                            * max(1.0, abs(expected_left_secant)),
+                        )
+                        and math.isclose(
+                            right_secant,
+                            expected_right_secant,
+                            rel_tol=secant_tolerance,
+                            abs_tol=secant_tolerance
+                            * max(1.0, abs(expected_right_secant)),
+                        )
+                    )
+                if report_resolved is True:
+                    if (
+                        maximum_report.get("decision_basis")
+                        != "refined_positive_to_negative_dM_dPc_turning_point"
+                        or report_mass is None
+                        or report_pressure is None
+                        or report_radius is None
+                        or report_energy is None
+                        or report_sound_speed is None
+                        or report_threshold_msun is None
+                        or report_threshold
+                        is not (report_mass >= report_threshold_msun)
+                        or len(brackets) != 1
+                        or selected != brackets[0]
+                        or selected[6] <= 0.0
+                        or selected[7] >= 0.0
+                        or not selected[0] < report_pressure < selected[2]
+                        or left_secant is None
+                        or left_secant <= 0.0
+                        or right_secant is None
+                        or right_secant >= 0.0
+                        or not resolved_secants_match
+                        or _optional_evidence_text(
+                            maximum_report.get("eos_endpoint", {}).get(
+                                "limitation"
+                            )
+                            if isinstance(
+                                maximum_report.get("eos_endpoint"), Mapping
+                            )
+                            else None
+                        )
+                        is not None
+                        or not stable
+                        or stable[-1] != maximum_model
+                        or any(model[1] > report_mass for model in stable)
+                        or any(
+                            model not in sampled and model != maximum_model
+                            for model in stable
+                        )
+                    ):
+                        problems.append("resolved_scientific_evidence")
+                elif report_resolved is False:
+                    if (
+                        maximum_report.get("decision_basis")
+                        != "fail_closed_no_resolved_turning_point"
+                        or not str(
+                            maximum_report.get("status") or ""
+                        ).startswith("unresolved_")
+                        or report_threshold is not None
+                        or any(
+                            value is not None
+                            for value in maximum_model
+                        )
+                        or left_secant is not None
+                        or right_secant is not None
+                        or not _optional_evidence_text(
+                            endpoint_evidence.get("limitation")
+                            if isinstance(endpoint_evidence, Mapping)
+                            else None
+                        )
+                    ):
+                        problems.append("unresolved_scientific_evidence")
+
+                if problems:
+                    layer.fail(
+                        "maximum_mass:malformed_json_evidence:"
+                        f"{report_id}:{','.join(sorted(set(problems)))}"
+                    )
+
+
+def _ordered_case_blocks(
+    rows: list[dict[str, str]],
+    *,
+    relative: str,
+    layer: _Layer,
+) -> tuple[list[str], dict[str, list[dict[str, str]]]]:
+    """Return contiguous case blocks while recording malformed ordering."""
+
+    order: list[str] = []
+    blocks: dict[str, list[dict[str, str]]] = {}
+    current: str | None = None
+    closed: set[str] = set()
+    for position, row in enumerate(rows):
+        case_id = str(row.get("case_id") or "").strip()
+        if not case_id:
+            layer.fail(f"thermodynamic_output:missing_case_id:{relative}:{position}")
+            continue
+        if case_id != current:
+            if current is not None:
+                closed.add(current)
+            if case_id in closed:
+                layer.fail(
+                    f"thermodynamic_output:noncontiguous_case_block:"
+                    f"{relative}:{case_id}"
+                )
+            if case_id not in blocks:
+                order.append(case_id)
+            current = case_id
+        blocks.setdefault(case_id, []).append(row)
+    return order, blocks
+
+
+def _strictly_increasing(values: list[float]) -> bool:
+    return bool(values) and all(
+        right > left for left, right in zip(values[:-1], values[1:])
+    )
+
+
+def _validate_thermodynamic_outputs(
+    packet: Path,
+    *,
+    accepted: set[str],
+    layer: _Layer,
+) -> dict[str, tuple[float, float]]:
+    """Validate saved reconstructed state without judging finite diagnostics.
+
+    Core state, interpolation coordinates, and inversion outputs must remain
+    finite and physically ordered.  Finite values of auxiliary diagnostics and
+    residuals are retained as evidence but are not compared with a magnitude,
+    sign, or trend threshold here.
+    """
+
+    expected_raw_domain: tuple[float, float] | None = None
+    expected_direct_pressure: float | None = None
+    raw_gate = _load_json(packet, "raw_gate_report.json", layer)
+    raw_cases = raw_gate.get("cases") if isinstance(raw_gate, dict) else None
+    if isinstance(raw_cases, dict) and raw_cases:
+        raw_domains: set[tuple[float, float]] = set()
+        zero_amplitude_endpoints: set[tuple[float, float, float]] = set()
+        for report in raw_cases.values():
+            if not isinstance(report, Mapping):
+                continue
+            domain = report.get("complete_proposed_retained_domain_mev_fm3")
+            if isinstance(domain, list) and len(domain) == 2:
+                lower = _float_or_none(domain[0])
+                upper = _float_or_none(domain[1])
+                if (
+                    lower is not None
+                    and upper is not None
+                    and 0.0 < lower < upper
+                ):
+                    raw_domains.add((lower, upper))
+            parameters = report.get("parameters")
+            retained = report.get("retained_domain")
+            amplitude = (
+                _float_or_none(parameters.get("amplitude"))
+                if isinstance(parameters, Mapping)
+                else None
+            )
+            if amplitude == 0.0 and isinstance(retained, Mapping):
+                epsilon_min = _float_or_none(
+                    retained.get("epsilon_min_mev_fm3")
+                )
+                epsilon_max = _float_or_none(
+                    retained.get("epsilon_max_mev_fm3")
+                )
+                pressure_max = _float_or_none(
+                    retained.get("pressure_max_mev_fm3")
+                )
+                if (
+                    report.get("status") == "accepted_raw_local_physics_gate"
+                    and retained.get("endpoint_reason")
+                    == "direct_bsk24_causal_endpoint"
+                    and epsilon_min is not None
+                    and epsilon_max is not None
+                    and pressure_max is not None
+                ):
+                    zero_amplitude_endpoints.add(
+                        (epsilon_min, epsilon_max, pressure_max)
+                    )
+        if len(raw_domains) == 1:
+            expected_raw_domain = next(iter(raw_domains))
+        else:
+            layer.fail("thermodynamic_output:raw_domain_not_authoritative")
+        if len(zero_amplitude_endpoints) == 1:
+            zero_endpoint = next(iter(zero_amplitude_endpoints))
+            if expected_raw_domain == zero_endpoint[:2]:
+                expected_direct_pressure = zero_endpoint[2]
+            else:
+                layer.fail(
+                    "thermodynamic_output:a0_direct_endpoint_domain_mismatch"
+                )
+        else:
+            layer.fail("thermodynamic_output:a0_direct_endpoint_not_authoritative")
+    else:
+        layer.fail("thermodynamic_output:raw_gate_cases_unavailable")
+
+    ledger_endpoints: dict[str, tuple[float, float]] = {}
+    ledger_rows = _read_csv(packet, "case_ledger.csv", layer)
+    if ledger_rows is not None:
+        for case_id in accepted:
+            matches = [
+                row
+                for row in ledger_rows
+                if str(row.get("case_id") or "") == case_id
+            ]
+            epsilon_endpoint = (
+                _float_or_none(matches[0].get("retained_epsilon_max_mev_fm3"))
+                if len(matches) == 1
+                else None
+            )
+            pressure_endpoint = (
+                _float_or_none(matches[0].get("retained_pressure_max_mev_fm3"))
+                if len(matches) == 1
+                else None
+            )
+            if (
+                epsilon_endpoint is None
+                or epsilon_endpoint <= 0.0
+                or pressure_endpoint is None
+                or pressure_endpoint <= 0.0
+            ):
+                layer.fail(
+                    "thermodynamic_output:invalid_ledger_retained_endpoint:"
+                    f"{case_id}"
+                )
+            else:
+                ledger_endpoints[case_id] = (
+                    epsilon_endpoint,
+                    pressure_endpoint,
+                )
+
+    profile_relative = "thermodynamic_profiles.csv"
+    profile_rows = _read_csv(packet, profile_relative, layer)
+    profile_blocks: dict[str, list[dict[str, str]]] = {}
+    profile_endpoints: dict[str, tuple[float, float]] = {}
+    if profile_rows is None:
+        layer.fail(f"missing_thermodynamic_output:{profile_relative}")
+    else:
+        profile_order, profile_blocks = _ordered_case_blocks(
+            profile_rows,
+            relative=profile_relative,
+            layer=layer,
+        )
+        expected = {"direct", *accepted}
+        present = set(profile_blocks)
+        if present != expected:
+            layer.fail(
+                "thermodynamic_output:profile_case_set_mismatch:"
+                f"missing={sorted(expected - present)}:"
+                f"unexpected={sorted(present - expected)}"
+            )
+        if profile_order and profile_order[0] != "direct":
+            layer.fail("thermodynamic_output:direct_baseline_not_first")
+
+        for case_id, case_rows in profile_blocks.items():
+            epsilon: list[float] = []
+            pressure: list[float] = []
+            density: list[float] = []
+            for position, row in enumerate(case_rows):
+                missing_columns = sorted(
+                    set(_THERMODYNAMIC_PROFILE_REQUIRED_NUMERIC_COLUMNS)
+                    - set(row)
+                )
+                invalid_columns = [
+                    column
+                    for column in _THERMODYNAMIC_PROFILE_REQUIRED_NUMERIC_COLUMNS
+                    if column in row and _float_or_none(row.get(column)) is None
+                ]
+                if case_id != "direct":
+                    for column in ("amplitude", "delta_mev_fm3"):
+                        if column not in row:
+                            missing_columns.append(column)
+                        elif _float_or_none(row.get(column)) is None:
+                            invalid_columns.append(column)
+                if missing_columns or invalid_columns:
+                    layer.fail(
+                        "thermodynamic_output:nonfinite_or_missing_profile_value:"
+                        f"{case_id}:{position}:"
+                        f"missing={sorted(set(missing_columns))}:"
+                        f"invalid={sorted(set(invalid_columns))}"
+                    )
+                    continue
+
+                epsilon_value = float(row["epsilon_mev_fm3"])
+                pressure_value = float(row["pressure_mev_fm3"])
+                cs2_value = float(row["cs2"])
+                density_value = float(row["baryon_density_fm3"])
+                enthalpy_value = float(row["effective_baryon_enthalpy_mev"])
+                if (
+                    epsilon_value <= 0.0
+                    or pressure_value <= 0.0
+                    or not 0.0 < cs2_value <= 1.0
+                    or density_value <= 0.0
+                    or enthalpy_value <= 0.0
+                ):
+                    layer.fail(
+                        "thermodynamic_output:invalid_profile_core_state:"
+                        f"{case_id}:{position}"
+                    )
+                epsilon.append(epsilon_value)
+                pressure.append(pressure_value)
+                density.append(density_value)
+
+            if len(epsilon) != len(case_rows):
+                continue
+            for coordinate, values in (
+                ("epsilon_mev_fm3", epsilon),
+                ("pressure_mev_fm3", pressure),
+                ("baryon_density_fm3", density),
+            ):
+                if not _strictly_increasing(values):
+                    layer.fail(
+                        "thermodynamic_output:nonmonotone_profile_coordinate:"
+                        f"{case_id}:{coordinate}"
+                    )
+            if expected_raw_domain is not None and epsilon[0] != expected_raw_domain[0]:
+                layer.fail(
+                    "thermodynamic_output:profile_lower_endpoint_mismatch:"
+                    f"{case_id}"
+                )
+            if case_id == "direct" and expected_raw_domain is not None:
+                if (
+                    epsilon[-1] != expected_raw_domain[1]
+                    or pressure[-1] != expected_direct_pressure
+                ):
+                    layer.fail(
+                        "thermodynamic_output:direct_retained_endpoint_mismatch"
+                    )
+            profile_endpoints[case_id] = (epsilon[-1], pressure[-1])
+
+        for case_id in accepted:
+            ledger_endpoint = ledger_endpoints.get(case_id)
+            profile_endpoint = profile_endpoints.get(case_id)
+            if (
+                ledger_endpoint is None
+                or profile_endpoint is None
+                or profile_endpoint != ledger_endpoint
+            ):
+                layer.fail(
+                    "thermodynamic_output:profile_retained_endpoint_mismatch:"
+                    f"{case_id}"
+                )
+
+    residual_relative = "thermodynamic_residuals.csv"
+    residual_rows = _read_csv(packet, residual_relative, layer)
+    if residual_rows is None:
+        if accepted:
+            layer.fail(f"missing_thermodynamic_output:{residual_relative}")
+    else:
+        _, residual_blocks = _ordered_case_blocks(
+            residual_rows,
+            relative=residual_relative,
+            layer=layer,
+        )
+        if set(residual_blocks) != accepted:
+            layer.fail(
+                "thermodynamic_output:residual_case_set_mismatch:"
+                f"missing={sorted(accepted - set(residual_blocks))}:"
+                f"unexpected={sorted(set(residual_blocks) - accepted)}"
+            )
+        for case_id, case_rows in residual_blocks.items():
+            residual_epsilon: list[float] = []
+            for position, row in enumerate(case_rows):
+                missing_columns = sorted(
+                    set(_THERMODYNAMIC_RESIDUAL_REQUIRED_NUMERIC_COLUMNS)
+                    - set(row)
+                )
+                invalid_columns = [
+                    column
+                    for column in _THERMODYNAMIC_RESIDUAL_REQUIRED_NUMERIC_COLUMNS
+                    if column in row and _float_or_none(row.get(column)) is None
+                ]
+                if missing_columns or invalid_columns:
+                    layer.fail(
+                        "thermodynamic_output:nonfinite_or_missing_residual_value:"
+                        f"{case_id}:{position}:"
+                        f"missing={missing_columns}:invalid={invalid_columns}"
+                    )
+                    continue
+                residual_epsilon.append(float(row["epsilon_mev_fm3"]))
+            if len(residual_epsilon) != len(case_rows):
+                continue
+            if not _strictly_increasing(residual_epsilon):
+                layer.fail(
+                    "thermodynamic_output:nonmonotone_residual_coordinate:"
+                    f"{case_id}"
+                )
+            profile_epsilon = [
+                _float_or_none(row.get("epsilon_mev_fm3"))
+                for row in profile_blocks.get(case_id, [])
+            ]
+            if profile_epsilon != residual_epsilon:
+                layer.fail(
+                    "thermodynamic_output:profile_residual_grid_mismatch:"
+                    f"{case_id}"
+                )
+    retained_endpoints = {
+        case_id: endpoint
+        for case_id, endpoint in profile_endpoints.items()
+        if case_id == "direct" or ledger_endpoints.get(case_id) == endpoint
+    }
+    layer.checks["thermodynamic_profile_case_count"] = len(profile_blocks)
+    layer.checks["retained_endpoint_case_count"] = len(retained_endpoints)
+    return retained_endpoints
 
 
 def _validate_scientific_completeness(
@@ -804,6 +2193,7 @@ def _validate_scientific_completeness(
     accepted: set[str],
 ) -> dict[str, Any]:
     layer = _Layer()
+    availability = _Layer()
     if not isinstance(configuration, dict):
         layer.fail("configuration_unavailable")
     else:
@@ -816,6 +2206,15 @@ def _validate_scientific_completeness(
         layer.checks["stellar_enabled"] = stellar_enabled
         layer.checks["background_tov_requested"] = background_requested
         layer.checks["extended_outputs_claimed"] = extended_claimed
+        retained_endpoints = _validate_thermodynamic_outputs(
+            packet,
+            accepted=accepted,
+            layer=layer,
+        )
+        retained_pressure_endpoints = {
+            case_id: endpoint[1]
+            for case_id, endpoint in retained_endpoints.items()
+        }
         if background_requested:
             required_stellar_files = (
                 *STELLAR_REQUIRED_FILES,
@@ -832,6 +2231,8 @@ def _validate_scientific_completeness(
                 configuration=configuration,
                 accepted=accepted,
                 layer=layer,
+                availability=availability,
+                retained_pressure_endpoints=retained_pressure_endpoints,
             )
             summary_csv = _read_csv(
                 packet, "stellar_status_summary.csv", layer
@@ -859,15 +2260,19 @@ def _validate_scientific_completeness(
                     configuration,
                     accepted,
                     layer,
+                    availability=availability,
                     require_tides=tidal_requested,
+                    retained_pressure_endpoints=retained_pressure_endpoints,
                 )
                 _validate_sequence_completeness(
                     packet,
                     configuration,
                     accepted,
                     layer,
+                    availability=availability,
                     require_tides=tidal_requested,
                     require_configured_count=True,
+                    retained_pressure_endpoints=retained_pressure_endpoints,
                 )
                 _validate_stellar_status_reporting(
                     packet, configuration, metadata, layer
@@ -887,30 +2292,17 @@ def _validate_scientific_completeness(
                 if not (packet / relative).is_file():
                     layer.fail(f"missing_claimed_extended_output:{relative}")
 
-        for relative, direct_expected in (
-            ("thermodynamic_profiles.csv", True),
-            ("thermodynamic_residuals.csv", False),
-            ("window_characterization.csv", False),
-        ):
-            if (
-                relative == "thermodynamic_residuals.csv"
-                and accepted
-                and not (packet / relative).is_file()
-            ):
-                layer.fail(f"missing_thermodynamic_output:{relative}")
-                continue
-            rows = _read_csv(packet, relative, layer)
-            if rows is None:
-                continue
-            present = _case_ids(rows)
-            missing_accepted = accepted - present
+        characterization = _read_csv(
+            packet, "window_characterization.csv", layer
+        )
+        if characterization is not None:
+            missing_accepted = accepted - _case_ids(characterization)
             if missing_accepted:
                 layer.fail(
-                    f"thermodynamic_output:missing_accepted_cases:{relative}:"
+                    "thermodynamic_output:missing_accepted_cases:"
+                    "window_characterization.csv:"
                     f"{sorted(missing_accepted)}"
                 )
-            if direct_expected and "direct" not in present:
-                layer.fail(f"thermodynamic_output:direct_baseline_missing:{relative}")
 
     identity = _load_json(packet, "identity_report.json", layer)
     if isinstance(identity, dict) and identity.get("status") != "pass":
@@ -938,10 +2330,29 @@ def _validate_scientific_completeness(
                 + ",".join(leaked)
             )
 
-    status = "complete" if not layer.failures else "partial"
-    return {
-        "status": status,
+    validity = {
+        "status": "pass" if not layer.failures else "fail",
         "failures": layer.failures,
         "warnings": layer.warnings,
         "checks": layer.checks,
+    }
+    availability_report = {
+        "status": "complete" if not availability.failures else "partial",
+        "limitations": availability.failures,
+        "warnings": availability.warnings,
+        "checks": availability.checks,
+    }
+    status = (
+        "invalid"
+        if layer.failures
+        else availability_report["status"]
+    )
+    return {
+        "status": status,
+        "failures": layer.failures,
+        "limitations": availability.failures,
+        "warnings": [*layer.warnings, *availability.warnings],
+        "checks": layer.checks,
+        "hard_validity": validity,
+        "availability": availability_report,
     }

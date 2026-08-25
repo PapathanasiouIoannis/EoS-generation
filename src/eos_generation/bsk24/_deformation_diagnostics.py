@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING, Any, Mapping
 
 import numpy as np
 from scipy.integrate import quad
 from scipy.optimize import brentq
 
+from eos_generation.bsk24._deformation_bounds import (
+    RAW_DISCOVERY_INTERVALS_PER_SCALE,
+    _geometry_aware_grid,
+)
 from eos_generation.bsk24._deformation_core import (
     PURE_GAUSSIAN_GENERATOR_ID,
     WINDOWED_GAUSSIAN_GENERATOR_ID,
@@ -50,17 +55,45 @@ def _window_characterization_uncached(
             )
         )
 
+    quadrature_points = sorted(
+        {
+            float(point)
+            for point in (
+                epsilon_t,
+                epsilon_t + deformation.delta_mev_fm3,
+                deformation.epsilon0_mev_fm3
+                - 4.0 * deformation.sigma_mev_fm3,
+                deformation.epsilon0_mev_fm3,
+                deformation.epsilon0_mev_fm3
+                + 4.0 * deformation.sigma_mev_fm3,
+            )
+            if lower < point < upper
+        }
+    )
+
     shape_area, shape_error = quad(
-        shape, lower, upper, epsabs=1.0e-11, epsrel=1.0e-12, limit=400
+        shape,
+        lower,
+        upper,
+        points=quadrature_points,
+        epsabs=1.0e-11,
+        epsrel=1.0e-12,
+        limit=400,
     )
     gaussian_area, gaussian_error = quad(
-        gaussian, lower, upper, epsabs=1.0e-11, epsrel=1.0e-12, limit=400
+        gaussian,
+        lower,
+        upper,
+        points=quadrature_points,
+        epsabs=1.0e-11,
+        epsrel=1.0e-12,
+        limit=400,
     )
     removed_area, removed_error = quad(
         lambda value: gaussian(value) - shape(value),
         lower,
         upper,
-        points=[epsilon_t, epsilon_t + deformation.delta_mev_fm3],
+        points=quadrature_points,
         epsabs=1.0e-11,
         epsrel=1.0e-12,
         limit=400,
@@ -69,11 +102,81 @@ def _window_characterization_uncached(
         lambda value: value * shape(value),
         lower,
         upper,
+        points=quadrature_points,
         epsabs=1.0e-9,
         epsrel=1.0e-12,
         limit=400,
     )
-    grid = np.linspace(epsilon_t, upper, 131073)
+    base_grid = np.linspace(epsilon_t, upper, 131073)
+    grid, geometry_resolution = _geometry_aware_grid(
+        base_grid,
+        epsilon0_mev_fm3=deformation.epsilon0_mev_fm3,
+        sigma_mev_fm3=deformation.sigma_mev_fm3,
+        delta_mev_fm3=deformation.delta_mev_fm3,
+        epsilon_match_mev_fm3=epsilon_t,
+        epsilon_max_mev_fm3=upper,
+        intervals_per_scale=RAW_DISCOVERY_INTERVALS_PER_SCALE,
+    )
+    usable_area = bool(
+        geometry_resolution["status"] == "resolved_geometry_aware_sampling"
+        and np.isfinite(
+            (
+                shape_area,
+                gaussian_area,
+                removed_area,
+                centroid_numerator,
+            )
+        ).all()
+        and shape_area > 0.0
+        and gaussian_area > 0.0
+    )
+    if not usable_area:
+        return {
+            "case_id": deformation.case_id,
+            "parameters": deformation.to_dict(),
+            "status": "unavailable_no_resolved_in_domain_support",
+            "nominal_amplitude": deformation.amplitude,
+            "window_at_epsilon0": float(
+                smootherstep_window(
+                    deformation.epsilon0_mev_fm3,
+                    epsilon_t_mev_fm3=epsilon_t,
+                    delta_mev_fm3=deformation.delta_mev_fm3,
+                )
+            ),
+            "realized_delta_cs2_minimum": 0.0,
+            "realized_delta_cs2_maximum": 0.0,
+            "realized_extremum_epsilon_mev_fm3": None,
+            "maximum_unit_shape_G_times_W": 0.0,
+            "integrated_signed_deformation_mev_fm3": 0.0,
+            "integrated_absolute_deformation_mev_fm3": 0.0,
+            "unwindowed_gaussian_area_same_domain_mev_fm3": (
+                float(gaussian_area) if np.isfinite(gaussian_area) else None
+            ),
+            "windowed_unit_shape_area_mev_fm3": (
+                float(shape_area) if np.isfinite(shape_area) else None
+            ),
+            "window_suppressed_area_mev_fm3": (
+                float(removed_area) if np.isfinite(removed_area) else None
+            ),
+            "suppressed_area_fraction": None,
+            "centroid_definition": (
+                "first moment of nonnegative realized unit shape G*W"
+            ),
+            "numerical_centroid_mev_fm3": None,
+            "numerical_fwhm_mev_fm3": None,
+            "fwhm_bounds_mev_fm3": None,
+            "geometry_resolution": geometry_resolution,
+            "quadrature": {
+                "method": "adaptive Gauss-Kronrod scipy.integrate.quad",
+                "epsabs": 1.0e-11,
+                "epsrel": 1.0e-12,
+                "shape_area_error_estimate": shape_error,
+                "gaussian_area_error_estimate": gaussian_error,
+                "removed_area_error_estimate": removed_error,
+                "centroid_numerator_error_estimate": centroid_error,
+            },
+            "nominal_and_realized_parameters_distinguished": True,
+        }
     shape_values = np.asarray(
         windowed_gaussian_shape(
             grid, deformation, epsilon_t_mev_fm3=epsilon_t
@@ -111,6 +214,7 @@ def _window_characterization_uncached(
     return {
         "case_id": deformation.case_id,
         "parameters": deformation.to_dict(),
+        "status": "computed_resolved_in_domain_support",
         "nominal_amplitude": amplitude,
         "window_at_epsilon0": float(
             smootherstep_window(
@@ -133,6 +237,7 @@ def _window_characterization_uncached(
         "numerical_centroid_mev_fm3": centroid_numerator / shape_area,
         "numerical_fwhm_mev_fm3": fwhm,
         "fwhm_bounds_mev_fm3": fwhm_bounds,
+        "geometry_resolution": geometry_resolution,
         "quadrature": {
             "method": "adaptive Gauss-Kronrod scipy.integrate.quad",
             "epsabs": 1.0e-11,
@@ -302,14 +407,15 @@ def full_domain_thermodynamic_admissibility(
     *,
     raw_gate_report: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Apply the authoritative thermodynamic gate without truncation.
+    """Apply the authoritative gate on the selected first-causal prefix.
 
     The independent constraints are finiteness, positive retained energy and
-    pressure, ``0 < c_s^2 <= 1``, exact below-match identity, continuous
-    matching, successful effective first-law reconstruction, positive and
-    monotone effective baryon density, and positive effective chemical
-    potential.  ``Gamma_eff``, ``P <= epsilon``, and ``dmu/dn`` are reported
-    only as diagnostics and are not extra parameter constraints.
+    pressure, causal/stable sound speed through the raw-gate endpoint, exact
+    below-match identity, continuous matching, usable effective first-law
+    reconstruction, positive monotone effective baryon density, and positive
+    effective chemical potential.  Complete raw evidence remains separate and
+    may contain the superluminal continuation after the selected endpoint.
+    ``Gamma_eff``, ``P <= epsilon``, and ``dmu/dn`` remain diagnostics only.
     """
 
     epsilon = np.asarray(eos.epsilon, dtype=float)
@@ -321,41 +427,111 @@ def full_domain_thermodynamic_admissibility(
     raw_epsilon = np.asarray(eos.raw_epsilon, dtype=float)
     raw_pressure = np.asarray(eos.raw_pressure, dtype=float)
     raw_cs2 = np.asarray(eos.raw_cs2, dtype=float)
-    physical_state_arrays = (
+    retained_gate = (
+        raw_gate_report.get("retained_domain")
+        if isinstance(raw_gate_report, Mapping)
+        else None
+    )
+    gate_selected = bool(
+        isinstance(raw_gate_report, Mapping)
+        and raw_gate_report.get("status")
+        == "accepted_raw_local_physics_gate"
+        and raw_gate_report.get("selected_retained_domain_authoritative")
+        is True
+        and raw_gate_report.get("selected_retained_domain_passed") is True
+        and isinstance(retained_gate, Mapping)
+        and retained_gate.get("passed") is True
+        and retained_gate.get("resolution_certified") is True
+    )
+    try:
+        selected_endpoint = (
+            float(retained_gate["epsilon_max_mev_fm3"])
+            if isinstance(retained_gate, Mapping)
+            else float(epsilon[-1])
+        )
+    except (KeyError, TypeError, ValueError):
+        selected_endpoint = math.nan
+    crossing = (
+        retained_gate.get("first_causal_crossing")
+        if isinstance(retained_gate, Mapping)
+        else None
+    )
+    selected_at_crossing = bool(
+        isinstance(crossing, Mapping)
+        and crossing.get("status")
+        == "resolved_first_continuous_causal_crossing"
+        and crossing.get("epsilon_mev_fm3") == selected_endpoint
+    )
+    retained_state_arrays = (
         epsilon,
         pressure,
         cs2,
         baryon_density,
         chemical_potential,
+    )
+    raw_state_arrays = (
         raw_epsilon,
         raw_pressure,
         raw_cs2,
     )
-    arrays = (*physical_state_arrays, gamma_eff)
-    aligned = bool(
-        all(array.ndim == 1 for array in arrays)
-        and len({len(array) for array in arrays}) == 1
-        and len(epsilon) == len(baseline.epsilon)
+    retained_aligned = bool(
+        all(array.ndim == 1 for array in (*retained_state_arrays, gamma_eff))
+        and len(
+            {len(array) for array in (*retained_state_arrays, gamma_eff)}
+        )
+        == 1
+        and len(epsilon) > 1
+    )
+    raw_aligned = bool(
+        all(array.ndim == 1 for array in raw_state_arrays)
+        and len({len(array) for array in raw_state_arrays}) == 1
+        and len(raw_epsilon) > 1
     )
     finite_state = bool(
-        aligned
-        and all(np.all(np.isfinite(array)) for array in physical_state_arrays)
+        retained_aligned
+        and raw_aligned
+        and all(
+            np.all(np.isfinite(array))
+            for array in (*retained_state_arrays, *raw_state_arrays)
+        )
     )
-    full_domain_retained = bool(
-        aligned
-        and np.array_equal(epsilon, baseline.epsilon)
-        and np.array_equal(raw_epsilon, baseline.epsilon)
+    complete_raw_evidence_retained = bool(
+        raw_aligned
+        and raw_epsilon[0] == baseline.epsilon[0]
+        and raw_epsilon[-1] == baseline.epsilon[-1]
+        and np.all(np.diff(raw_epsilon) > 0.0)
+    )
+    selected_domain_retained = bool(
+        retained_aligned
         and epsilon[0] == baseline.epsilon[0]
-        and epsilon[-1] == baseline.epsilon[-1]
+        and math.isfinite(selected_endpoint)
+        and epsilon[-1] == selected_endpoint
+        and np.all(np.diff(epsilon) > 0.0)
     )
     positive_epsilon = bool(finite_state and np.all(epsilon > 0.0))
     positive_pressure = bool(finite_state and np.all(pressure > 0.0))
     mechanically_stable = bool(finite_state and np.all(cs2 > 0.0))
-    causal = bool(finite_state and np.all(cs2 <= 1.0))
-    anchor_index = int(baseline.anchor_index)
+    causal = bool(
+        finite_state
+        and (
+            (
+                selected_at_crossing
+                and np.all(cs2[:-1] < 1.0)
+                and cs2[-1] <= 1.0
+                and isinstance(retained_gate, Mapping)
+                and cs2[-1] == retained_gate.get("cs2_at_endpoint")
+            )
+            or (not selected_at_crossing and np.all(cs2 <= 1.0))
+        )
+    )
+    anchor_matches = np.flatnonzero(
+        epsilon == baseline.anchor.energy_density_mev_fm3
+    )
+    anchor_index = int(anchor_matches[0]) if len(anchor_matches) == 1 else -1
     below = slice(0, anchor_index)
     exact_below_match = bool(
-        aligned
+        retained_aligned
+        and anchor_index == baseline.anchor_index
         and np.array_equal(epsilon[below], baseline.epsilon[below])
         and np.array_equal(pressure[below], baseline.pressure[below])
         and np.array_equal(cs2[below], baseline.cs2[below])
@@ -369,19 +545,20 @@ def full_domain_thermodynamic_admissibility(
     matching_residuals = {
         "pressure_mev_fm3": float(
             pressure[anchor_index] - baseline.pressure[anchor_index]
-        ) if aligned else None,
+        ) if retained_aligned and anchor_index >= 0 else None,
         "cs2": float(cs2[anchor_index] - baseline.cs2[anchor_index])
-        if aligned else None,
+        if retained_aligned and anchor_index >= 0 else None,
         "baryon_density_fm3": float(
             baryon_density[anchor_index] - baseline.baryon_density[anchor_index]
-        ) if aligned else None,
+        ) if retained_aligned and anchor_index >= 0 else None,
         "chemical_potential_mev": float(
             chemical_potential[anchor_index]
             - baseline.chemical_potential[anchor_index]
-        ) if aligned else None,
+        ) if retained_aligned and anchor_index >= 0 else None,
     }
     continuous_matching = bool(
-        aligned
+        retained_aligned
+        and anchor_index >= 0
         and all(value == 0.0 for value in matching_residuals.values())
     )
     residual_arrays = tuple(
@@ -403,22 +580,16 @@ def full_domain_thermodynamic_admissibility(
     chemical_potential_positive = bool(
         finite_state and np.all(chemical_potential > 0.0)
     )
-    raw_gate_passed = bool(
-        raw_gate_report is None
-        or (
-            raw_gate_report.get("status")
-            == "accepted_raw_local_physics_gate"
-            and raw_gate_report.get("full_retained_domain_passed") is True
-        )
-    )
+    raw_gate_passed = bool(raw_gate_report is None or gate_selected)
     independent_checks = {
-        "raw_full_domain_gate_passed": raw_gate_passed,
+        "raw_selected_domain_gate_passed": raw_gate_passed,
         "aligned_finite_state": finite_state,
-        "full_retained_domain_not_truncated": full_domain_retained,
+        "complete_raw_evidence_retained": complete_raw_evidence_retained,
+        "selected_retained_domain_matches_raw_gate": selected_domain_retained,
         "epsilon_positive": positive_epsilon,
         "pressure_positive": positive_pressure,
         "sound_speed_strictly_positive": mechanically_stable,
-        "sound_speed_causal_closed_upper": causal,
+        "sound_speed_causal_on_selected_prefix": causal,
         "exact_preservation_below_epsilon_match": exact_below_match,
         "continuous_matching": continuous_matching,
         "effective_first_law_reconstruction_succeeded": (
@@ -436,18 +607,41 @@ def full_domain_thermodynamic_admissibility(
     failed_checks = [
         name for name, value in independent_checks.items() if not value
     ]
-    if aligned and len(baryon_density) > 1:
+    if retained_aligned and len(baryon_density) > 1:
         dmu_dn = np.diff(chemical_potential) / np.diff(baryon_density)
         finite_dmu_dn = dmu_dn[np.isfinite(dmu_dn)]
     else:
         finite_dmu_dn = np.asarray([], dtype=float)
+    direct_endpoint_retained = bool(
+        math.isfinite(selected_endpoint)
+        and selected_endpoint == float(baseline.epsilon[-1])
+    )
+    status = (
+        (
+            "accepted_full_domain_thermodynamic_gate"
+            if direct_endpoint_retained
+            else "accepted_selected_domain_thermodynamic_gate"
+        )
+        if passed
+        else (
+            "rejected_full_domain_thermodynamic_gate"
+            if direct_endpoint_retained
+            else "rejected_selected_domain_thermodynamic_gate"
+        )
+    )
     return {
-        "schema_id": "bsk24_full_domain_thermodynamic_gate_v1",
+        "schema_id": "bsk24_selected_domain_thermodynamic_gate_v2",
         "case_id": eos.deformation.case_id,
         "authoritative_for_trial_acceptance": True,
+        "domain_policy": "prefix_through_first_continuous_cs2_equals_one",
+        "direct_endpoint_retained": direct_endpoint_retained,
         "retained_domain_mev_fm3": [
-            float(baseline.epsilon[0]),
-            float(baseline.epsilon[-1]),
+            float(epsilon[0]) if len(epsilon) else None,
+            float(epsilon[-1]) if len(epsilon) else None,
+        ],
+        "complete_raw_domain_mev_fm3": [
+            float(raw_epsilon[0]) if len(raw_epsilon) else None,
+            float(raw_epsilon[-1]) if len(raw_epsilon) else None,
         ],
         "independent_checks": independent_checks,
         "matching_residuals": matching_residuals,
@@ -468,10 +662,10 @@ def full_domain_thermodynamic_admissibility(
         },
         "diagnostics_not_independent_parameter_constraints": {
             "gamma_eff_finite": bool(
-                aligned and np.all(np.isfinite(gamma_eff))
+                retained_aligned and np.all(np.isfinite(gamma_eff))
             ),
             "pressure_leq_energy_density": bool(
-                aligned and np.all(pressure <= epsilon)
+                retained_aligned and np.all(pressure <= epsilon)
             ),
             "dmu_eff_dn_positive": bool(
                 len(finite_dmu_dn)
@@ -484,11 +678,7 @@ def full_domain_thermodynamic_admissibility(
         },
         "failed_checks": failed_checks,
         "rejection_reason": None if passed else failed_checks[0],
-        "status": (
-            "accepted_full_domain_thermodynamic_gate"
-            if passed
-            else "rejected_full_domain_thermodynamic_gate"
-        ),
+        "status": status,
     }
 
 

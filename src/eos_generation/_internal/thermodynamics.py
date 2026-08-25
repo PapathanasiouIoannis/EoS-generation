@@ -24,6 +24,7 @@ from eos_generation.bsk24.deformation import (
     smootherstep_window,
     windowed_a0_identity_report,
     windowed_gaussian_delta_cs2,
+    windowed_gaussian_pressure_primitive,
 )
 
 
@@ -66,6 +67,17 @@ def _raw_gate_frame(
     status: str,
 ) -> pd.DataFrame:
     epsilon_t = baseline.anchor.energy_density_mev_fm3
+    delta_pressure = np.asarray(
+        windowed_gaussian_pressure_primitive(
+            epsilon,
+            deformation,
+            epsilon_t_mev_fm3=epsilon_t,
+        ),
+        dtype=float,
+    )
+    direct_pressure = np.asarray(
+        baseline.eos.pressure_from_energy_density(epsilon), dtype=float
+    )
     return pd.DataFrame(
         {
             "case_id": case_id,
@@ -89,6 +101,9 @@ def _raw_gate_frame(
                 ),
                 dtype=float,
             ),
+            "direct_pressure_mev_fm3": direct_pressure,
+            "delta_pressure_mev_fm3": delta_pressure,
+            "raw_pressure_mev_fm3": direct_pressure + delta_pressure,
             "raw_cs2": raw_cs2,
             "gate_status": status,
         }

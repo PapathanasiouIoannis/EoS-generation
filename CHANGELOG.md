@@ -4,6 +4,8 @@ All notable changes to the supported package are recorded here.
 
 ## Unreleased
 
+## 1.1.0 - 2026-08-25
+
 ### Added
 
 - A derived, checksum-manifested notebook `STUDENT_VIEW` containing saved
@@ -11,16 +13,62 @@ All notable changes to the supported package are recorded here.
 - Passive notebook protection against mixed Conda server/kernel environments.
 - Focused Windows coverage for atomic plot finalization and the notebook
   presentation workflow.
+- Continuous, geometry-aware raw-proposal assessment that refines the first
+  causal crossing, detects narrow mechanical/causal excursions, and certifies
+  analytical deformation resolution before reconstruction.
+- Explicit retained-endpoint, hard-validity, fixed-mass availability,
+  maximum-mass availability, and student-view eligibility evidence.
+- Git-free GitHub archive compatibility coverage.
+
+### Changed
+
+- A mechanically valid deformation that becomes superluminal before direct
+  BSk24 now retains the certified prefix through its first continuous
+  `c_s^2 = 1` crossing instead of being rejected solely for a shorter causal
+  domain. Later returns below one remain outside the usable branch.
+- Stellar searches and roots are bounded by each retained EoS endpoint.
+  Requested fixed-mass results remain available when valid even if the
+  retained endpoint prevents a maximum-mass turning point from being
+  established.
+- `STUDENT_VIEW` eligibility now depends on all explicitly requested fixed
+  masses, independently of maximum-mass availability.
+- Finite auxiliary thermodynamic diagnostics remain visible and nonblocking;
+  nonfinite/unusable reconstruction, interpolation, inversion, or matching
+  evidence still fails closed.
+- Deformation centers outside the deformable domain are supported when their
+  four-sigma tail has meaningful in-domain overlap.
 
 ### Fixed
 
 - Open temporary plot files in a writable mode before `fsync` on Windows.
+- Retry transient Windows directory rename/share violations with bounded
+  backoff, same-volume atomic publication, per-attempt no-overwrite checks,
+  and staged-directory cleanup.
+- Correct notebook result links and present causal endpoints, hard validity,
+  fixed-mass availability, and maximum-mass availability separately while
+  preserving passive-by-default execution.
+- Reject forged retained endpoints and malformed or contradictory saved raw,
+  thermodynamic, lifecycle, sequence, fixed-mass, and maximum-mass evidence.
 
 ### Scientific compatibility
 
-- No equation, coefficient, physical constant, numerical profile, tolerance,
-  gate, solver, unit, configuration identity, source table, canonical packet,
-  or manifest rule changed.
+- BSk24 coefficients, the deformation formula, physical constants, units,
+  solvers, governed profile parameters/tolerances, public configuration
+  schema, deterministic settings hashes, case-ID algorithm, case ordering,
+  and the top-level `eos_generation_trial_packet_v1` schema are unchanged.
+  Resolution certification adds deterministic geometry-scale samples without
+  weakening a scientific predicate.
+- Source hashes and source-bound reviewed plan hashes necessarily change with
+  this implementation. Existing reviewed plan hashes must not be reused.
+- Nested scientific evidence advances to `eos_generation_raw_gate_v2`,
+  `bsk24_selected_domain_thermodynamic_gate_v2`,
+  `bsk24_maximum_mass_reports_v2`, and
+  `tov_resolved_maximum_mass_v2`. The v2 maximum-mass schema makes the
+  unresolved threshold decision explicitly nullable; legacy v1 stellar
+  evidence is not relabeled as v2.
+- CSV and metadata additions are additive. `maximum_mass_status` keeps its
+  legacy stellar-convergence meaning; the new maximum-mass availability
+  summary is stored separately.
 
 ## 1.0.0 - 2026-08-18
 

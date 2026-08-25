@@ -304,6 +304,7 @@ def _maximum_mass_group_evidence(
     threshold_values = [
         _saved_boolean(row.get("passes_maximum_mass_threshold")) for row in rows
     ]
+    paired = list(zip(resolved_values, threshold_values))
     return {
         "case_stage_count": len(rows),
         "resolved_count": sum(value is True for value in resolved_values),
@@ -312,15 +313,29 @@ def _maximum_mass_group_evidence(
             value is None for value in resolved_values
         ),
         "mass_threshold_pass_count": sum(
-            value is True for value in threshold_values
+            resolved is True and threshold is True
+            for resolved, threshold in paired
         ),
         "mass_threshold_fail_count": sum(
-            value is False for value in threshold_values
+            resolved is True and threshold is False
+            for resolved, threshold in paired
+        ),
+        "mass_threshold_unavailable_count": sum(
+            resolved is False and threshold is None
+            for resolved, threshold in paired
         ),
         "mass_threshold_unrecorded_count": sum(
-            value is None for value in threshold_values
+            resolved is None or (resolved is True and threshold is None)
+            for resolved, threshold in paired
+        ),
+        "mass_threshold_inconsistent_count": sum(
+            resolved is False and threshold is not None
+            for resolved, threshold in paired
         ),
         "status_counts": _status_counts(rows, "status"),
+        "availability_status_counts": _status_counts(
+            rows, "maximum_mass_availability_status"
+        ),
     }
 
 
@@ -431,12 +446,46 @@ def _validation_model(
     scientific = _mapping_or_empty(
         validation_report.get("scientific_output_completeness")
     )
-    status = _text(scientific.get("status"), "unavailable")
-    failures = [str(item) for item in _sequence_or_empty(scientific.get("failures"))]
-    warnings = [str(item) for item in _sequence_or_empty(scientific.get("warnings"))]
+    validity = _mapping_or_empty(
+        validation_report.get("scientific_output_validity")
+    )
+    if not validity:
+        validity = _mapping_or_empty(scientific.get("hard_validity"))
+    availability = _mapping_or_empty(
+        validation_report.get("scientific_output_availability")
+    )
+    if not availability:
+        availability = _mapping_or_empty(scientific.get("availability"))
+    legacy_status = _text(scientific.get("status"), "unavailable")
+    validity_status = _text(
+        validity.get("status"),
+        "pass" if legacy_status == "complete" else "fail",
+    )
+    availability_status = _text(
+        availability.get("status"),
+        legacy_status if legacy_status in {"complete", "partial"} else "unavailable",
+    )
+    failures = [str(item) for item in _sequence_or_empty(validity.get("failures"))]
+    if not failures and validity_status != "pass":
+        failures = [
+            str(item)
+            for item in _sequence_or_empty(scientific.get("failures"))
+        ]
+    limitations = [
+        str(item)
+        for item in _sequence_or_empty(availability.get("limitations"))
+    ]
+    warnings = [str(item) for item in _sequence_or_empty(validity.get("warnings"))]
+    warnings.extend(
+        str(item)
+        for item in _sequence_or_empty(availability.get("warnings"))
+    )
     return {
-        "result_status": "valid" if status == "complete" else "invalid",
-        "scientific_output_completeness": status,
+        "result_status": "valid" if validity_status == "pass" else "invalid",
+        "scientific_output_validity": validity_status,
+        "scientific_output_availability": availability_status,
+        "scientific_output_completeness": legacy_status,
         "failures": failures,
+        "limitations": limitations,
         "warnings": warnings,
     }

@@ -322,6 +322,11 @@ class NotebookArtifactTests(unittest.TestCase):
         self.assertIn("execute=EXECUTE_REVIEWED_PLAN", locked_source)
         self.assertEqual(1, locked_source.count("student_view_locations()"))
         self.assertIn("Student result locations", locked_source)
+        self.assertIn("experiment_result.summary_text()", locked_source)
+        self.assertIn("retained_epsilon_max_mev_fm3", locked_source)
+        self.assertIn("requested_fixed_masses_status", locked_source)
+        self.assertIn("maximum_mass_availability_status", locked_source)
+        self.assertIn("student_view_eligibility_status", locked_source)
         self.assertNotIn("ipywidgets", locked_source)
         self.assertNotIn("framework.", locked_source)
         markdown_source = "\n".join(
@@ -336,6 +341,34 @@ class NotebookArtifactTests(unittest.TestCase):
         self.assertIn("Student result locations > Read me first", markdown_source)
         for cell in code_cells:
             compile("".join(cell["source"]), f"{NOTEBOOK}:{cell['id']}", "exec")
+
+    def test_result_links_resolve_from_the_notebook_directory(self) -> None:
+        notebook = json.loads(NOTEBOOK.read_text(encoding="utf-8"))
+        execute_cell = next(
+            cell for cell in notebook["cells"] if cell["id"] == "execute"
+        )
+        assignment = next(
+            line.strip()
+            for line in execute_cell["source"]
+            if line.strip().startswith("relative =")
+        )
+        for path in (
+            ROOT / "runs" / "example" / "STUDENT_VIEW",
+            ROOT / "runs" / "example" / "STUDENT_VIEW" / "01_READ_ME_FIRST.md",
+            ROOT / "runs" / "example" / "experiment_abc123",
+        ):
+            with self.subTest(path=path):
+                namespace: dict[str, Any] = {
+                    "path": path,
+                    "notebook_session": SimpleNamespace(repository_root=ROOT),
+                }
+                exec(assignment, {}, namespace)
+                href = namespace["relative"]
+                self.assertTrue(href.startswith("../runs/"), href)
+                self.assertEqual(
+                    path.resolve(strict=False),
+                    (NOTEBOOK.parent / href).resolve(strict=False),
+                )
 
     def test_public_notebook_api_is_intentionally_small(self) -> None:
         import eos_generation.notebook as notebook_module

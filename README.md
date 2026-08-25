@@ -236,11 +236,22 @@ print(result.summary_text())
 
 ## Scientific boundary
 
-For every proposed deformation, the raw complete-domain result is assessed
-before reconstruction. A proposal that violates the configured finite-domain
-requirements, including mechanical stability or causality, is rejected with
-its exact reason and receives no stellar calculation. Results are never made
-acceptable by clipping or smoothing failed values.
+For every proposed deformation, the complete raw result is assessed and saved
+before reconstruction. The usable branch ends at the first continuously
+resolved `c_s^2 = 1` crossing, which is included as that case's endpoint. A
+deformation that reaches this endpoint before direct BSk24 is therefore not
+rejected merely for having a shorter causal branch; any later return below one
+lies outside the usable EoS. Geometry-aware sampling and bounded continuous
+refinement search for narrow unstable or superluminal features, and an
+unresolved assessment fails closed. Results are never made acceptable by
+clipping, smoothing, repair, or extrapolation.
+
+Stellar central pressures remain inside each case's retained branch. If that
+endpoint prevents a maximum-mass turning point from being established, valid
+fixed-mass results are kept and maximum-mass availability is reported
+separately. Finite auxiliary thermodynamic diagnostics remain visible without
+being promoted to rejection criteria; non-finite or unusable reconstruction,
+matching, interpolation, or inversion still fails closed.
 
 The reconstruction is an effective one-fluid cold barotrope. It does not
 establish microscopic composition, species chemical potentials, or beta

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import csv
 import hashlib
 import json
 import os
@@ -13,6 +14,10 @@ import unittest
 from unittest.mock import patch
 
 from eos_generation._internal.summary import PACKET_SCHEMA_ID
+from eos_generation._internal._summary_evidence import (
+    _maximum_mass_group_evidence,
+    _validation_model,
+)
 from eos_generation._internal.planning import prepare_bsk24_trial
 from eos_generation._internal.status import build_bsk24_trial_status
 from eos_generation.experiment import (
@@ -21,6 +26,22 @@ from eos_generation.experiment import (
     plan_experiment,
     run_experiment,
     validate_experiment,
+)
+from eos_generation.reporting._validation_io import _Layer
+from eos_generation.reporting._validation_cases import (
+    RAW_GATE_SCHEMA,
+    _validate_case_consistency,
+    _validate_raw_gate_profiles,
+)
+from eos_generation.reporting._validation_scientific import (
+    _validate_fixed_mass_completeness,
+    _validate_final_lifecycle,
+    _validate_maximum_mass_artifacts,
+    _validate_sequence_completeness,
+    _validate_thermodynamic_outputs,
+)
+from eos_generation.reporting.validation import (
+    validate_bsk24_trial_packet_layers,
 )
 
 
@@ -47,6 +68,22 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
         encoding="utf-8",
         newline="\n",
     )
+
+
+def _write_csv_row(path: Path, row: dict[str, Any]) -> None:
+    with path.open("w", encoding="utf-8", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=list(row))
+        writer.writeheader()
+        writer.writerow(row)
+
+
+def _write_csv_rows(path: Path, rows: list[dict[str, Any]]) -> None:
+    if not rows:
+        raise ValueError("rows must not be empty")
+    with path.open("w", encoding="utf-8", newline="") as stream:
+        writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
 
 
 def _seal_aggregate(experiment_path: Path, child_names: tuple[str, ...]) -> None:
@@ -115,6 +152,125 @@ def _loaded_trial(
 ) -> SimpleNamespace:
     packet = Path(packet_path).resolve(strict=False)
     return SimpleNamespace(packet_path=packet, config=config_by_path[packet])
+
+
+def _layered_child_validation(
+    *,
+    validity: str = "pass",
+    availability: str = "complete",
+) -> dict[str, Any]:
+    limitations = (
+        []
+        if availability == "complete"
+        else ["maximum_mass:unavailable:1"]
+    )
+    hard_failures = [] if validity == "pass" else ["synthetic_hard_failure"]
+    return {
+        "status": "pass" if validity == "pass" else "fail",
+        "failures": hard_failures,
+        "warnings": limitations,
+        "internal_packet_integrity": {"status": "pass"},
+        "current_source_equivalence": {"status": "equivalent"},
+        "scientific_output_validity": {
+            "status": validity,
+            "failures": hard_failures,
+        },
+        "scientific_output_availability": {
+            "status": availability,
+            "limitations": limitations,
+        },
+        "scientific_output_completeness": {
+            "status": (
+                "invalid"
+                if validity != "pass"
+                else availability
+            ),
+            "hard_validity": {
+                "status": validity,
+                "failures": hard_failures,
+            },
+            "availability": {
+                "status": availability,
+                "limitations": limitations,
+            },
+        },
+    }
+
+
+def _unresolved_maximum_row() -> dict[str, Any]:
+    status = "unresolved_no_turning_point_before_eos_endpoint"
+    return {
+        "case_id": "direct",
+        "stage": "synthetic",
+        "status": status,
+        "maximum_mass_resolved": False,
+        "maximum_mass_availability_status": f"unavailable_{status}",
+        "maximum_mass_msun": "",
+        "maximum_mass_threshold_msun": 2.0,
+        "passes_maximum_mass_threshold": "",
+        "central_pressure_mev_fm3": "",
+        "central_energy_density_mev_fm3": "",
+        "central_sound_speed_squared": "",
+        "radius_km": "",
+        "turning_point_count": 0,
+        "positive_left_secant": "",
+        "negative_right_secant": "",
+        "eos_endpoint_pressure_mev_fm3": 100.0,
+        "endpoint_limitation": "eos_endpoint_reached_without_sampled_turning_bracket",
+        "refinement_status": "not_started",
+        "sampled_sequence_model_count": 0,
+        "local_background_solver_call_count": 0,
+        "tidal_solver_calls_for_maximum_mass": 0,
+    }
+
+
+def _unresolved_maximum_report() -> dict[str, Any]:
+    return {
+        "schema_id": "bsk24_maximum_mass_reports_v2",
+        "cases": {
+            "direct:synthetic": {
+                "schema_id": "tov_resolved_maximum_mass_v2",
+                "status": "unresolved_no_turning_point_before_eos_endpoint",
+                "maximum_mass_resolved": False,
+                "maximum_mass_threshold_msun": 2.0,
+                "passes_maximum_mass_threshold": None,
+                "maximum_mass_msun": None,
+                "central_pressure_mev_fm3": None,
+                "central_energy_density_mev_fm3": None,
+                "central_sound_speed_squared": None,
+                "radius_km": None,
+                "decision_basis": "fail_closed_no_resolved_turning_point",
+                "sampled_argmax_is_maximum_mass": False,
+                "turning_point_count": 0,
+                "turning_point_brackets": [],
+                "selected_bracket": None,
+                "positive_left_secant": None,
+                "negative_right_secant": None,
+                "stable_branch_extent": {
+                    "model_count": 0,
+                    "maximum_central_pressure_mev_fm3": None,
+                    "models": [],
+                },
+                "sampled_models": [],
+                "eos_endpoint": {
+                    "pressure_mev_fm3": 100.0,
+                    "reached_by_search": False,
+                    "limitation": (
+                        "eos_endpoint_reached_without_sampled_turning_bracket"
+                    ),
+                },
+                "convergence": {
+                    "refinement_status": "not_started",
+                    "refinement_iterations": 0,
+                    "global_refinement_rounds": 0,
+                    "solver_call_count": 0,
+                    "solver_failure_count": 0,
+                    "solver_failures": [],
+                },
+                "tidal_calculations_performed": 0,
+            }
+        },
+    }
 
 
 def _make_synthetic_experiment(output_root: Path) -> tuple[Any, Any, dict[Path, Any]]:
@@ -498,6 +654,945 @@ class ExperimentResultContractTests(unittest.TestCase):
             self.assertEqual("fail", validation["status"])
             self.assertEqual(1, validation["child_packet_count"])
             self.assertEqual([child_failure], validation["children"])
+
+    def test_partial_scientific_availability_remains_loadable(self) -> None:
+        with _temporary_runs_root() as output_root:
+            plan, _, configs = _make_synthetic_experiment(output_root)
+            partial = _layered_child_validation(availability="partial")
+            with (
+                patch(
+                    "eos_generation._internal.runtime.validate_trial",
+                    return_value=partial,
+                ),
+                patch(
+                    "eos_generation._internal.runtime.load_trial",
+                    side_effect=lambda path, **_: _loaded_trial(configs, path),
+                ),
+            ):
+                loaded = load_experiment(plan.experiment_path)
+                validation = validate_experiment(plan.experiment_path)
+            self.assertTrue(loaded.completed)
+            self.assertEqual("pass", validation["status"])
+            self.assertEqual(
+                "partial", validation["scientific_availability_status"]
+            )
+            summary_validation = _validation_model(partial)
+            self.assertIsNotNone(summary_validation)
+            self.assertEqual("valid", summary_validation["result_status"])
+            self.assertEqual(
+                "partial",
+                summary_validation["scientific_output_availability"],
+            )
+
+    def test_status_marks_hard_valid_partial_packet_valid(self) -> None:
+        partial = _layered_child_validation(availability="partial")
+        with _temporary_runs_root() as packet:
+            _write_json(
+                packet / "metadata.json",
+                {"schema_id": PACKET_SCHEMA_ID},
+            )
+            with (
+                patch(
+                    "eos_generation._internal.status._verify_packet_manifest_exact",
+                    return_value=(),
+                ),
+                patch(
+                    "eos_generation._internal.status._preflight_source_equivalence",
+                    return_value=({"status": "equivalent"}, {}),
+                ),
+            ):
+                status = build_bsk24_trial_status(
+                    packet,
+                    validate_packet=lambda _: partial,
+                    summary_builder=lambda *_args, **_kwargs: {},
+                )
+        self.assertEqual("valid", status["packet_validity"])
+        self.assertEqual(
+            "partial", status["scientific_availability"]["status"]
+        )
+
+    def test_layered_validation_keeps_availability_out_of_hard_failures(self) -> None:
+        internal = {
+            "status": "pass",
+            "failures": [],
+            "warnings": [],
+            "checks": {},
+        }
+        source = {
+            "status": "equivalent",
+            "failures": [],
+            "warnings": [],
+            "checks": {},
+        }
+        scientific = {
+            "status": "partial",
+            "failures": [],
+            "limitations": ["maximum_mass:unavailable:1"],
+            "warnings": [],
+            "checks": {},
+            "hard_validity": {
+                "status": "pass",
+                "failures": [],
+                "warnings": [],
+                "checks": {},
+            },
+            "availability": {
+                "status": "partial",
+                "limitations": ["maximum_mass:unavailable:1"],
+                "warnings": [],
+                "checks": {},
+            },
+        }
+        context = {
+            "source_hashes": {},
+            "configuration": {},
+            "metadata": {},
+            "accepted_case_ids": set(),
+        }
+        with _temporary_runs_root() as packet:
+            with (
+                patch(
+                    "eos_generation.reporting.validation._validate_internal",
+                    return_value=(internal, context),
+                ),
+                patch(
+                    "eos_generation.reporting.validation._validate_source_equivalence",
+                    return_value=source,
+                ),
+                patch(
+                    "eos_generation.reporting.validation._validate_scientific_completeness",
+                    return_value=scientific,
+                ),
+            ):
+                report = validate_bsk24_trial_packet_layers(
+                    packet, current_source_hashes={}
+                )
+        self.assertEqual("pass", report["status"])
+        self.assertEqual([], report["failures"])
+        self.assertEqual(
+            "pass", report["scientific_output_validity"]["status"]
+        )
+        self.assertEqual(
+            "partial", report["scientific_output_availability"]["status"]
+        )
+        self.assertIn(
+            "scientific_output_availability:maximum_mass:unavailable:1",
+            report["warnings"],
+        )
+
+    def test_hard_scientific_invalidity_blocks_loading_even_with_top_pass(self) -> None:
+        with _temporary_runs_root() as output_root:
+            plan, _, configs = _make_synthetic_experiment(output_root)
+            invalid = _layered_child_validation(validity="fail")
+            invalid["status"] = "pass"
+            with (
+                patch(
+                    "eos_generation._internal.runtime.validate_trial",
+                    return_value=invalid,
+                ),
+                patch(
+                    "eos_generation._internal.runtime.load_trial",
+                    side_effect=lambda path, **_: _loaded_trial(configs, path),
+                ),
+            ):
+                with self.assertRaisesRegex(
+                    ValueError, "saved child packet failed validation"
+                ):
+                    load_experiment(plan.experiment_path)
+
+    def test_fail_closed_fixed_mass_unavailable_is_not_hard_invalid(self) -> None:
+        configuration = {
+            "tov_stages": [{"name": "synthetic"}],
+            "fixed_masses_msun": [1.4],
+        }
+        base_row = {
+            "case_id": "direct",
+            "stage": "synthetic",
+            "status": "unavailable_outside_retained_eos_domain",
+            "reason": "target bracket exceeds retained endpoint",
+            "target_mass_msun": 1.4,
+            "mass_msun": "",
+            "mass_residual_msun": "",
+            "radius_km": "",
+            "central_pressure_mev_fm3": "",
+            "central_energy_density_mev_fm3": "",
+            "central_sound_speed_squared": "",
+            "k2": "",
+            "lambda_dimensionless": "",
+            "root_evaluation_count": "",
+            "tidal_status": "",
+            "tidal_failure_reason": "",
+        }
+        with tempfile.TemporaryDirectory(prefix="fixed-unavailable-") as temporary:
+            packet = Path(temporary)
+            _write_csv_row(packet / "fixed_mass_observables.csv", base_row)
+            hard = _Layer()
+            availability = _Layer()
+            _validate_fixed_mass_completeness(
+                packet,
+                configuration,
+                set(),
+                hard,
+                availability=availability,
+                retained_pressure_endpoints={"direct": 1.0},
+            )
+            self.assertEqual([], hard.failures)
+            self.assertEqual(
+                ["fixed_mass:background_unavailable:1"],
+                availability.failures,
+            )
+
+            contaminated = dict(base_row, radius_km=12.0)
+            _write_csv_row(
+                packet / "fixed_mass_observables.csv", contaminated
+            )
+            hard = _Layer()
+            availability = _Layer()
+            _validate_fixed_mass_completeness(
+                packet,
+                configuration,
+                set(),
+                hard,
+                availability=availability,
+            )
+            self.assertTrue(
+                any(
+                    "unavailable_row_has_observables" in failure
+                    for failure in hard.failures
+                )
+            )
+            self.assertEqual([], availability.failures)
+
+            coupled_to_maximum = dict(
+                base_row,
+                status="unavailable_maximum_mass_not_resolved",
+                reason="legacy maximum-mass coupling",
+            )
+            _write_csv_row(
+                packet / "fixed_mass_observables.csv", coupled_to_maximum
+            )
+            hard = _Layer()
+            availability = _Layer()
+            _validate_fixed_mass_completeness(
+                packet,
+                configuration,
+                set(),
+                hard,
+                availability=availability,
+            )
+            self.assertTrue(
+                any(
+                    "invalid_background_status" in failure
+                    for failure in hard.failures
+                )
+            )
+
+            solved_outside_endpoint = {
+                **base_row,
+                "status": "bracketed_and_solved",
+                "reason": "",
+                "mass_msun": 1.4,
+                "mass_residual_msun": 0.0,
+                "radius_km": 12.0,
+                "central_pressure_mev_fm3": 11.0,
+                "central_energy_density_mev_fm3": 300.0,
+                "central_sound_speed_squared": 0.5,
+                "bracket_pressure_mev_fm3": "[10.0,12.0]",
+                "root_xtol_mev_fm3": 0.001,
+                "root_evaluation_count": 3,
+                "tidal_status": "not_requested_background_only",
+            }
+            _write_csv_row(
+                packet / "fixed_mass_observables.csv",
+                solved_outside_endpoint,
+            )
+            hard = _Layer()
+            availability = _Layer()
+            _validate_fixed_mass_completeness(
+                packet,
+                configuration,
+                set(),
+                hard,
+                availability=availability,
+                require_tides=False,
+                retained_pressure_endpoints={"direct": 10.0},
+            )
+            self.assertTrue(
+                any(
+                    "invalid_solved_background_row" in failure
+                    for failure in hard.failures
+                )
+            )
+
+    def test_endpoint_below_sequence_floor_is_availability_not_invalidity(self) -> None:
+        configuration = {
+            "tov_stages": [
+                {"name": "synthetic", "sequence_points": 5}
+            ]
+        }
+        row = {
+            "case_id": "direct",
+            "stage": "synthetic",
+            "attempted_index": 0,
+            "calculation_status": "failed",
+            "failure_category": "eos_endpoint_below_sequence_floor",
+            "failure_reason": "retained endpoint is below the sequence floor",
+            "central_pressure_mev_fm3": 1.0,
+            "Mass": "",
+            "Radius": "",
+            "Lambda": "",
+            "P_Central": "",
+            "Eps_Central": "",
+            "CS2_Central": "",
+            "eps_surf": "",
+            "k2": "",
+            "is_sampled_peak": "",
+            "is_domain_end": "",
+            "tidal_status": "",
+            "tidal_failure_reason": "",
+        }
+        with tempfile.TemporaryDirectory(prefix="sequence-unavailable-") as temporary:
+            packet = Path(temporary)
+            _write_csv_row(packet / "stellar_sequences.csv", row)
+            hard = _Layer()
+            availability = _Layer()
+            _validate_sequence_completeness(
+                packet,
+                configuration,
+                set(),
+                hard,
+                availability=availability,
+                retained_pressure_endpoints={"direct": 1.0},
+            )
+            outside_hard = _Layer()
+            _validate_sequence_completeness(
+                packet,
+                configuration,
+                set(),
+                outside_hard,
+                availability=_Layer(),
+                retained_pressure_endpoints={"direct": 0.5},
+            )
+        self.assertEqual([], hard.failures)
+        self.assertIn(
+            "stellar_sequences:endpoint_below_sequence_floor:direct:synthetic",
+            availability.failures,
+        )
+        self.assertIn(
+            "stellar_sequences:background_unavailable:1",
+            availability.failures,
+        )
+        self.assertTrue(
+            any(
+                "invalid_failed_background_row" in failure
+                for failure in outside_hard.failures
+            )
+        )
+
+    def test_thermodynamic_validation_separates_core_from_diagnostics(self) -> None:
+        def profile_row(
+            case_id: str,
+            epsilon: float,
+            pressure: float,
+            density: float,
+            *,
+            gamma: float = -1.0e200,
+        ) -> dict[str, Any]:
+            return {
+                "case_id": case_id,
+                "amplitude": "" if case_id == "direct" else 0.1,
+                "delta_mev_fm3": "" if case_id == "direct" else 10.0,
+                "epsilon_mev_fm3": epsilon,
+                "pressure_mev_fm3": pressure,
+                "cs2": 0.5,
+                "delta_cs2": 0.0,
+                "baryon_density_fm3": density,
+                "effective_baryon_enthalpy_mev": 1000.0,
+                "gamma_eff": gamma,
+                "energy_per_baryon_minus_neutron_rest_mev": -10.0,
+                "pressure_relative_to_direct": 1.0e200,
+                "baryon_density_relative_to_direct": -1.0e200,
+                "enthalpy_relative_to_direct": 1.0e200,
+            }
+
+        residual_columns = (
+            "r_p_algebraic",
+            "r_mu_algebraic",
+            "r_p_independent",
+            "r_p_independent_normalized",
+            "r_mu_independent",
+            "r_mu_independent_normalized",
+            "r_c",
+            "first_law_normalized",
+            "dP_dEpsilon_independent",
+            "mu_from_dEpsilon_dn_independent",
+        )
+
+        def residual_row(epsilon: float) -> dict[str, Any]:
+            return {
+                "case_id": "accepted-case",
+                "amplitude": 0.1,
+                "delta_mev_fm3": 10.0,
+                "epsilon_mev_fm3": epsilon,
+                **{column: 1.0e200 for column in residual_columns},
+            }
+
+        profiles = [
+            profile_row("direct", 100.0, 1.0, 0.1),
+            profile_row("direct", 200.0, 2.0, 0.2),
+            profile_row("accepted-case", 100.0, 1.1, 0.11),
+            profile_row("accepted-case", 200.0, 2.1, 0.21),
+        ]
+        residuals = [residual_row(100.0), residual_row(200.0)]
+        with tempfile.TemporaryDirectory(prefix="thermo-validity-") as temporary:
+            packet = Path(temporary)
+            _write_json(
+                packet / "raw_gate_report.json",
+                {
+                    "cases": {
+                        "a0": {
+                            "status": "accepted_raw_local_physics_gate",
+                            "parameters": {"amplitude": 0.0},
+                            "complete_proposed_retained_domain_mev_fm3": [
+                                100.0,
+                                200.0,
+                            ],
+                            "retained_domain": {
+                                "endpoint_reason": (
+                                    "direct_bsk24_causal_endpoint"
+                                ),
+                                "epsilon_min_mev_fm3": 100.0,
+                                "epsilon_max_mev_fm3": 200.0,
+                                "pressure_max_mev_fm3": 2.0,
+                            },
+                        },
+                        "accepted-case": {
+                            "status": "accepted_raw_local_physics_gate",
+                            "parameters": {"amplitude": 0.1},
+                            "complete_proposed_retained_domain_mev_fm3": [
+                                100.0,
+                                200.0,
+                            ],
+                        },
+                    }
+                },
+            )
+            _write_csv_rows(
+                packet / "case_ledger.csv",
+                [
+                    {
+                        "case_id": "accepted-case",
+                        "retained_epsilon_max_mev_fm3": 200.0,
+                        "retained_pressure_max_mev_fm3": 2.1,
+                    }
+                ],
+            )
+            _write_csv_rows(packet / "thermodynamic_profiles.csv", profiles)
+            _write_csv_rows(packet / "thermodynamic_residuals.csv", residuals)
+            layer = _Layer()
+            _validate_thermodynamic_outputs(
+                packet,
+                accepted={"accepted-case"},
+                layer=layer,
+            )
+            self.assertEqual([], layer.failures)
+
+            invalid_profiles = [dict(row) for row in profiles]
+            invalid_profiles[-1]["pressure_mev_fm3"] = 1.0
+            _write_csv_rows(
+                packet / "thermodynamic_profiles.csv", invalid_profiles
+            )
+            layer = _Layer()
+            _validate_thermodynamic_outputs(
+                packet,
+                accepted={"accepted-case"},
+                layer=layer,
+            )
+            self.assertTrue(
+                any(
+                    "nonmonotone_profile_coordinate" in failure
+                    for failure in layer.failures
+                )
+            )
+
+            zero_pressure_profiles = [dict(row) for row in profiles]
+            zero_pressure_profiles[2]["pressure_mev_fm3"] = 0.0
+            _write_csv_rows(
+                packet / "thermodynamic_profiles.csv",
+                zero_pressure_profiles,
+            )
+            layer = _Layer()
+            _validate_thermodynamic_outputs(
+                packet,
+                accepted={"accepted-case"},
+                layer=layer,
+            )
+            self.assertTrue(
+                any(
+                    "invalid_profile_core_state:accepted-case:0" in failure
+                    for failure in layer.failures
+                )
+            )
+
+            nonfinite_profiles = [dict(row) for row in profiles]
+            nonfinite_profiles[-1]["gamma_eff"] = "nan"
+            _write_csv_rows(
+                packet / "thermodynamic_profiles.csv", nonfinite_profiles
+            )
+            nonfinite_residuals = [dict(row) for row in residuals]
+            nonfinite_residuals[-1]["r_c"] = "inf"
+            _write_csv_rows(
+                packet / "thermodynamic_residuals.csv", nonfinite_residuals
+            )
+            layer = _Layer()
+            _validate_thermodynamic_outputs(
+                packet,
+                accepted={"accepted-case"},
+                layer=layer,
+            )
+            self.assertTrue(
+                any(
+                    "nonfinite_or_missing_profile_value" in failure
+                    for failure in layer.failures
+                )
+            )
+            self.assertTrue(
+                any(
+                    "nonfinite_or_missing_residual_value" in failure
+                    for failure in layer.failures
+                )
+            )
+
+    def test_v2_raw_profiles_require_complete_structured_evidence(self) -> None:
+        layer = _Layer()
+        _validate_raw_gate_profiles(
+            [{"case_id": "accepted-case"}],
+            raw_gate={
+                "schema_id": RAW_GATE_SCHEMA,
+                "cases": {"accepted-case": {}},
+            },
+            raw_schema=RAW_GATE_SCHEMA,
+            accepted={"accepted-case"},
+            rejected=set(),
+            layer=layer,
+        )
+        self.assertTrue(
+            any("missing_v2_columns" in failure for failure in layer.failures)
+        )
+
+    def test_case_lifecycle_recomputes_student_and_rejection_semantics(self) -> None:
+        case_id = "accepted-case"
+        report = {
+            "status": "accepted_raw_local_physics_gate",
+            "complete_raw_proposal_assessed": True,
+            "finite_values": True,
+            "positive_energy_density": True,
+            "positive_pressure": True,
+            "complete_raw_proposal_mechanically_stable": True,
+            "complete_raw_pressure_numerically_usable": True,
+            "strictly_monotone_pressure_implied": True,
+            "selected_retained_domain_authoritative": True,
+            "selected_retained_domain_passed": True,
+            "complete_raw_proposal_causal_through_direct_endpoint": True,
+            "complete_proposed_retained_domain_mev_fm3": [100.0, 200.0],
+            "continuous_resolution_certificate": {
+                "status": "resolved_geometry_aware_sampling"
+            },
+            "raw_pressure_reconstruction_certificate": {
+                "status": "resolved_strictly_increasing_raw_pressure"
+            },
+            "retained_tabulation_resolution_certificate": {
+                "status": "resolved_tabulation_resolution"
+            },
+            "first_failure": None,
+            "retained_domain": {
+                "endpoint_reason": "direct_bsk24_causal_endpoint",
+                "epsilon_min_mev_fm3": 100.0,
+                "epsilon_max_mev_fm3": 200.0,
+                "pressure_max_mev_fm3": 2.0,
+                "cs2_at_endpoint": 0.9,
+                "first_causal_crossing": None,
+                "passed": True,
+                "resolution_certified": True,
+            },
+        }
+        raw_gate = {
+            "schema_id": RAW_GATE_SCHEMA,
+            "executed_before_reconstruction_and_TOV": True,
+            "complete_raw_proposal_assessment_authoritative": True,
+            "selected_retained_domain_authoritative": True,
+            "selected_domain_policy": (
+                "prefix_through_first_continuous_cs2_equals_one"
+            ),
+            "accepted_case_ids": [case_id],
+            "rejected_case_ids": [],
+            "hard_rejected_case_ids": [],
+            "unresolved_case_ids": [],
+            "cases": {case_id: report},
+        }
+        ledger = [
+            {
+                "case_id": case_id,
+                "status": "accepted",
+                "acceptance_domain": "full_retained_domain",
+                "raw_gate_status": "accepted_raw_local_physics_gate",
+                "full_domain_gate_status": (
+                    "assessed_causal_through_direct_endpoint"
+                ),
+                "selected_domain_status": "accepted_selected_retained_domain",
+                "complete_raw_proposal_causal_through_direct_endpoint": "True",
+                "retained_epsilon_max_mev_fm3": "200.0",
+                "retained_pressure_max_mev_fm3": "2.0",
+                "retained_endpoint_reason": "direct_bsk24_causal_endpoint",
+                "requested_fixed_masses_status": (
+                    "all_requested_fixed_masses_succeeded"
+                ),
+                "maximum_mass_availability_status": (
+                    "unavailable_unresolved_no_turning_point_before_eos_endpoint"
+                ),
+                "student_view_eligibility_status": "bogus",
+                "rejection_reason": '{"bogus": true}',
+                "pressure_reconstruction": "completed",
+                "stellar_calculation": "completed",
+                "clipping_or_repair": "none",
+            }
+        ]
+        with tempfile.TemporaryDirectory(prefix="case-validity-") as temporary:
+            layer = _Layer()
+            _validate_case_consistency(
+                Path(temporary),
+                case_plan=[{"case_id": case_id}],
+                case_ledger=ledger,
+                raw_gate=raw_gate,
+                accepted_rejected=None,
+                metadata=None,
+                layer=layer,
+            )
+        self.assertTrue(
+            any("student_eligibility_mismatch" in item for item in layer.failures)
+        )
+        self.assertTrue(
+            any("accepted_has_rejection_reason" in item for item in layer.failures)
+        )
+
+    def test_final_lifecycle_is_recomputed_from_saved_availability_rows(self) -> None:
+        configuration = {
+            "stellar_enabled": True,
+            "fixed_masses_msun": [1.4],
+            "tov_stages": [
+                {"name": "reporting", "sequence_points": 5}
+            ],
+        }
+        ledger = {
+            "case_id": "accepted-case",
+            "status": "accepted",
+            "stellar_calculation": "incomplete_or_failed",
+            "pressure_reconstruction": "completed",
+            "requested_fixed_masses_status": (
+                "all_requested_fixed_masses_succeeded"
+            ),
+            "maximum_mass_availability_status": (
+                "resolved_bracketed_and_refined"
+            ),
+            "student_view_eligibility_status": (
+                "eligible_all_requested_fixed_masses_succeeded"
+            ),
+        }
+        fixed = {
+            "case_id": "accepted-case",
+            "stage": "reporting",
+            "target_mass_msun": 1.4,
+            "status": "unavailable_not_bracketed",
+        }
+        maximum = {
+            "case_id": "accepted-case",
+            "stage": "reporting",
+            "maximum_mass_availability_status": (
+                "unavailable_unresolved_no_turning_point_before_eos_endpoint"
+            ),
+        }
+        with tempfile.TemporaryDirectory(prefix="lifecycle-recompute-") as temporary:
+            packet = Path(temporary)
+            _write_csv_row(packet / "case_ledger.csv", ledger)
+            _write_csv_row(packet / "fixed_mass_observables.csv", fixed)
+            _write_csv_row(packet / "maximum_mass_screening.csv", maximum)
+            layer = _Layer()
+            _validate_final_lifecycle(
+                packet,
+                configuration,
+                {"accepted-case"},
+                layer,
+            )
+        self.assertTrue(
+            any("fixed_mass_status_mismatch" in item for item in layer.failures)
+        )
+        self.assertTrue(
+            any("maximum_mass_status_mismatch" in item for item in layer.failures)
+        )
+        self.assertTrue(
+            any("student_eligibility_mismatch" in item for item in layer.failures)
+        )
+
+    def test_unresolved_maximum_has_unavailable_threshold_not_failure(self) -> None:
+        configuration = {"tov_stages": [{"name": "synthetic"}]}
+        row = _unresolved_maximum_row()
+        with tempfile.TemporaryDirectory(prefix="maximum-unavailable-") as temporary:
+            packet = Path(temporary)
+            _write_csv_row(packet / "maximum_mass_screening.csv", row)
+            _write_json(
+                packet / "maximum_mass_reports.json",
+                _unresolved_maximum_report(),
+            )
+            hard = _Layer()
+            availability = _Layer()
+            _validate_maximum_mass_artifacts(
+                packet,
+                configuration=configuration,
+                accepted=set(),
+                layer=hard,
+                availability=availability,
+                retained_pressure_endpoints={"direct": 100.0},
+            )
+            self.assertEqual([], hard.failures)
+            self.assertEqual(
+                ["maximum_mass:unavailable:1"], availability.failures
+            )
+
+            contradictory = _unresolved_maximum_report()
+            contradictory_case = contradictory["cases"]["direct:synthetic"]
+            contradictory_case["eos_endpoint"] = {
+                "pressure_mev_fm3": 999.0,
+                "reached_by_search": False,
+                "limitation": "contradictory_endpoint_claim",
+            }
+            contradictory_case["convergence"]["solver_call_count"] = 1
+            _write_json(
+                packet / "maximum_mass_reports.json",
+                contradictory,
+            )
+            corrupt_hard = _Layer()
+            _validate_maximum_mass_artifacts(
+                packet,
+                configuration=configuration,
+                accepted=set(),
+                layer=corrupt_hard,
+                availability=_Layer(),
+                retained_pressure_endpoints={"direct": 100.0},
+            )
+            self.assertTrue(
+                any(
+                    "malformed_json_evidence" in failure
+                    and "eos_endpoint_csv_json" in failure
+                    and "convergence_summary" in failure
+                    for failure in corrupt_hard.failures
+                )
+            )
+
+            evidence = _maximum_mass_group_evidence([row])
+            self.assertEqual(0, evidence["mass_threshold_fail_count"])
+            self.assertEqual(1, evidence["mass_threshold_unavailable_count"])
+
+            _write_json(
+                packet / "maximum_mass_reports.json",
+                _unresolved_maximum_report(),
+            )
+            endpoint_mismatch = _Layer()
+            _validate_maximum_mass_artifacts(
+                packet,
+                configuration=configuration,
+                accepted=set(),
+                layer=endpoint_mismatch,
+                availability=_Layer(),
+                retained_pressure_endpoints={"direct": 99.0},
+            )
+            self.assertTrue(
+                any(
+                    "retained_endpoint_mismatch" in failure
+                    for failure in endpoint_mismatch.failures
+                )
+            )
+
+            contaminated = dict(
+                row, passes_maximum_mass_threshold=False
+            )
+            _write_csv_row(
+                packet / "maximum_mass_screening.csv", contaminated
+            )
+            hard = _Layer()
+            availability = _Layer()
+            _validate_maximum_mass_artifacts(
+                packet,
+                configuration=configuration,
+                accepted=set(),
+                layer=hard,
+                availability=availability,
+            )
+            self.assertTrue(
+                any(
+                    "malformed_unresolved_row" in failure
+                    for failure in hard.failures
+                )
+            )
+
+    def test_resolved_maximum_requires_one_consistent_turning_bracket(self) -> None:
+        configuration = {"tov_stages": [{"name": "synthetic"}]}
+        lower_pressure, middle_pressure, upper_pressure = 10.0, 20.0, 30.0
+        lower_mass, middle_mass, upper_mass = 1.8, 2.1, 2.0
+        bracket_left = (middle_mass - lower_mass) / (
+            middle_pressure - lower_pressure
+        )
+        bracket_right = (upper_mass - middle_mass) / (
+            upper_pressure - middle_pressure
+        )
+        maximum_pressure, maximum_mass = 22.0, 2.11
+        maximum_left = (maximum_mass - lower_mass) / (
+            maximum_pressure - lower_pressure
+        )
+        maximum_right = (upper_mass - maximum_mass) / (
+            upper_pressure - maximum_pressure
+        )
+
+        def model(pressure: float, mass: float) -> dict[str, float]:
+            return {
+                "central_pressure_mev_fm3": pressure,
+                "mass_msun": mass,
+                "radius_km": 11.0,
+                "central_energy_density_mev_fm3": 500.0 + pressure,
+                "central_sound_speed_squared": 0.6,
+            }
+
+        bracket = {
+            "lower_pressure_mev_fm3": lower_pressure,
+            "middle_pressure_mev_fm3": middle_pressure,
+            "upper_pressure_mev_fm3": upper_pressure,
+            "lower_mass_msun": lower_mass,
+            "middle_mass_msun": middle_mass,
+            "upper_mass_msun": upper_mass,
+            "left_dM_dPc_secant": bracket_left,
+            "right_dM_dPc_secant": bracket_right,
+        }
+        maximum_model = model(maximum_pressure, maximum_mass)
+        sampled = [
+            model(lower_pressure, lower_mass),
+            model(middle_pressure, middle_mass),
+            maximum_model,
+            model(upper_pressure, upper_mass),
+        ]
+        stable = sampled[:3]
+        status = "resolved_unique_turning_point_local_sequence_refinement"
+        row = {
+            "case_id": "direct",
+            "stage": "synthetic",
+            "status": status,
+            "maximum_mass_resolved": True,
+            "maximum_mass_availability_status": "resolved_bracketed_and_refined",
+            "maximum_mass_msun": maximum_mass,
+            "maximum_mass_threshold_msun": 2.0,
+            "passes_maximum_mass_threshold": True,
+            "central_pressure_mev_fm3": maximum_pressure,
+            "central_energy_density_mev_fm3": maximum_model[
+                "central_energy_density_mev_fm3"
+            ],
+            "central_sound_speed_squared": 0.6,
+            "radius_km": 11.0,
+            "turning_point_count": 1,
+            "positive_left_secant": maximum_left,
+            "negative_right_secant": maximum_right,
+            "eos_endpoint_pressure_mev_fm3": 100.0,
+            "endpoint_limitation": "",
+            "refinement_status": "converged_local_bounded_log_pressure",
+            "sampled_sequence_model_count": 3,
+            "local_background_solver_call_count": 1,
+            "tidal_solver_calls_for_maximum_mass": 0,
+        }
+        report = {
+            "schema_id": "bsk24_maximum_mass_reports_v2",
+            "cases": {
+                "direct:synthetic": {
+                    "schema_id": "tov_resolved_maximum_mass_v2",
+                    "status": status,
+                    "maximum_mass_resolved": True,
+                    "decision_basis": (
+                        "refined_positive_to_negative_dM_dPc_turning_point"
+                    ),
+                    "sampled_argmax_is_maximum_mass": False,
+                    "maximum_mass_threshold_msun": 2.0,
+                    "passes_maximum_mass_threshold": True,
+                    "maximum_mass_msun": maximum_mass,
+                    "central_pressure_mev_fm3": maximum_pressure,
+                    "central_energy_density_mev_fm3": maximum_model[
+                        "central_energy_density_mev_fm3"
+                    ],
+                    "central_sound_speed_squared": 0.6,
+                    "radius_km": 11.0,
+                    "turning_point_count": 1,
+                    "turning_point_brackets": [bracket],
+                    "selected_bracket": bracket,
+                    "positive_left_secant": maximum_left,
+                    "negative_right_secant": maximum_right,
+                    "stable_branch_extent": {
+                        "model_count": len(stable),
+                        "maximum_central_pressure_mev_fm3": maximum_pressure,
+                        "models": stable,
+                    },
+                    "sampled_models": sampled,
+                    "eos_endpoint": {
+                        "pressure_mev_fm3": 100.0,
+                        "reached_by_search": False,
+                        "limitation": None,
+                    },
+                    "convergence": {
+                        "refinement_status": (
+                            "converged_local_bounded_log_pressure"
+                        ),
+                        "refinement_iterations": 1,
+                        "global_refinement_rounds": 0,
+                        "solver_call_count": 1,
+                        "solver_failure_count": 0,
+                        "solver_failures": [],
+                    },
+                    "tidal_calculations_performed": 0,
+                }
+            },
+        }
+        with tempfile.TemporaryDirectory(prefix="maximum-resolved-") as temporary:
+            packet = Path(temporary)
+            _write_csv_row(packet / "maximum_mass_screening.csv", row)
+            _write_json(packet / "maximum_mass_reports.json", report)
+            hard = _Layer()
+            availability = _Layer()
+            _validate_maximum_mass_artifacts(
+                packet,
+                configuration=configuration,
+                accepted=set(),
+                layer=hard,
+                availability=availability,
+                retained_pressure_endpoints={"direct": 100.0},
+            )
+            self.assertEqual([], hard.failures)
+            self.assertEqual([], availability.failures)
+
+            corrupt = json.loads(json.dumps(report))
+            corrupt_case = corrupt["cases"]["direct:synthetic"]
+            corrupt_case["turning_point_brackets"].append(dict(bracket))
+            corrupt_case["turning_point_count"] = 2
+            _write_json(packet / "maximum_mass_reports.json", corrupt)
+            corrupt_hard = _Layer()
+            _validate_maximum_mass_artifacts(
+                packet,
+                configuration=configuration,
+                accepted=set(),
+                layer=corrupt_hard,
+                availability=_Layer(),
+                retained_pressure_endpoints={"direct": 100.0},
+            )
+            self.assertTrue(
+                any(
+                    "resolved_scientific_evidence" in failure
+                    for failure in corrupt_hard.failures
+                )
+            )
+
 
 
 if __name__ == "__main__":
