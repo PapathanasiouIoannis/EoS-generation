@@ -1,4 +1,6 @@
 # EoS Generation
+# Important Note: Currently attempting to speed up the notebooks for mass data generation. 
+# Current state of the codebase isn't recommended for typical experimentation (26th August 2026)
 
 [![CI](https://github.com/PapathanasiouIoannis/EoS-generation/actions/workflows/ci.yml/badge.svg)](https://github.com/PapathanasiouIoannis/EoS-generation/actions/workflows/ci.yml)
 
