@@ -264,16 +264,17 @@ def _assert_cfl_a0_gate_invariant(
     ]
     owner = bool(getattr(config, "zero_amplitude_control_owner", True))
     model = str(getattr(config, "matter_model", "bsk24"))
+    model_label = "CFL" if model.casefold() == "cfl" else model
     if not owner:
         if zero_ids:
             raise RuntimeError(
-                f"a non-owner {model} child contains a physical A=0 control: "
+                f"a non-owner {model_label} child contains a physical A=0 control: "
                 f"{sorted(zero_ids)!r}"
             )
         return
     if len(zero_ids) != 1:
         raise RuntimeError(
-            f"the {model} zero-amplitude control owner must contain exactly one "
+            f"the {model_label} zero-amplitude control owner must contain exactly one "
             f"physical A=0 case; observed {sorted(zero_ids)!r}"
         )
     zero_id = zero_ids[0]
@@ -285,7 +286,7 @@ def _assert_cfl_a0_gate_invariant(
             else "missing_raw_gate_report"
         )
         raise RuntimeError(
-            f"mandatory owned {model} A=0 control failed the authoritative raw "
+            f"mandatory owned {model_label} A=0 control failed the authoritative raw "
             f"gate: case_id={zero_id!r}, reason={reason!r}; the retained "
             "raw gate report is authoritative and reconstruction is forbidden"
         )

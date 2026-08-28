@@ -176,7 +176,10 @@ class StudentViewTests(unittest.TestCase):
                         / "raw_gate_profiles.csv"
                     ).is_file()
                 )
-            self.assertEqual(destination.parent / "plots", view.plots)
+            self.assertEqual(
+                destination.resolve(strict=False).parent / "plots",
+                view.plots,
+            )
             self.assertFalse((view.path / "02_PLOTS").exists())
             self.assertFalse(any(view.path.rglob("*.png")))
             self.assertFalse(any(view.path.rglob("*.json")))

@@ -25,7 +25,13 @@ class NotebookDefaultsTests(unittest.TestCase):
                 document = json.loads((ROOT / "notebooks" / name).read_text(encoding="utf-8"))
                 cell = next(c for c in document["cells"] if c["id"] == "user-settings")
                 tree = ast.parse("".join(cell["source"]))
-                values = {node.targets[0].id: ast.literal_eval(node.value) for node in tree.body}
+                values = {
+                    node.targets[0].id: ast.literal_eval(node.value)
+                    for node in tree.body
+                    if isinstance(node, ast.Assign)
+                    and len(node.targets) == 1
+                    and isinstance(node.targets[0], ast.Name)
+                }
                 self.assertEqual("dataset_40", values["PRECISION"])
                 self.assertEqual("stellar", values["CALCULATION"])
                 self.assertEqual("off", values["DIAGNOSTICS"])
