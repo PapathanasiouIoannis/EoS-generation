@@ -290,7 +290,8 @@ def _windowed_pressure(
 ) -> np.ndarray:
     rho = _mass_density_from_energy_density(epsilon)
     pressure = np.asarray(
-        baseline.eos.pressure_from_mass_density(rho), dtype=float
+        baseline.eos.published_fit_pressure_from_mass_density(rho),
+        dtype=float,
     )
     if deformation.amplitude == 0.0:
         return pressure
@@ -312,7 +313,8 @@ def _windowed_cs2(
 ) -> np.ndarray:
     rho = _mass_density_from_energy_density(epsilon)
     cs2 = np.asarray(
-        baseline.eos.sound_speed_squared_from_mass_density(rho), dtype=float
+        baseline.eos.published_fit_sound_speed_squared_from_mass_density(rho),
+        dtype=float,
     )
     if deformation.amplitude == 0.0:
         return cs2

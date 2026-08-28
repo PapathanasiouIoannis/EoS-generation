@@ -1,0 +1,18 @@
+{
+  "$schema": "./schema.json",
+  "matter_model": "cfl",
+  "amplitudes": [
+    0.0,
+    0.01
+  ],
+  "epsilon_match": "surface",
+  "center": 600.0,
+  "width": 100.0,
+  "ramp_width": 50.0,
+  "calculation": "thermodynamics",
+  "precision": "quick",
+  "fixed_masses": [
+    1.4
+  ],
+  "diagnostics": "off"
+}

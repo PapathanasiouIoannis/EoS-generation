@@ -154,10 +154,15 @@ def pressure_profile_from_solved_star(
         raise ValueError("TOV tolerances must be finite and positive")
     central_pressure = float(star.central_pressure)
     central_energy_density = float(star.central_energy_density)
+    metadata_required = tov_core._discontinuity_metadata_is_required(eos_callable)
     try:
         discontinuities = tov_core._resolved_discontinuities(eos_callable)
     except (TypeError, ValueError):
+        if metadata_required:
+            raise
         discontinuities = ()
+    if metadata_required:
+        tov_core._validate_declared_branch_values(eos_callable, discontinuities)
     try:
         segments, _ = tov_core._integrate_background(
             eos_callable,
@@ -169,6 +174,8 @@ def pressure_profile_from_solved_star(
             atol=effective_atol,
         )
     except (ValueError, RuntimeError, ArithmeticError):
+        if metadata_required:
+            raise
         if not discontinuities:
             raise
         segments, _ = tov_core._integrate_background(
