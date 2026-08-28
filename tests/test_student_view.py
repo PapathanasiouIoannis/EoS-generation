@@ -170,20 +170,21 @@ class StudentViewTests(unittest.TestCase):
                     (view.primary_data / child / "thermodynamic_profiles.csv").is_file()
                 )
                 self.assertTrue(
-                    (view.plots / child / "pressure_response.png").is_file()
-                )
-                self.assertTrue(
                     (
                         view.optional_diagnostics
                         / child
                         / "raw_gate_profiles.csv"
                     ).is_file()
                 )
+            self.assertEqual(destination.parent / "plots", view.plots)
+            self.assertFalse((view.path / "02_PLOTS").exists())
+            self.assertFalse(any(view.path.rglob("*.png")))
             self.assertFalse(any(view.path.rglob("*.json")))
             readme = view.readme.read_text(encoding="utf-8")
             self.assertIn("derived, non-authoritative", readme)
             self.assertIn("Canonical configuration hash: `" + "a" * 64, readme)
             self.assertIn("thermodynamic_profiles.csv", readme)
+            self.assertIn("sibling `plots/` folder", readme)
             self.assertIn("stellar_sequences.csv", readme)
             self.assertIn("A CSV row is not a new EoS", readme)
             self.assertIn("`case_id = direct`", readme)

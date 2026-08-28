@@ -1,4 +1,4 @@
-"""Layered, read-only validation for BSk24 trial packets.
+"""Layered, read-only validation for governed BSk24 and CFL trial packets.
 
 The module imports authoritative configuration and provenance helpers from
 their private implementation modules. The public experiment API can therefore
@@ -46,7 +46,7 @@ from eos_generation.reporting._validation_scientific import (
 SCHEMA_ID = "eos_generation_trial_packet_validation_v1"
 
 
-def validate_bsk24_trial_packet_layers(
+def _validate_trial_packet_layers(
     packet_path: str | Path,
     *,
     current_source_hashes: (
@@ -54,8 +54,10 @@ def validate_bsk24_trial_packet_layers(
     ) = None,
     configuration_hash_fn: Callable[[Mapping[str, Any]], str] | None = None,
     required_source_paths: tuple[str, ...] = (),
+    expected_matter_model: str | None,
+    missing_packet_label: str,
 ) -> dict[str, Any]:
-    """Validate a completed packet without modifying it.
+    """Validate a completed governed packet without modifying it.
 
     Parameters
     ----------
@@ -66,7 +68,8 @@ def validate_bsk24_trial_packet_layers(
         the authoritative private provenance ``_source_hashes`` helper is used.
     configuration_hash_fn:
         Optional deterministic hash callback for isolated tests.  Production
-        calls use ``BSk24TrialConfig.from_dict(...).deterministic_hash()``.
+        calls dispatch to the deterministic config type declared by the saved
+        ``matter_model`` (with an absent declaration retaining BSk24).
     required_source_paths:
         Authorities that a packet must cover in addition to the current source
         mapping.
@@ -74,11 +77,12 @@ def validate_bsk24_trial_packet_layers(
 
     packet = ensure_within_runs(packet_path)
     if not packet.is_dir():
-        raise FileNotFoundError(f"BSk24 trial packet does not exist: {packet}")
+        raise FileNotFoundError(f"{missing_packet_label} does not exist: {packet}")
     config_hash = configuration_hash_fn or _default_configuration_hash
     internal, context = _validate_internal(
         packet,
         configuration_hash_fn=config_hash,
+        expected_matter_model=expected_matter_model,
     )
     if current_source_hashes is None:
         try:
@@ -102,6 +106,7 @@ def validate_bsk24_trial_packet_layers(
         configuration=context["configuration"],
         metadata=context["metadata"],
         accepted=context["accepted_case_ids"],
+        case_ledger=context.get("case_ledger"),
     )
     validity = scientific["hard_validity"]
     availability = scientific["availability"]
@@ -144,4 +149,71 @@ def validate_bsk24_trial_packet_layers(
     }
 
 
-__all__ = ["validate_bsk24_trial_packet_layers"]
+def validate_trial_packet_layers(
+    packet_path: str | Path,
+    *,
+    current_source_hashes: (
+        Mapping[str, str] | Callable[[], Mapping[str, str]] | None
+    ) = None,
+    configuration_hash_fn: Callable[[Mapping[str, Any]], str] | None = None,
+    required_source_paths: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    """Validate a completed packet, dispatching from its saved matter model."""
+
+    return _validate_trial_packet_layers(
+        packet_path,
+        current_source_hashes=current_source_hashes,
+        configuration_hash_fn=configuration_hash_fn,
+        required_source_paths=required_source_paths,
+        expected_matter_model=None,
+        missing_packet_label="governed trial packet",
+    )
+
+
+def validate_cfl_trial_packet_layers(
+    packet_path: str | Path,
+    *,
+    current_source_hashes: (
+        Mapping[str, str] | Callable[[], Mapping[str, str]] | None
+    ) = None,
+    configuration_hash_fn: Callable[[Mapping[str, Any]], str] | None = None,
+    required_source_paths: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    """Validate a completed CFL packet and reject any other matter model."""
+
+    return _validate_trial_packet_layers(
+        packet_path,
+        current_source_hashes=current_source_hashes,
+        configuration_hash_fn=configuration_hash_fn,
+        required_source_paths=required_source_paths,
+        expected_matter_model="cfl",
+        missing_packet_label="CFL trial packet",
+    )
+
+
+def validate_bsk24_trial_packet_layers(
+    packet_path: str | Path,
+    *,
+    current_source_hashes: (
+        Mapping[str, str] | Callable[[], Mapping[str, str]] | None
+    ) = None,
+    configuration_hash_fn: Callable[[Mapping[str, Any]], str] | None = None,
+    required_source_paths: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    """Retain the established BSk24-only packet-validation entry point."""
+
+    return _validate_trial_packet_layers(
+        packet_path,
+        current_source_hashes=current_source_hashes,
+        configuration_hash_fn=configuration_hash_fn,
+        required_source_paths=required_source_paths,
+        expected_matter_model="bsk24",
+        missing_packet_label="BSk24 trial packet",
+    )
+
+
+__all__ = [
+    "validate_bsk24_trial_packet_layers",
+    "validate_cfl_trial_packet_layers",
+    "validate_trial_packet_layers",
+]

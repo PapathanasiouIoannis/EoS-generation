@@ -1,4 +1,4 @@
-"""Controlled analytical BSk24 equation-of-state experiments."""
+"""Controlled BSk24 and self-bound CFL equation-of-state experiments."""
 
 from .experiment import (
     Experiment,

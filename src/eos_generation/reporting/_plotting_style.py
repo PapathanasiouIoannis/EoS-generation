@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -97,12 +98,22 @@ def _style_rows(frame: pd.DataFrame) -> dict[str, dict[str, Any]]:
     delta_styles = {
         value: line_styles[index % len(line_styles)] for index, value in enumerate(deltas)
     }
+    matter_model = "bsk24"
+    if "matter_model" in frame.columns:
+        declared_models = {
+            str(value) for value in frame["matter_model"].dropna().unique()
+        }
+        if declared_models == {"cfl"}:
+            matter_model = "cfl"
+    direct_label = (
+        "Direct CFL baseline" if matter_model == "cfl" else "Direct BSk24 baseline"
+    )
     styles: dict[str, dict[str, Any]] = {
         "direct": {
             "color": "#111827",
             "linestyle": "-",
             "linewidth": 2.4,
-            "label": "Direct BSk24 baseline",
+            "label": direct_label,
         }
     }
     for case_id in case_ids:
@@ -148,7 +159,22 @@ def _publication_case_styles(
     for case_id in tuple(styles):
         style = styles[case_id]
         if case_id == "direct":
-            style.update(label="Direct BSk24", marker=None, zorder=2.0)
+            metadata_path = packet / "metadata.json"
+            matter_model = "bsk24"
+            if metadata_path.is_file():
+                try:
+                    matter_model = str(
+                        json.loads(metadata_path.read_text(encoding="utf-8")).get(
+                            "matter_model", "bsk24"
+                        )
+                    )
+                except (OSError, TypeError, ValueError, json.JSONDecodeError):
+                    matter_model = "bsk24"
+            style.update(
+                label=("Direct CFL" if matter_model == "cfl" else "Direct BSk24"),
+                marker=None,
+                zorder=2.0,
+            )
             continue
         row = lookup.loc[case_id] if case_id in lookup.index else pd.Series(dtype=object)
         amplitude = pd.to_numeric(

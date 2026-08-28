@@ -11,6 +11,7 @@ from scipy.special import erf
 
 from eos_generation.bsk24.baseline import (
     CAUSAL_MASS_DENSITY_MAX_G_CM3,
+    FIT_MASS_DENSITY_MAX_G_CM3,
     FIT_MASS_DENSITY_MIN_G_CM3,
     MEV_FM3_TO_MASS_DENSITY_G_CM3,
     NEUTRON_REST_ENERGY_MEV,
@@ -111,6 +112,11 @@ def _mass_density_from_energy_density(epsilon: np.ndarray) -> np.ndarray:
     rho = np.where(
         np.isclose(rho, CAUSAL_MASS_DENSITY_MAX_G_CM3, rtol=guard, atol=0.0),
         CAUSAL_MASS_DENSITY_MAX_G_CM3,
+        rho,
+    )
+    rho = np.where(
+        np.isclose(rho, FIT_MASS_DENSITY_MAX_G_CM3, rtol=guard, atol=0.0),
+        FIT_MASS_DENSITY_MAX_G_CM3,
         rho,
     )
     return rho

@@ -12,10 +12,48 @@ from scipy.optimize import minimize_scalar
 from eos_generation._internal.config import TovConfig
 from eos_generation.stellar._tov_algebra import _require_finite
 from eos_generation.stellar._tov_integration import solve_star
+from eos_generation.stellar.discontinuities import (
+    SEED_PRESERVING_LOCAL_REFINEMENT_POLICY,
+)
 from eos_generation.stellar._tov_types import (
     TovMaximumMassResult,
     TovSequenceEvidence,
 )
+
+
+def _prefer_highest_evaluated_candidate(
+    cache: dict[float, Any],
+    *,
+    lower_pressure: float,
+    upper_pressure: float,
+    refined_pressure: float,
+    refined_star: Any,
+) -> tuple[float, Any]:
+    """Return the highest-mass model evaluated inside one turning bracket.
+
+    A bounded optimizer can finish microscopically away from an already
+    evaluated, marginally higher model on a numerically flat maximum.  Keep
+    the optimizer candidate unless a successful in-bracket evaluation has a
+    strictly greater mass.  This preserves the invariant that a resolved
+    maximum is never smaller than its own saved refinement evidence without
+    weakening downstream validation.
+    """
+
+    candidates = [
+        (float(pressure), star)
+        for pressure, star in cache.items()
+        if lower_pressure < float(pressure) < upper_pressure
+    ]
+    if not candidates:
+        return float(refined_pressure), refined_star
+    best_pressure, best_star = max(
+        candidates,
+        key=lambda item: float(item[1].mass),
+    )
+    if float(best_star.mass) > float(refined_star.mass):
+        return best_pressure, best_star
+    return float(refined_pressure), refined_star
+
 
 def resolve_maximum_mass(
     eos_callable: Callable,
@@ -253,6 +291,13 @@ def resolve_maximum_mass(
         )
         refined_pressure = math.exp(float(optimization.x))
         maximum_star = evaluate(refined_pressure)
+        refined_pressure, maximum_star = _prefer_highest_evaluated_candidate(
+            cache,
+            lower_pressure=lower_pressure,
+            upper_pressure=upper_pressure,
+            refined_pressure=refined_pressure,
+            refined_star=maximum_star,
+        )
     except (ValueError, RuntimeError, ArithmeticError) as exc:
         return unresolved(
             "unresolved_turning_point_refinement_failure",
@@ -326,6 +371,31 @@ def resolve_maximum_mass(
         solver_failure_count=len(failures),
         solver_failures=tuple(sorted(failures.items())),
     )
+
+
+def _local_refinement_pressures(
+    lower: float, middle: float, upper: float, points: int, policy: str | None,
+) -> np.ndarray:
+    if policy is None:
+        # Preserve the established hadronic grid byte for byte.
+        return np.geomspace(lower, upper, points)
+    if policy != SEED_PRESERVING_LOCAL_REFINEMENT_POLICY:
+        raise ValueError("unknown stellar local-refinement policy")
+    if not 0.0 < lower < middle < upper or points < 7 or points % 2 == 0:
+        raise ValueError("invalid seed-preserving local-refinement bracket")
+    half_points = (points + 1) // 2
+    left = np.geomspace(lower, middle, half_points)
+    right = np.geomspace(middle, upper, half_points)
+    # Use the original three solved nodes as exact endpoints of the two
+    # subdivisions. Recomputing the central node via exp/log can produce a
+    # second, near-equal pressure and a spurious mass secant. No tolerance-
+    # based merging, smoothing, or change to the sign test is involved.
+    left[0], left[-1] = lower, middle
+    right[0], right[-1] = middle, upper
+    pressures = np.concatenate((left[:-1], right))
+    if not np.all(np.diff(pressures) > 0.0):
+        raise ValueError("local-refinement nodes are not representably distinct")
+    return pressures
 
 
 def refine_maximum_mass_from_sequence(
@@ -531,8 +601,12 @@ def refine_maximum_mass_from_sequence(
         )
 
     selected = brackets[0]
-    lower_pressure, _middle_pressure, upper_pressure = selected[:3]
-    for pressure in np.geomspace(lower_pressure, upper_pressure, local_points):
+    lower_pressure, middle_pressure, upper_pressure = selected[:3]
+    local_grid = _local_refinement_pressures(
+        lower_pressure, middle_pressure, upper_pressure, local_points,
+        getattr(eos_callable, "stellar_local_refinement_policy", None),
+    )
+    for pressure in local_grid:
         try:
             evaluate(float(pressure))
         except (ValueError, RuntimeError, ArithmeticError):
@@ -571,6 +645,13 @@ def refine_maximum_mass_from_sequence(
         )
         refined_pressure = math.exp(float(optimization.x))
         maximum_star = evaluate(refined_pressure)
+        refined_pressure, maximum_star = _prefer_highest_evaluated_candidate(
+            cache,
+            lower_pressure=lower_pressure,
+            upper_pressure=upper_pressure,
+            refined_pressure=refined_pressure,
+            refined_star=maximum_star,
+        )
         lower_star = evaluate(lower_pressure)
         upper_star = evaluate(upper_pressure)
     except (ValueError, RuntimeError, ArithmeticError) as exc:

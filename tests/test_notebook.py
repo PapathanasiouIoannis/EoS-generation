@@ -322,6 +322,18 @@ class NotebookArtifactTests(unittest.TestCase):
         self.assertIn("execute=EXECUTE_REVIEWED_PLAN", locked_source)
         self.assertEqual(1, locked_source.count("student_view_locations()"))
         self.assertIn("Student result locations", locked_source)
+        self.assertIn("build_experiment_plots.py", locked_source)
+        self.assertIn("eos_catalogue.py", locked_source)
+        self.assertIn('planning_root / "EOS_DATA"', locked_source)
+        self.assertIn("--eos-data", locked_source)
+        self.assertIn("Friendly EoS catalogue", locked_source)
+        self.assertIn("case_aliases.csv", locked_source)
+        self.assertIn('planning_root / "plots"', locked_source)
+        self.assertNotIn("settings.calculation == \"stellar\"", locked_source)
+        self.assertIn("Combined accepted plots", locked_source)
+        self.assertIn("accepted_case_occurrence_count", locked_source)
+        self.assertIn("excluded_rejected_case_occurrence_count", locked_source)
+        self.assertIn("0 solver calls", locked_source)
         self.assertIn("experiment_result.summary_text()", locked_source)
         self.assertIn("retained_epsilon_max_mev_fm3", locked_source)
         self.assertIn("requested_fixed_masses_status", locked_source)
@@ -339,6 +351,8 @@ class NotebookArtifactTests(unittest.TestCase):
             markdown_source,
         )
         self.assertIn("Student result locations > Read me first", markdown_source)
+        self.assertIn("current sweep", markdown_source)
+        self.assertIn("rejected cases are excluded", markdown_source)
         for cell in code_cells:
             compile("".join(cell["source"]), f"{NOTEBOOK}:{cell['id']}", "exec")
 
@@ -391,6 +405,25 @@ class NotebookArtifactTests(unittest.TestCase):
         self.assertNotIn(str(ROOT), serialized)
         self.assertNotIn("python_executable", serialized)
         self.assertIn('"planning_root": "runs/', serialized)
+
+    def test_presentation_builders_are_bound_to_notebook_preview(self) -> None:
+        notebook = json.loads(NOTEBOOK.read_text(encoding="utf-8"))
+        source = "".join(next(cell for cell in notebook["cells"] if cell["id"] == "preview")["source"])
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "notebooks").mkdir()
+            for name in ("eos_catalogue.py", "build_experiment_plots.py"):
+                (root / "notebooks" / name).write_text("# synthetic reporting source", encoding="utf-8")
+            session = SimpleNamespace(repository_root=root, prepare=lambda *args, **kwargs: SimpleNamespace(summary_text=lambda: "preview"))
+            namespace = {"notebook_session": session, "settings": None, "EXECUTE_REVIEWED_PLAN": False}
+            exec(source, namespace)
+            self.assertEqual({"eos_catalogue.py", "build_experiment_plots.py"}, set(namespace["reviewed_presentation_sources"]))
+            namespace["EXECUTE_REVIEWED_PLAN"] = True
+            exec(source, namespace)
+            (root / "notebooks/eos_catalogue.py").write_text("# changed", encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "Presentation source changed"):
+                exec(source, namespace)
+            self.assertFalse((root / "runs").exists())
 
 
 if __name__ == "__main__":

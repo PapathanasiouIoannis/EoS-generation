@@ -153,6 +153,7 @@ class CompactProvenanceTests(unittest.TestCase):
             if path.is_file()
         }
         observed.add("src/eos_generation/bsk24/source_manifest.json")
+        observed.add("src/eos_generation/cfl/source_manifest.json")
         self.assertEqual(set(_SOURCE_PATHS), observed)
 
     def test_packaged_bsk24_source_manifest_is_json_safe_and_specific(self) -> None:
@@ -164,6 +165,27 @@ class CompactProvenanceTests(unittest.TestCase):
         self.assertEqual(64, len(payload["independent_implementation_oracle"]["sha256"]))
         self.assertEqual(64, len(payload["underlying_tabulated_oracle"]["sha256"]))
         self.assertFalse(payload["source_storage_policy"]["raw_third_party_artifacts_committed"])
+        json.dumps(payload, allow_nan=False)
+
+    def test_packaged_cfl_source_manifest_is_json_safe_and_frozen(self) -> None:
+        path = ROOT / "src" / "eos_generation" / "cfl" / "source_manifest.json"
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual("cfl_bag_full_ms_delta2_v1", payload["model_identifier"])
+        self.assertEqual(
+            "3991cb8615d2d29617ccb90c6dc54b23aae64bcc752856d07f17f99abc048307",
+            payload["frozen_parameter_set_sha256"],
+        )
+        self.assertEqual(
+            [190.2181760065314, 4008.81724402691],
+            payload["binary64_identity_policy"][
+                "authoritative_energy_density_domain_mev_fm3"
+            ],
+        )
+        self.assertFalse(
+            payload["source_storage_policy"][
+                "raw_third_party_artifacts_committed"
+            ]
+        )
         json.dumps(payload, allow_nan=False)
 
     def test_compact_fixture_ledger_covers_every_fixture(self) -> None:
