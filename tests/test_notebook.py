@@ -287,7 +287,9 @@ class NotebookArtifactTests(unittest.TestCase):
         self.assertEqual(["user-settings"], [cell["id"] for cell in editable])
         self.assertTrue(all(cell["execution_count"] is None for cell in code_cells))
         self.assertTrue(all(not cell["outputs"] for cell in code_cells))
-        self.assertEqual("python3", notebook["metadata"]["kernelspec"]["name"])
+        self.assertEqual(
+            "eos-generation", notebook["metadata"]["kernelspec"]["name"]
+        )
 
         settings = next(cell for cell in code_cells if cell["id"] == "user-settings")
         settings_source = "".join(settings["source"])
