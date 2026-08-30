@@ -505,7 +505,7 @@ def test_small_valid_ramp_raw_gate_uses_stable_pressure_primitive(
 
 
 def test_continuous_bounds_and_full_domain_a0_gate(
-    baseline, geometry, bounds, accepted_a0_report
+    baseline, geometry, bounds, monkeypatch
 ) -> None:
     assert bounds.amplitude_min < 0.0 < bounds.amplitude_max
     assert bounds.contains(0.0)
@@ -521,21 +521,40 @@ def test_continuous_bounds_and_full_domain_a0_gate(
     assert upper_cs2 + bounds.amplitude_max * bounds.upper_limiting_shape == pytest.approx(
         1.0, abs=3.0e-15
     )
-    report, epsilon, raw_cs2 = accepted_a0_report
+    sampled_baseline_cs2: list[np.ndarray] = []
+    original_cs2 = CFLAnalyticEos.sound_speed_squared_from_quark_chemical_potential
+
+    def capture_sampled_baseline(self, value):
+        result = original_cs2(self, value)
+        sampled = np.asarray(result, dtype=float)
+        if sampled.ndim == 1 and sampled.size > 1:
+            sampled_baseline_cs2.append(sampled.copy())
+        return result
+
+    monkeypatch.setattr(
+        CFLAnalyticEos,
+        "sound_speed_squared_from_quark_chemical_potential",
+        capture_sampled_baseline,
+    )
+    report, epsilon, raw_cs2 = raw_local_physics_gate(
+        geometry,
+        baseline=baseline,
+        amplitude_bounds=bounds,
+        dense_points=513,
+    )
     assert report["full_declared_domain_passed"] is True
     assert report["surface"]["preserved_exactly"] is True
     assert report["clipping_clamping_smoothing_posthoc_repair"] == "none"
     assert epsilon[0] == ENERGY_DENSITY_SURFACE_MEV_FM3
     assert epsilon[-1] == ENERGY_DENSITY_MAX_MEV_FM3
-    # This comparison includes an epsilon -> mu Brent round trip.  Express the
-    # binary64 identity bound in ULPs so it is independent of the new profile's
-    # absolute c_s^2 scale; seven ULPs is the observed worst-case round trip.
-    np.testing.assert_array_max_ulp(
-        raw_cs2,
-        baseline.sound_speed_squared_from_quark_chemical_potential(
-            baseline.quark_chemical_potential_from_energy_density(epsilon)
-        ),
-        maxulp=7,
+    # Capture the baseline values sampled on the gate's native chemical-
+    # potential grid.  This checks the actual zero-amplitude invariant exactly,
+    # without introducing a platform-sensitive epsilon -> mu Brent round trip.
+    assert len(sampled_baseline_cs2) == 1
+    np.testing.assert_array_equal(raw_cs2, sampled_baseline_cs2[0])
+    np.testing.assert_array_equal(
+        windowed_gaussian_delta_cs2(epsilon, geometry),
+        np.zeros_like(epsilon),
     )
     json.dumps(report, allow_nan=False)
 

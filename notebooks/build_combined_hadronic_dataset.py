@@ -54,7 +54,7 @@ MAX_THERMODYNAMIC_PLOT_POINTS = 5000
 
 
 def _portable(path: Path, root: Path) -> str:
-    return path.resolve(strict=False).relative_to(root).as_posix()
+    return catalogue.confined(path, root).relative_to(root).as_posix()
 
 
 def _finite(frame: pd.DataFrame, columns: Iterable[str]) -> np.ndarray:
@@ -680,16 +680,39 @@ def draw_thermodynamic_plots(
 
 
 def _write_manifest(folder: Path) -> None:
-    files = sorted(
-        path for path in folder.rglob("*")
-        if path.is_file() and path.name != "SHA256SUMS.txt"
-    )
+    folder = folder.resolve(strict=True)
+    if not folder.is_dir():
+        raise NotADirectoryError(folder)
+    files: list[Path] = []
+    for path in sorted(folder.rglob("*")):
+        if path.name == "SHA256SUMS.txt":
+            continue
+        if path.is_symlink():
+            raise ValueError(f"manifest input must not be a symlink: {path}")
+        resolved = catalogue.confined(path, folder)
+        lexical = Path(os.path.abspath(path))
+        if os.path.normcase(str(resolved)) != os.path.normcase(str(lexical)):
+            raise ValueError(f"manifest input must not traverse a link: {path}")
+        if resolved.is_file():
+            files.append(resolved)
     text = "".join(
         f"{_checksum(path)}  {path.relative_to(folder).as_posix()}\n" for path in files
     )
-    temporary = folder / ".SHA256SUMS.tmp"
-    temporary.write_text(text, encoding="utf-8", newline="\n")
-    os.replace(temporary, folder / "SHA256SUMS.txt")
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=".SHA256SUMS.", suffix=".tmp", dir=folder, text=True
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
+            descriptor = -1
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, folder / "SHA256SUMS.txt")
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        temporary.unlink(missing_ok=True)
 
 
 def finalize_manifest(
@@ -717,11 +740,9 @@ def build_combined_dataset(
 ) -> dict[str, Any]:
     root = Path(repository_root).resolve(strict=True)
     runs = (root / "runs").resolve(strict=True)
-    target = Path(destination).resolve(strict=False)
-    try:
-        target.relative_to(runs)
-    except ValueError as exc:
-        raise ValueError("destination must remain below runs/") from exc
+    target = catalogue.confined(Path(destination), runs)
+    if target == runs:
+        raise ValueError("destination must remain below runs/")
     if target.exists() or target.is_symlink():
         raise FileExistsError(target)
     catalogue_root = catalogue.confined(runs / "eos_catalogue", runs)

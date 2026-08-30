@@ -89,6 +89,8 @@ def trusted_repository_root(requested: str | Path) -> Path:
     """
 
     trusted = Path(__file__).resolve(strict=True).parents[1]
+    # This normalization is immediately checked against the one trusted checkout.
+    # codeql[py/path-injection]
     candidate = Path(os.path.realpath(Path(requested).expanduser()))
     if candidate != trusted:
         raise ValueError(
@@ -102,6 +104,8 @@ def confined(path: Path, parent: Path) -> Path:
     """Reject symlink/junction escapes, including not-yet-created destinations."""
 
     allowed = Path(os.path.realpath(parent.resolve(strict=True)))
+    # This normalization is the candidate consumed by the common-path allow-list.
+    # codeql[py/path-injection]
     resolved = Path(os.path.realpath(path.expanduser()))
     try:
         common = Path(os.path.commonpath((str(allowed), str(resolved))))

@@ -116,6 +116,43 @@ class CombinedHadronicDatasetTests(unittest.TestCase):
                 MODULE.finalize_manifest(root, outside)
             self.assertFalse((outside / "SHA256SUMS.txt").exists())
 
+    def test_build_destination_rejects_a_symlink_escape_when_supported(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runs = root / "runs"
+            outside = root / "outside"
+            runs.mkdir()
+            outside.mkdir()
+            linked_destination = runs / "linked-destination"
+            try:
+                linked_destination.symlink_to(outside, target_is_directory=True)
+            except OSError as exc:
+                self.skipTest(f"directory symlinks are unavailable: {exc}")
+
+            with self.assertRaisesRegex(ValueError, "allowed parent"):
+                MODULE.build_combined_dataset(root, [], linked_destination)
+            self.assertEqual([], list(outside.iterdir()))
+
+    def test_manifest_rejects_linked_inputs_and_fixed_temp_symlinks(self) -> None:
+        for link_name in ("outside-link.csv", ".SHA256SUMS.tmp"):
+            with self.subTest(link_name=link_name), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                packet = root / "packet"
+                packet.mkdir()
+                (packet / "data.csv").write_text("value\n1\n", encoding="utf-8")
+                sentinel = root / "sentinel.txt"
+                sentinel.write_text("unchanged\n", encoding="utf-8")
+                linked = packet / link_name
+                try:
+                    linked.symlink_to(sentinel)
+                except OSError as exc:
+                    self.skipTest(f"file symlinks are unavailable: {exc}")
+
+                with self.assertRaisesRegex(ValueError, "must not be a symlink"):
+                    MODULE._write_manifest(packet)
+                self.assertEqual("unchanged\n", sentinel.read_text(encoding="utf-8"))
+                self.assertFalse((packet / "SHA256SUMS.txt").exists())
+
     def test_nested_declared_packet_and_formula_run_label_fail_closed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

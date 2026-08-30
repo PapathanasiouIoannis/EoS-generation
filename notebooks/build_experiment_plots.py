@@ -1010,8 +1010,8 @@ def build_experiment_plots(
             "authoritative_packets_modified": False,
             "friendly_eos_labels": alias_rows is not None,
             "eos_data_path": (
-                Path(eos_data_path).resolve().relative_to(root).as_posix()
-                if eos_data_path is not None else None
+                alias_folder.relative_to(root).as_posix()
+                if alias_folder is not None else None
             ),
             "builder_sha256": sha256(Path(__file__)),
         }
