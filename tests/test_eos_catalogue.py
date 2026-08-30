@@ -164,8 +164,6 @@ class EosCatalogueTests(unittest.TestCase):
             parent = Path(temporary)
             with self.assertRaisesRegex(ValueError, "reviewed checkout"):
                 CATALOGUE.trusted_repository_root(parent)
-            with self.assertRaisesRegex(ValueError, "must be absolute"):
-                CATALOGUE.confined(Path("relative"), parent)
             with self.assertRaisesRegex(ValueError, "allowed parent"):
                 CATALOGUE.confined(parent.with_name(f"{parent.name}-sibling"), parent)
 
