@@ -89,7 +89,8 @@ def trusted_repository_root(requested: str | Path) -> Path:
     """
 
     trusted = Path(__file__).resolve(strict=True).parents[1]
-    if requested != trusted and requested != str(trusted):
+    candidate = os.path.abspath(os.path.expanduser(os.fspath(requested)))
+    if candidate != str(trusted):
         raise ValueError(
             "--repository-root must identify the reviewed checkout that owns "
             f"this script: {trusted}"
