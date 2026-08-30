@@ -101,7 +101,16 @@ def confined(path: Path, parent: Path) -> Path:
     """Reject symlink/junction escapes, including not-yet-created destinations."""
 
     allowed = Path(os.path.realpath(parent.resolve(strict=True)))
-    resolved = Path(os.path.realpath(path.expanduser()))
+    allowed_text = str(allowed)
+    allowed_prefix = allowed_text.rstrip(os.sep) + os.sep
+    lexical = os.path.abspath(os.path.expanduser(os.fspath(path)))
+    if lexical == allowed_text:
+        checked = allowed_text
+    elif lexical.startswith(allowed_prefix):
+        checked = lexical
+    else:
+        raise ValueError(f"path escapes its allowed parent: {path}")
+    resolved = Path(os.path.realpath(checked))
     try:
         common = Path(os.path.commonpath((str(allowed), str(resolved))))
     except ValueError as exc:
