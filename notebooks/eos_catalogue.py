@@ -89,10 +89,7 @@ def trusted_repository_root(requested: str | Path) -> Path:
     """
 
     trusted = Path(__file__).resolve(strict=True).parents[1]
-    # This normalization is immediately checked against the one trusted checkout.
-    # codeql[py/path-injection]
-    candidate = Path(os.path.realpath(Path(requested).expanduser()))
-    if candidate != trusted:
+    if requested != trusted and requested != str(trusted):
         raise ValueError(
             "--repository-root must identify the reviewed checkout that owns "
             f"this script: {trusted}"
@@ -104,14 +101,17 @@ def confined(path: Path, parent: Path) -> Path:
     """Reject symlink/junction escapes, including not-yet-created destinations."""
 
     allowed = Path(os.path.realpath(parent.resolve(strict=True)))
-    # This normalization is the candidate consumed by the common-path allow-list.
-    # codeql[py/path-injection]
-    resolved = Path(os.path.realpath(path.expanduser()))
-    try:
-        common = Path(os.path.commonpath((str(allowed), str(resolved))))
-    except ValueError as exc:
-        raise ValueError(f"path escapes its allowed parent: {path}") from exc
-    if common != allowed:
+    if not path.is_absolute():
+        raise ValueError(f"path must be absolute: {path}")
+    lexical = Path(os.path.normpath(os.fspath(path)))
+    allowed_text = os.path.normcase(str(allowed))
+    allowed_prefix = allowed_text.rstrip(os.sep) + os.sep
+    lexical_text = os.path.normcase(str(lexical))
+    if lexical_text != allowed_text and not lexical_text.startswith(allowed_prefix):
+        raise ValueError(f"path escapes its allowed parent: {path}")
+    resolved = Path(os.path.realpath(lexical))
+    resolved_text = os.path.normcase(str(resolved))
+    if resolved_text != allowed_text and not resolved_text.startswith(allowed_prefix):
         raise ValueError(f"path escapes its allowed parent: {path}")
     return resolved
 

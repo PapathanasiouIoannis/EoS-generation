@@ -159,10 +159,15 @@ def snapshot(folder):
 class EosCatalogueTests(unittest.TestCase):
     def test_cli_root_and_no_clobber_publication_are_fail_closed(self):
         self.assertEqual(ROOT, CATALOGUE.trusted_repository_root(ROOT))
+        self.assertEqual(ROOT, CATALOGUE.trusted_repository_root(str(ROOT)))
         with tempfile.TemporaryDirectory() as temporary:
             parent = Path(temporary)
             with self.assertRaisesRegex(ValueError, "reviewed checkout"):
                 CATALOGUE.trusted_repository_root(parent)
+            with self.assertRaisesRegex(ValueError, "must be absolute"):
+                CATALOGUE.confined(Path("relative"), parent)
+            with self.assertRaisesRegex(ValueError, "allowed parent"):
+                CATALOGUE.confined(parent.with_name(f"{parent.name}-sibling"), parent)
 
             stage = parent / ".stage"
             target = parent / "target"
