@@ -1,10 +1,8 @@
 # Quickstart
 
-This guide performs a small thermodynamic BSk24 experiment and shows the
-parallel passive entry point for the frozen CFL model. Planning is passive;
-only the explicitly authorized `run` command performs scientific work or
-creates a result directory. The historical `bsk24-trial` command name remains
-the compatibility interface for both models.
+This guide performs a small thermodynamic BSk24 experiment. Planning is
+passive; only the explicitly authorized `run` command performs scientific
+work or creates a result directory.
 
 There are three interfaces, not three different calculations:
 
@@ -81,13 +79,6 @@ Open [`../configs/quickstart.json`](../configs/quickstart.json). It requests
 two amplitudes at one geometry, uses the small `quick` numerical profile, and
 does not request stellar calculations.
 
-The CFL counterpart is
-[`../configs/cfl_quickstart.json`](../configs/cfl_quickstart.json). It declares
-`"matter_model": "cfl"`, uses the required `"epsilon_match": "surface"`, and
-also requests thermodynamics only. Its microphysical constants are frozen in
-the versioned baseline profile and cannot be changed through settings. Read
-[`cfl.md`](cfl.md) for its exact equation set and limitations.
-
 The user-facing fields are explained in
 [`parameters.md`](parameters.md). Their units matter: energy-density
 coordinates are in MeV fm^-3, the amplitude is dimensionless, and fixed
@@ -99,13 +90,6 @@ masses are in solar masses.
 bsk24-trial plan --config configs/quickstart.json --output-root runs
 ```
 
-To inspect CFL instead, substitute its config without changing any other
-planning rule:
-
-```powershell
-bsk24-trial plan --config configs/cfl_quickstart.json --output-root runs
-```
-
 Review the resolved settings, deterministic hash, expanded numerical profile,
 case list, work count, and destination. This command must make zero solver
 calls and zero filesystem writes. It is safe to use while learning the
@@ -113,11 +97,6 @@ interface.
 
 If the plan is not what you intended, edit the JSON and plan again. Do not
 edit implementation constants to configure an experiment.
-
-For any multi-geometry BSk24 or CFL plan, inspect both logical identity
-aliases and the physical work count. Exactly one deterministic geometry owns
-the physical zero-amplitude baseline; the other logical zero rows do not
-repeat execution.
 
 ## 4. Execute the reviewed plan
 
@@ -142,8 +121,6 @@ later return below one is outside the usable branch. A rejected or unresolved
 case is a recorded scientific outcome, not automatically a software error. It
 keeps its raw evidence and exact reason and receives no downstream
 calculation; no result is clipped, repaired, or extrapolated into acceptance.
-If you reviewed the CFL config, use that same CFL filename in the run command;
-a BSk24 hash cannot authorize a CFL run and vice versa.
 
 ## 5. Validate and inspect
 
@@ -166,11 +143,6 @@ Read [`results.md`](results.md) before interpreting accepted/rejected cases,
 stellar branches, or missing observables. Read
 [`csv-data-guide.md`](csv-data-guide.md) for the exact CSV ordering, column
 meanings, analysis recipes, and machine-learning preparation.
-
-The CFL quickstart is an exploratory workflow check, not a validation of a
-published CFL mass-radius sequence. Publication-level CFL stellar claims
-require a reviewed strict run, convergence evidence, a convention-matched
-published benchmark, and comparison with an independent solver.
 
 ## Notebook route
 
@@ -219,18 +191,15 @@ to that reviewed plan; settings, source, environment, worker, or destination
 drift requires a new passive pass.
 
 On a successful authorized pass, the notebook validates the completed
-experiment, creates a separate `STUDENT_VIEW/` for primary CSV data and the
-authoritative technical packet, and creates one flat experiment-level
-`plots/` directory. Every applicable figure in that folder overlays all
-accepted EoSs from the current sweep; rejected cases and historical
-experiments are not mixed into the plots. The saved-table plot step makes zero
-solver calls. The notebook uses `../runs/...` links because it is stored in
-`notebooks/`; those links resolve correctly in both VS Code and browser
-Jupyter. A stellar case remains student-view eligible when every explicitly
-requested fixed mass succeeded even if maximum mass is explicitly unavailable.
-The copied `case_ledger.csv` exposes the retained endpoint,
-requested-fixed-mass, maximum-mass-availability, and student-view-eligibility
-statuses separately.
+experiment and then creates a separate `STUDENT_VIEW/` with obvious links to
+plots, primary CSV data, and the authoritative technical packet. This derived
+view is outside the sealed packet and has its own checksum manifest. The
+notebook uses `../runs/...` links because it is stored in `notebooks/`; those
+links resolve correctly in both VS Code and browser Jupyter. A stellar case
+remains student-view eligible when every explicitly requested fixed mass
+succeeded even if maximum mass is explicitly unavailable. The copied
+`case_ledger.csv` exposes the retained endpoint, requested-fixed-mass,
+maximum-mass-availability, and student-view-eligibility statuses separately.
 
 Start with `STUDENT_VIEW/01_READ_ME_FIRST.md`. For portable EoS analysis,
 keep `case_ledger.csv` and `thermodynamic_profiles.csv` from the same
@@ -240,59 +209,10 @@ row, ordering, column, and machine-learning guidance is documented in
 [`csv-data-guide.md`](csv-data-guide.md); packet validation and lifecycle
 interpretation remain in [`results.md`](results.md).
 
-For pure bare CFL quark stars, open the separate notebook instead:
-
-```powershell
-jupyter lab notebooks/cfl_experiment.ipynb
-```
-
-The CFL notebook starts with three small signed amplitudes, one geometry,
-`CALCULATION = "stellar"`, and `PRECISION = "quick"`. Its single editable
-cell has the same deformation and precision controls as the hadronic route,
-but no editable microphysical parameters or hadronic matching anchor. The
-surface and `diagnostics = "off"` are fixed by the supported CFL contract.
-
-The quick preview includes 51 sampled tidal models: three physical cases,
-each at 17 central pressures. A=0 reuses the single analytic direct solution.
-Fixed-mass roots and adaptive maximum-mass refinement add work. The strict
-profile uses the governed three stellar stages; the preview itemizes its
-larger cost. Switching precision requires a fresh passive pass.
-
-After execution, combined M–R, Λ–M, k₂–M and thermodynamic plots appear
-inline and in a separate flat `plots/` folder next to the
-sealed experiment. Each graph overlays applicable accepted physical EoSs
-from all geometries, with one baseline. Exact status and missing-data counts
-are saved in the inventory. `FIXED_MASSES = [1.4]` only adds a comparison
-point on the full sequence; you may choose other gravitational masses.
-
-To reopen without scientific work, set `EXECUTE_REVIEWED_PLAN = False` and
-paste the completed experiment path into `LOAD_EXPERIMENT`. The default
-`BUILD_SAVED_PLOTS = False` makes this read-only. If the combined view is
-missing, explicitly set that flag to `True` to create it from saved tables.
-Existing views are verified, not overwritten. Archive the entire timestamped
-run folder, including the independent view manifest.
-
-For a large CFL dataset sweep, use the separate focused route:
-
-```powershell
-jupyter lab notebooks/cfl_dataset.ipynb
-```
-
-Its only supported precision is the experimental `dataset_40` profile. The
-first Run All remains passive. The reviewed plan shows one 40-pressure stage
-per physical EoS at `rtol=1e-10`, `atol=1e-12`, 1201 radial samples, all-node
-tides, strict thermodynamic/raw gates, fixed-mass roots, and adaptive
-maximum-mass refinement. Per-packet PNG groups are disabled. After successful
-validation the notebook creates `EOS_DATA/` and exactly five combined plots
-from sealed tables with zero solver calls. Do not interpret the single-stage
-profile as a STRICT convergence certificate.
-
 ## Next steps
 
 - Copy [`../configs/custom_experiment.json`](../configs/custom_experiment.json)
   to vary amplitudes or geometry with the strict profile.
-- Copy [`../configs/cfl_quickstart.json`](../configs/cfl_quickstart.json) to a
-  new filename before defining a reviewed CFL geometry.
 - Inspect [`../configs/stellar_example.json`](../configs/stellar_example.json)
   before requesting the more expensive stellar route.
 - Read [`method.md`](method.md) for the construction and physical gates.

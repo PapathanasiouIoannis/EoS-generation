@@ -1,4 +1,4 @@
-"""Small, passive-by-default notebook adapter for governed EoS experiments.
+"""Small, passive-by-default notebook adapter for BSk24 experiments.
 
 The notebook contains no equations or solver code.  It translates one plain
 settings cell into :mod:`eos_generation.experiment`, records an exact passive
@@ -24,12 +24,11 @@ from typing import Any
 
 
 _SETTINGS_SCHEMA = "eos_generation_notebook_settings_v1"
-_CFL_SETTINGS_SCHEMA = "eos_generation_cfl_notebook_settings_v1"
 _RUN_SCHEMA = "eos_generation_notebook_run_v1"
 _CALCULATIONS = ("thermodynamics", "stellar")
-_PRECISIONS = ("quick", "strict", "dataset", "dataset_10_tighter", "dataset_20", "dataset_40", "dataset_relaxed", "dataset_relaxed_80")
+_PRECISIONS = ("quick", "strict")
 _DIAGNOSTICS = ("off", "on")
-_MAX_WORKERS = 6
+_MAX_WORKERS = 4
 
 
 def _as_items(value: Any) -> tuple[Any, ...]:
@@ -43,9 +42,7 @@ def _as_items(value: Any) -> tuple[Any, ...]:
     return (value,)
 
 
-def _numeric_axis(
-    name: str, value: Any, *, positive: bool = False, legacy_zero: bool = True
-) -> tuple[float, ...]:
+def _numeric_axis(name: str, value: Any, *, positive: bool = False) -> tuple[float, ...]:
     items = _as_items(value)
     if not items:
         raise ValueError(f"{name} must contain at least one value")
@@ -59,7 +56,7 @@ def _numeric_axis(
         if positive and number <= 0.0:
             raise ValueError(f"{name} values must be greater than zero")
         # Canonicalize harmless floating-point roundoff around an intended zero.
-        if legacy_zero and name == "AMPLITUDES" and abs(number) <= len(items) * math.ulp(1.0):
+        if name == "AMPLITUDES" and abs(number) <= len(items) * math.ulp(1.0):
             number = 0.0
         if number in parsed:
             raise ValueError(f"{name} contains duplicate value {number:.12g}")
@@ -67,15 +64,11 @@ def _numeric_axis(
     return tuple(parsed)
 
 
-def _match_value(value: Any, *, matter_model: str = "bsk24") -> str | float:
+def _match_value(value: Any) -> str | float:
     items = _as_items(value)
     if len(items) != 1:
         raise ValueError("EPSILON_MATCH must be one matching anchor")
     item = items[0]
-    if matter_model == "cfl":
-        if item != "surface":
-            raise ValueError("CFL EPSILON_MATCH must be 'surface'")
-        return "surface"
     if item is None or (
         isinstance(item, str) and item.strip().lower() == "standard"
     ):
@@ -115,22 +108,14 @@ class NotebookSettings:
     fixed_masses_msun: tuple[float, ...]
     precision: str
     diagnostics: str
-    matter_model: str = "bsk24"
 
     def __post_init__(self) -> None:
         # Direct dataclass construction receives the same validation as the
         # canonical notebook constructor.
         object.__setattr__(
-            self, "matter_model", _choice("MATTER_MODEL", self.matter_model, ("bsk24", "cfl"))
+            self, "amplitudes", _numeric_axis("AMPLITUDES", self.amplitudes)
         )
-        object.__setattr__(
-            self, "amplitudes", _numeric_axis(
-                "AMPLITUDES", self.amplitudes, legacy_zero=self.matter_model == "bsk24"
-            )
-        )
-        object.__setattr__(
-            self, "epsilon_match", _match_value(self.epsilon_match, matter_model=self.matter_model)
-        )
+        object.__setattr__(self, "epsilon_match", _match_value(self.epsilon_match))
         object.__setattr__(
             self,
             "centers_mev_fm3",
@@ -168,8 +153,6 @@ class NotebookSettings:
         )
         if self.diagnostics == "on" and self.calculation != "stellar":
             raise ValueError("DIAGNOSTICS='on' requires CALCULATION='stellar'")
-        if self.matter_model == "cfl" and self.diagnostics != "off":
-            raise ValueError("CFL extended DIAGNOSTICS are unavailable; use 'off'")
 
     @classmethod
     def from_values(
@@ -184,13 +167,10 @@ class NotebookSettings:
         fixed_masses: Any = (1.4,),
         precision: str = "strict",
         diagnostics: str = "off",
-        matter_model: str = "bsk24",
     ) -> "NotebookSettings":
-        matter_model = _choice("MATTER_MODEL", matter_model, ("bsk24", "cfl"))
         return cls(
-            matter_model=matter_model,
-            amplitudes=_numeric_axis("AMPLITUDES", amplitudes, legacy_zero=matter_model == "bsk24"),
-            epsilon_match=_match_value(epsilon_match, matter_model=matter_model),
+            amplitudes=_numeric_axis("AMPLITUDES", amplitudes),
+            epsilon_match=_match_value(epsilon_match),
             centers_mev_fm3=_numeric_axis("CENTER", center, positive=True),
             widths_mev_fm3=_numeric_axis("WIDTH", width, positive=True),
             ramp_widths_mev_fm3=_numeric_axis(
@@ -217,7 +197,7 @@ class NotebookSettings:
         return len(self.amplitudes) * self.geometry_count
 
     def to_dict(self) -> dict[str, Any]:
-        data = {
+        return {
             "schema_id": _SETTINGS_SCHEMA,
             "amplitudes": list(self.amplitudes),
             "epsilon_match": self.epsilon_match,
@@ -229,9 +209,6 @@ class NotebookSettings:
             "precision": self.precision,
             "diagnostics": self.diagnostics,
         }
-        if self.matter_model == "cfl":
-            data.update(schema_id=_CFL_SETTINGS_SCHEMA, matter_model="cfl")
-        return data
 
     def deterministic_hash(self) -> str:
         return _digest(self.to_dict())
@@ -242,7 +219,6 @@ class NotebookSettings:
         from .experiment import ExperimentSettings
 
         return ExperimentSettings.from_values(
-            matter_model=self.matter_model,
             amplitudes=self.amplitudes,
             epsilon_match=self.epsilon_match,
             center=self.centers_mev_fm3,
@@ -412,7 +388,6 @@ class NotebookRun:
             f"Requested cases: {self.settings.requested_case_count}",
             f"Numerical precision: {self.settings.precision}",
             f"Diagnostics: {self.settings.diagnostics}",
-            f"Automatic stellar worker limit: {self.worker_count} (fewer for small batches; no nested pools).",
             f"Destination: {self.output_root}",
             "Preview cost: 0 solver calls, 0 filesystem writes.",
             "Execution requires a second Run All with EXECUTE_REVIEWED_PLAN=True.",
@@ -420,42 +395,6 @@ class NotebookRun:
         if self.settings.precision == "quick":
             lines.append(
                 "Quick changes numerical resolution only; physical acceptance gates are unchanged."
-            )
-        if self.settings.precision == "dataset":
-            lines.append(
-                "Experimental dataset profile: one 61-model stellar stage at STRICT final tolerances; "
-                "no per-case stellar refinement envelope. Not a STRICT certificate."
-            )
-        if self.settings.precision == "dataset_10_tighter":
-            lines.append(
-                "Experimental dataset_10_tighter profile: one 10-model stellar stage; "
-                "rtol=1e-11, atol=1e-13, 1201 radial samples; unchanged thermodynamics. "
-                "Both sampling and tolerances change. No per-case stellar refinement envelope. "
-                "Not a STRICT certificate."
-            )
-        if self.settings.precision == "dataset_20":
-            lines.append(
-                "Experimental dataset_20 profile: one 20-model stellar stage; "
-                "rtol=1e-10, atol=1e-12, 1201 radial samples; unchanged thermodynamics. "
-                "No per-case stellar refinement envelope. Not a STRICT certificate."
-            )
-        if self.settings.precision == "dataset_40":
-            lines.append(
-                "Experimental dataset_40 profile: one 40-model stellar stage; "
-                "rtol=1e-10, atol=1e-12, 1201 radial samples; unchanged thermodynamics. "
-                "No per-case stellar refinement envelope. Not a STRICT certificate."
-            )
-        if self.settings.precision == "dataset_relaxed":
-            lines.append(
-                "Experimental dataset_relaxed profile: one 61-model stellar stage; "
-                "rtol=1e-8, atol=1e-10, 1201 radial samples; unchanged thermodynamics. "
-                "No per-case stellar refinement envelope. Not a STRICT certificate."
-            )
-        if self.settings.precision == "dataset_relaxed_80":
-            lines.append(
-                "Experimental dataset_relaxed_80 profile: one 80-model stellar stage; "
-                "rtol=1e-8, atol=1e-10, 1201 radial samples; unchanged thermodynamics. "
-                "No per-case stellar refinement envelope. Not a STRICT certificate."
             )
         if details:
             lines.extend(("", str(details)))
@@ -531,9 +470,9 @@ class NotebookSession:
             return self._settings_factory(settings)
         return settings.to_experiment_settings()
 
-    def _new_output_root(self, settings_hash: str, matter_model: str = "bsk24") -> Path:
+    def _new_output_root(self, settings_hash: str) -> Path:
         timestamp = self._now().astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        stem = f"{matter_model}_{timestamp}_{settings_hash[:12]}"
+        stem = f"bsk24_{timestamp}_{settings_hash[:12]}"
         candidate = self.runs_root / stem
         suffix = 2
         while candidate.exists():
@@ -622,7 +561,7 @@ class NotebookSession:
         run = (
             existing
             if reusable
-            else self._build(settings, self._new_output_root(settings_hash, settings.matter_model))
+            else self._build(settings, self._new_output_root(settings_hash))
         )
         self._runs[settings_hash] = run
         if record_preview:
@@ -709,20 +648,10 @@ class NotebookSession:
         return {
             "Student view": self._student_view.path,
             "Read me first": self._student_view.readme,
+            "Plots": self._student_view.plots,
             "Primary data": self._student_view.primary_data,
             "Authoritative technical packet": self._student_view.authoritative_experiment,
         }
-
-    def present(self, result: Any, *, create: bool = False) -> dict[str, Any]:
-        """Display CFL saved results; only ``create=True`` writes derived plots.
-
-        Scientific packets remain sealed. Failed presentation is recoverable
-        from saved tables without spending another execution authorization.
-        """
-
-        from .reporting.notebook_results import present_cfl_results
-
-        return present_cfl_results(result, create=create)
 
     def load(self, path: str | Path) -> Any:
         """Passively load an existing experiment through the public facade."""

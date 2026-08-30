@@ -1,4 +1,4 @@
-"""Command-line front door for governed equation-of-state experiments."""
+"""Command-line front door for the BSk24 experiment workflow."""
 
 from __future__ import annotations
 
@@ -21,10 +21,7 @@ class _Parser(argparse.ArgumentParser):
 def _parser() -> argparse.ArgumentParser:
     parser = _Parser(
         prog="bsk24-trial",
-        description=(
-            "Plan, run, inspect, and validate controlled BSk24 or CFL "
-            "experiments."
-        ),
+        description="Plan, run, inspect, and validate controlled BSk24 experiments.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -160,7 +157,7 @@ def _validate(args: argparse.Namespace) -> int:
     if args.as_json:
         _json(report)
     else:
-        print(f"EoS experiment validation: {str(report['status']).upper()}")
+        print(f"BSk24 experiment validation: {str(report['status']).upper()}")
         print(f"Experiment: {report['experiment_path']}")
         print(f"Child packets: {report['child_packet_count']}")
         if report["status"] != "pass":

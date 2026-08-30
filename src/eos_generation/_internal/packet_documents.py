@@ -1,4 +1,4 @@
-"""Packet-document writers for governed BSk24 and CFL trials."""
+"""Packet-document writers for governed BSk24 trials."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from eos_generation._internal.packet_integrity import (
 from eos_generation._internal.planning import (
     PURE_GAUSSIAN_GENERATOR_ID,
     WINDOWED_GAUSSIAN_GENERATOR_ID,
+    BSk24TrialConfig,
 )
 
 
@@ -34,56 +35,9 @@ def _write_packet_ledger(packet: Path) -> None:
 
 def _write_methods(
     packet: Path,
-    config: Any,
+    config: BSk24TrialConfig,
     metadata: Mapping[str, Any],
 ) -> None:
-    if metadata.get("matter_model") == "cfl":
-        baseline = metadata.get("frozen_cfl_parameters", {})
-        surface = (
-            baseline.get("surface", {})
-            if isinstance(baseline, Mapping)
-            else {}
-        )
-        text = f"""# CFL experiment packet
-
-Generator: `{metadata.get('generator_id', 'windowed_gaussian_v1')}`.
-
-This packet uses the frozen full-finite-m_s, leading-Delta^2, uncondensed
-MIT-bag CFL baseline `{baseline.get('formulation_id', 'unavailable')}` with
-parameter-profile hash
-`{metadata.get('baseline_parameter_set_sha256', 'unavailable')}`.  The
-quintic smootherstep window and pressure reconstruction share the undeformed
-self-bound surface anchor at epsilon_s=
-{surface.get('energy_density_mev_fm3', 'unavailable')} MeV fm^-3 and P=0.
-Vacuum, rather than a hadronic or crustal continuation, lies below that
-surface.  The complete raw proposal was assessed before reconstruction or
-stellar work; no rejected proposal was repaired, clipped, reconstructed, or
-sent to a stellar solver.
-
-Accepted proposals: {metadata['accepted_case_count']}. Rejected proposals:
-{metadata['rejected_case_count']}.
-
-A=0 identity status: `{metadata['identity_status']}`. Numerical convergence
-status: `{metadata['numerical_convergence_status']}`. Maximum-mass values are
-reported only after a refined turning-point bracket; endpoint-limited or
-sampled peaks remain unresolved.
-
-The reconstructed state is an effective one-fluid CFL-anchored cold
-barotrope. Passing the retained fully-gapped stress check does not establish a
-microscopic realization, competing-phase exclusion, species chemical
-potentials, or beta equilibrium for a deformed case.
-
-Bare-surface tidal observables require exactly one retained finite-density
-surface correction and the post-jump vacuum-side y value. Missing or
-inconsistent surface metadata fails the CFL stellar capability closed.
-
-Configuration hash: `{config.deterministic_hash()}`. Exact-machine provenance
-and the fresh-plan, hash-bound public reproduction commands are recorded in
-`reproduction.json`.
-"""
-        _write_text_atomic(text, packet / "methods_and_results.md")
-        return
-
     anchor_record = metadata.get("anchor_selection", {})
     if not bool(anchor_record.get("exploratory", False)):
         anchor_clause = (

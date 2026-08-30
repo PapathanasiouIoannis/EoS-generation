@@ -209,15 +209,7 @@ def _thermo_pair(
         # axis so the window, Gaussian center, and stellar-core region remain
         # spatially legible.  Pressure retains its logarithmic value axis.
         plot = axes[0].semilogy if log_value else axes[0].plot
-        value_rows = rows
-        if log_value:
-            numeric_value = pd.to_numeric(rows[value], errors="coerce")
-            value_rows = rows.loc[np.isfinite(numeric_value) & numeric_value.gt(0.0)]
-        plot(
-            value_rows.epsilon_mev_fm3,
-            value_rows[value],
-            **styles[str(case_id)],
-        )
+        plot(rows.epsilon_mev_fm3, rows[value], **styles[str(case_id)])
         axes[1].plot(rows.epsilon_mev_fm3, rows[relative], **styles[str(case_id)])
     if value == "pressure_mev_fm3":
         _draw_pressure_energy_guides(axes[0])
@@ -296,14 +288,8 @@ def _residuals(packet, config, plt, axis_style) -> bool:
             alpha=0.08,
             label="anchor/ramp-sensitive band",
         )
-        if getattr(config, "matter_model", "bsk24") == "bsk24":
-            for transition in (0.253215574967, 76.5591451931):
-                ax.axvspan(
-                    transition * 0.98,
-                    transition * 1.02,
-                    color="#64748b",
-                    alpha=0.08,
-                )
+        for transition in (0.253215574967, 76.5591451931):
+            ax.axvspan(transition * 0.98, transition * 1.02, color="#64748b", alpha=0.08)
         axis_style(
             ax,
             xlabel=r"$\varepsilon$ [MeV fm$^{-3}$]",

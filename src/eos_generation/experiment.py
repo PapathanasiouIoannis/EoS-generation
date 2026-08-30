@@ -1,4 +1,4 @@
-"""Small public interface for controlled analytical EoS experiments.
+"""Small public interface for controlled analytical BSk24 experiments.
 
 The public settings deliberately describe scientific intent rather than the
 internal numerical machinery.  ``plan_experiment`` expands ``quick`` or
@@ -54,17 +54,7 @@ CONFIG_SCHEMA_URL = (
     "EoS-generation/main/configs/schema.json"
 )
 _CALCULATIONS = ("thermodynamics", "stellar")
-_MATTER_MODELS = ("bsk24", "cfl")
-_PRECISIONS = (
-    "quick",
-    "strict",
-    "dataset",
-    "dataset_10_tighter",
-    "dataset_20",
-    "dataset_40",
-    "dataset_relaxed",
-    "dataset_relaxed_80",
-)
+_PRECISIONS = ("quick", "strict")
 _DIAGNOSTICS = ("off", "on")
 _MAX_GEOMETRIES = 256
 _MAX_EXPANDED_CASES = 4096
@@ -80,7 +70,6 @@ class ExperimentSettings:
     hidden campaign mode.
     """
 
-    matter_model: str = "bsk24"
     amplitudes: tuple[float, ...] = (0.0, 0.01)
     epsilon_match: str | float = "standard"
     center: tuple[float, ...] = (200.0,)
@@ -92,8 +81,6 @@ class ExperimentSettings:
     diagnostics: str = "off"
 
     def __post_init__(self) -> None:
-        if self.matter_model not in _MATTER_MODELS:
-            raise ValueError(f"matter_model must be one of {_MATTER_MODELS}")
         object.__setattr__(self, "amplitudes", _number_tuple("amplitudes", self.amplitudes))
         object.__setattr__(self, "center", _number_tuple("center", self.center, positive=True))
         object.__setattr__(self, "width", _number_tuple("width", self.width, positive=True))
@@ -125,13 +112,7 @@ class ExperimentSettings:
                 f"settings expand to {expanded_cases} cases including the zero "
                 f"control; the public planning limit is {_MAX_EXPANDED_CASES}"
             )
-        if self.matter_model == "cfl":
-            if self.epsilon_match != "surface":
-                raise ValueError(
-                    "CFL experiments require epsilon_match='surface' so the "
-                    "undeformed zero-pressure self-bound surface is preserved"
-                )
-        elif self.epsilon_match != "standard":
+        if self.epsilon_match != "standard":
             object.__setattr__(
                 self,
                 "epsilon_match",
@@ -141,36 +122,15 @@ class ExperimentSettings:
             raise ValueError(f"calculation must be one of {_CALCULATIONS}")
         if self.precision not in _PRECISIONS:
             raise ValueError(f"precision must be one of {_PRECISIONS}")
-        if self.matter_model == "cfl" and self.precision not in {
-            "quick",
-            "strict",
-            "dataset_40",
-        }:
-            raise ValueError(
-                "CFL experiments support governed quick or strict precision, "
-                "plus the explicitly experimental dataset_40 profile; other "
-                "dataset profiles are not established for self-bound CFL"
-            )
         if self.diagnostics not in _DIAGNOSTICS:
             raise ValueError(f"diagnostics must be one of {_DIAGNOSTICS}")
-        if self.matter_model == "cfl" and self.diagnostics == "on":
-            raise ValueError(
-                "CFL extended diagnostics are unavailable because their bare "
-                "self-bound radial, baryonic, and support semantics have not "
-                "been established"
-            )
         if self.diagnostics == "on" and self.calculation != "stellar":
             raise ValueError("diagnostics='on' requires calculation='stellar'")
-        if self.precision in {"dataset", "dataset_10_tighter", "dataset_20", "dataset_40", "dataset_relaxed", "dataset_relaxed_80"} and (
-            self.calculation != "stellar" or self.diagnostics != "off"
-        ):
-            raise ValueError(f"precision={self.precision!r} requires stellar calculation and diagnostics='off'")
 
     @classmethod
     def from_values(
         cls,
         *,
-        matter_model: str = "bsk24",
         amplitudes: float | Sequence[float] = (0.0, 0.01),
         epsilon_match: str | float = "standard",
         center: float | Sequence[float] = 200.0,
@@ -182,7 +142,6 @@ class ExperimentSettings:
         diagnostics: str = "off",
     ) -> "ExperimentSettings":
         return cls(
-            matter_model=matter_model,
             amplitudes=_number_tuple("amplitudes", amplitudes),
             epsilon_match=epsilon_match,
             center=_number_tuple("center", center, positive=True),
@@ -201,7 +160,6 @@ class ExperimentSettings:
         values = dict(payload)
         values.pop("$schema", None)
         allowed = {
-            "matter_model",
             "amplitudes",
             "epsilon_match",
             "center",
@@ -246,7 +204,7 @@ class ExperimentSettings:
         return cls.from_dict(payload)
 
     def to_dict(self) -> dict[str, Any]:
-        data = {
+        return {
             "amplitudes": list(self.amplitudes),
             "epsilon_match": self.epsilon_match,
             "center": list(self.center) if len(self.center) > 1 else self.center[0],
@@ -261,9 +219,6 @@ class ExperimentSettings:
             "fixed_masses": list(self.fixed_masses),
             "diagnostics": self.diagnostics,
         }
-        if self.matter_model == "cfl":
-            return {"matter_model": "cfl", **data}
-        return data
 
     def deterministic_hash(self) -> str:
         return _hash_payload(self.to_dict())
@@ -288,7 +243,7 @@ class ExperimentPlan:
     def case_table(self) -> pd.DataFrame:
         frames: list[pd.DataFrame] = []
         for index, child in enumerate(self.child_plans, start=1):
-            frame = getattr(child, "logical_case_table", child.case_table).copy()
+            frame = child.case_table.copy()
             frame.insert(0, "geometry_index", index)
             frames.append(frame)
         return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
@@ -327,9 +282,8 @@ class ExperimentPlan:
 
     def summary_text(self) -> str:
         estimates = self.estimates
-        model_title = "BSk24" if self.settings.matter_model == "bsk24" else "CFL"
         lines = [
-            f"{model_title} experiment plan",
+            "BSk24 experiment plan",
             f"Plan hash: {self.plan_hash}",
             f"Calculation: {self.settings.calculation}",
             f"Precision: {self.settings.precision}",
@@ -338,10 +292,6 @@ class ExperimentPlan:
             f"Destination: {self.experiment_path}",
             "Planning is passive: yes (0 solver calls, 0 filesystem writes)",
         ]
-        if self.settings.precision == "dataset":
-            lines.append("Experimental dataset profile: single stellar stage; no per-case stellar refinement envelope; not STRICT certification.")
-        if self.settings.precision in {"dataset_10_tighter", "dataset_20", "dataset_40", "dataset_relaxed", "dataset_relaxed_80"}:
-            lines.append(f"Experimental {self.settings.precision} profile: single stellar stage; no per-case stellar refinement envelope; not STRICT certification.")
         for key in sorted(estimates):
             if key != "geometry_count":
                 lines.append(f"{key.replace('_', ' ').capitalize()}: {estimates[key]}")
@@ -477,10 +427,8 @@ class ExperimentResult:
             ),
             None,
         )
-        model_title = "CFL" if self.settings.matter_model == "cfl" else "BSk24"
         lines = [
-            f"{model_title} experiment: "
-            + ("COMPLETE" if self.completed else "INCOMPLETE"),
+            "BSk24 experiment: COMPLETE" if self.completed else "BSk24 experiment: INCOMPLETE",
             f"Path: {self.experiment_path}",
             f"Calculation: {self.settings.calculation}",
             f"Precision: {self.settings.precision}",
@@ -546,10 +494,7 @@ def plan_experiment(
 
     if not isinstance(settings, ExperimentSettings):
         raise TypeError("settings must be ExperimentSettings")
-    if settings.matter_model == "cfl":
-        from .cfl.planning import prepare_cfl_trial as prepare_trial
-    else:
-        from ._internal.planning import prepare_bsk24_trial as prepare_trial
+    from ._internal.planning import prepare_bsk24_trial
 
     from ._internal.artifacts import project_root, runs_root
 
@@ -565,7 +510,7 @@ def plan_experiment(
             root = (Path.cwd() / raw_root).resolve(strict=False)
     experiment_path = root / f"experiment_{settings.deterministic_hash()[:12]}"
     configs = _internal_configs(settings, experiment_path)
-    children = tuple(prepare_trial(config) for config in configs)
+    children = tuple(prepare_bsk24_trial(config) for config in configs)
     (
         source_inventory_id,
         source_digest,

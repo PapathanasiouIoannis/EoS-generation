@@ -12,8 +12,7 @@ from typing import Any, Callable
 import numpy as np
 
 from eos_generation._internal.config import TovConfig
-from eos_generation.stellar._tov_integration import solve_star, _resolved_discontinuities
-from eos_generation.stellar.discontinuities import BARE_SELF_BOUND_SEQUENCE_POLICY
+from eos_generation.stellar._tov_integration import solve_star
 from eos_generation.stellar._tov_types import (
     TOV_SEQUENCE_FIELDS,
     TOV_TIDAL_DIAGNOSTIC_FIELDS,
@@ -321,14 +320,6 @@ def solve_sequence(
     attempted_pressures = []
     failure_details = []
     eps_surf = getattr(eos_callable, "eps_surf", 0.0)
-    sequence_policy = getattr(eos_callable, "stellar_sequence_policy", None)
-    if sequence_policy not in (None, BARE_SELF_BOUND_SEQUENCE_POLICY):
-        raise ValueError(f"unsupported stellar sequence policy: {sequence_policy!r}")
-    bare_self_bound = sequence_policy == BARE_SELF_BOUND_SEQUENCE_POLICY
-    if bare_self_bound:
-        joins = _resolved_discontinuities(eos_callable)
-        if len(joins) != 1 or joins[0].kind != "surface" or float(eps_surf) <= 0.0:
-            raise ValueError("bare self-bound sequence policy requires one finite-density vacuum surface")
 
     def record_failure(
         central_pressure: float,
@@ -417,16 +408,7 @@ def solve_sequence(
                         failure,
                     )
                     continue
-            if bare_self_bound and (
-                not np.isfinite(star.radius) or not np.isfinite(star.mass)
-                or star.radius <= 0.0 or star.mass <= 0.0
-            ):
-                record_failure(pc, "invalid_self_bound_mass_or_radius", f"surface mass={star.mass!r}, radius={star.radius!r}")
-                continue
-            # Bare self-bound matter has a physical low-mass M~R^3 branch;
-            # legacy hadronic display cutoffs are not a validity condition.
-            # The explicit policy changes no legacy BSk24 behavior.
-            if not bare_self_bound and (star.radius < _MIN_RADIUS_CUTOFF or star.mass < _MIN_MASS_CUTOFF):
+            if star.radius < _MIN_RADIUS_CUTOFF or star.mass < _MIN_MASS_CUTOFF:
                 record_failure(
                     pc,
                     "minimum_mass_or_radius_cutoff",

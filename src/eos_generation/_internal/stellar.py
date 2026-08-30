@@ -40,12 +40,11 @@ from eos_generation._internal.saved_tables import (
 from eos_generation.bsk24.reconstruction import BSk24ConsistentBaseline
 from eos_generation._internal.sequence_tables import (
     _sequence_frame,
-    _tidal_jump_evidence_columns,
 )
 from eos_generation.bsk24.deformation import BSk24WindowedEos
 
 
-_MAXIMUM_AUTOMATIC_STELLAR_WORKERS = 6
+_MAXIMUM_AUTOMATIC_STELLAR_WORKERS = 4
 _OUTER_NOTEBOOK_WORKER_ENV = "BSK24_NOTEBOOK_OUTER_WORKER"
 _PRODUCTION_REFINE_MAXIMUM_FROM_SEQUENCE = refine_maximum_mass_from_sequence
 _PRODUCTION_SOLVE_SEQUENCE = solve_sequence
@@ -195,7 +194,7 @@ def _fixed_mass_result(
         retain_profile=True,
     )
     tidal = star.lambda_diagnostic
-    result = {
+    return {
         "status": "bracketed_and_solved",
         "target_mass_msun": target_mass,
         "mass_msun": float(star.mass),
@@ -213,10 +212,7 @@ def _fixed_mass_result(
         "bracket_pressure_mev_fm3": [lower, upper],
         "root_xtol_mev_fm3": config.fixed_mass_root_xtol_mev_fm3,
         "root_evaluation_count": len(background_cache) + 1,
-    }
-    if bool(getattr(eos, "requires_discontinuity_metadata", False)):
-        result.update(_tidal_jump_evidence_columns(tidal))
-    return result, star
+    }, star
 
 
 _PRODUCTION_FIXED_MASS_RESULT = _fixed_mass_result
@@ -655,14 +651,7 @@ def _run_case_job(
             "local_background_solver_call_count": maximum.solver_call_count,
             "tidal_solver_calls_for_maximum_mass": 0,
         }
-        frame = _sequence_frame(
-            case_id,
-            stage.name,
-            evidence,
-            retain_jump_evidence=bool(
-                getattr(eos, "requires_discontinuity_metadata", False)
-            ),
-        )
+        frame = _sequence_frame(case_id, stage.name, evidence)
         if case_id == "direct":
             amplitude = None
             delta = None
@@ -717,13 +706,7 @@ def _run_stellar(
     baseline: BSk24ConsistentBaseline,
     generated: Mapping[str, BSk24WindowedEos],
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any], dict[tuple[str, str, float], Any]]:
-    direct_eos = getattr(baseline, "eos", baseline)
-    owner = getattr(config, "zero_amplitude_control_owner", None)
-    include_direct = not (isinstance(owner, bool) and owner is False)
-    eos_map: dict[str, Any] = {
-        **({"direct": direct_eos} if include_direct else {}),
-        **generated,
-    }
+    eos_map: dict[str, Any] = {"direct": baseline.eos, **generated}
     sequence_frames: list[pd.DataFrame] = []
     fixed_rows: list[dict[str, Any]] = []
     stars: dict[tuple[str, str, float], Any] = {}

@@ -191,13 +191,17 @@ def _default_validator(
     *,
     current_source_hashes: Mapping[str, str] | None,
 ) -> dict[str, Any]:
+    from eos_generation._internal.planning import BSk24TrialConfig
     from eos_generation.reporting.validation import (
-        validate_trial_packet_layers,
+        validate_bsk24_trial_packet_layers,
     )
 
-    return validate_trial_packet_layers(
+    return validate_bsk24_trial_packet_layers(
         packet,
         current_source_hashes=current_source_hashes,
+        configuration_hash_fn=lambda payload: BSk24TrialConfig.from_dict(
+            payload
+        ).deterministic_hash(),
         required_source_paths=_REQUIRED_SOURCE_PATHS,
     )
 
@@ -330,12 +334,10 @@ def build_bsk24_trial_status(
         metadata = _strict_json_payload(packet / "metadata.json")
         if not isinstance(metadata, Mapping):
             raise TypeError("metadata.json must contain a JSON object")
-        from eos_generation._internal.summary import (
-            SUPPORTED_PACKET_SCHEMA_IDS,
-        )
+        from eos_generation._internal.summary import PACKET_SCHEMA_ID
 
         packet_schema = metadata.get("schema_id")
-        if packet_schema in SUPPORTED_PACKET_SCHEMA_IDS:
+        if packet_schema == PACKET_SCHEMA_ID:
             summary_source = "saved_current"
         else:
             raise ValueError(f"unrecognized packet schema {packet_schema!r}")

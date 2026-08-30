@@ -53,8 +53,6 @@ def finalize_figure(
             dpi=dpi,
             bbox_inches=bbox_inches,
         )
-        # Windows _commit/os.fsync requires a writable descriptor. Reopening
-        # the completed temporary image read/write does not change its bytes.
         with temporary.open("r+b") as handle:
             os.fsync(handle.fileno())
         os.replace(temporary, output)

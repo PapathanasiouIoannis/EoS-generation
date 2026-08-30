@@ -498,11 +498,7 @@ def full_domain_thermodynamic_admissibility(
     complete_raw_evidence_retained = bool(
         raw_aligned
         and raw_epsilon[0] == baseline.epsilon[0]
-        and isinstance(raw_gate_report, Mapping)
-        and raw_gate_report.get(
-            "complete_proposed_retained_domain_mev_fm3"
-        )
-        == [float(raw_epsilon[0]), float(raw_epsilon[-1])]
+        and raw_epsilon[-1] == baseline.epsilon[-1]
         and np.all(np.diff(raw_epsilon) > 0.0)
     )
     selected_domain_retained = bool(

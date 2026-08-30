@@ -1,9 +1,8 @@
 """Derived, non-authoritative student views of validated experiment packets.
 
 The view is deliberately outside the sealed aggregate experiment.  It copies
-saved CSV artifacts byte-for-byte and never imports or calls a scientific or
-plotting implementation.  Notebook-facing plots are published separately in
-one flat experiment-level folder rather than copied per geometry here.
+saved CSV and PNG artifacts byte-for-byte and never imports or calls a
+scientific or plotting implementation.
 """
 
 from __future__ import annotations
@@ -192,8 +191,8 @@ def _render_readme(
     source: Path,
     destination: Path,
     settings_hash: str,
-    matter_model: str,
     copied_tables: tuple[Path, ...],
+    copied_plots: tuple[Path, ...],
 ) -> str:
     relative_source = _relative_link(source, destination)
     by_name = {
@@ -225,16 +224,16 @@ def _render_readme(
         f"- Stellar sequences: {locations('stellar_sequences.csv')}",
         f"- Fixed-mass observables: {locations('fixed_mass_observables.csv')}",
         f"- Maximum-mass screening: {locations('maximum_mass_screening.csv')}",
-        "- Combined accepted plots: [`../plots/`](../plots/) (published by the notebook after this view)",
+        f"- Generated plots: [`02_PLOTS/`](02_PLOTS/) ({len(copied_plots)} PNG files)",
         "- Units and exact saved columns: [`DATA_DICTIONARY.md`](DATA_DICTIONARY.md)",
         "- Checksums for every file in this view: [`SHA256SUMS.txt`](SHA256SUMS.txt)",
         "",
         "## Folder guide",
         "",
+        "- `02_PLOTS/` contains copies of generated PNGs.",
         "- `03_PRIMARY_DATA/` contains the main saved result tables.",
         "- `04_OPTIONAL_DIAGNOSTICS/` contains other saved CSV diagnostics, when present.",
-        "- Each data `geometry_NNN/` directory corresponds exactly to one authoritative geometry child packet; rows are not merged across geometries.",
-        "- Per-geometry PNGs remain only in the sealed technical packets. The sibling `plots/` folder is the sole notebook-facing plot location.",
+        "- Each `geometry_NNN/` directory corresponds exactly to one authoritative geometry child packet; rows are not merged across geometries.",
         "",
         "## How the data is organized",
         "",
@@ -247,16 +246,8 @@ def _render_readme(
         "        └── rows (sampled thermodynamic points or stellar models)",
         "```",
         "",
-        (
-            "- `case_id = direct` is the undeformed analytical bare CFL baseline saved for comparison; its zero-pressure surface has finite density and joins directly to vacuum."
-            if matter_model == "cfl"
-            else "- `case_id = direct` is the undeformed analytical BSk24 baseline saved for comparison."
-        ),
-        (
-            "- The CFL Cartesian sweep owns one physical `A = 0` control; other logical geometry controls alias it without duplicate scientific calculation. It is expected to reproduce the frozen baseline under the governed identity policy."
-            if matter_model == "cfl"
-            else "- The BSk24 Cartesian sweep owns one physical `A = 0` control; other logical geometry controls alias it without duplicate scientific calculation. The owner is expected to reproduce the baseline under the governed identity policy."
-        ),
+        "- `case_id = direct` is the undeformed analytical BSk24 baseline saved for comparison.",
+        "- A deformation with amplitude `A = 0` is a separate identity-control case. It passes through the reconstruction workflow and is expected to reproduce the baseline under the governed identity policy.",
         "- Each nonzero-amplitude `case_id` is one distinct deformed EoS within that geometry.",
         "- Read amplitude and geometry values from `case_ledger.csv`; do not try to recover the complete scientific identity from the readable part of the case-ID text. Its final hexadecimal suffix is a deterministic collision-resistant digest of the deformation coordinates.",
         "- A rejected ledger row is a completed scientific outcome. It deliberately has no reconstructed thermodynamic profile or stellar sequence.",
@@ -414,14 +405,6 @@ def create_student_view(
         if not isinstance(metadata, Mapping) or metadata.get("status") != "complete":
             raise ValueError("student view requires a completed authoritative experiment")
         settings_hash = metadata.get("settings_hash")
-        settings = metadata.get("settings")
-        matter_model = (
-            str(settings.get("matter_model", "bsk24"))
-            if isinstance(settings, Mapping)
-            else "bsk24"
-        )
-        if matter_model not in {"bsk24", "cfl"}:
-            raise ValueError("authoritative matter model is unsupported")
         if (
             not isinstance(settings_hash, str)
             or len(settings_hash) != 64
@@ -439,8 +422,10 @@ def create_student_view(
         ).resolve(strict=False)
         ensure_within_runs(stage)
         copied_tables: list[Path] = []
+        copied_plots: list[Path] = []
         try:
             for folder in (
+                "02_PLOTS",
                 "03_PRIMARY_DATA",
                 "04_OPTIONAL_DIAGNOSTICS",
             ):
@@ -465,15 +450,33 @@ def create_student_view(
                     _copy_saved(saved, copied, packet)
                     copied_tables.append(copied)
 
+                plots = packet / "plots"
+                if plots.exists():
+                    if plots.is_symlink() or not plots.is_dir():
+                        raise ValueError(f"unsafe plots directory in {child_name}")
+                    for saved in sorted(
+                        plots.rglob("*.png"),
+                        key=lambda path: path.relative_to(plots).as_posix(),
+                    ):
+                        copied = (
+                            stage
+                            / "02_PLOTS"
+                            / child_name
+                            / saved.relative_to(plots)
+                        )
+                        _copy_saved(saved, copied, packet)
+                        copied_plots.append(copied)
+
             tables = tuple(copied_tables)
+            plots = tuple(copied_plots)
             (stage / "01_READ_ME_FIRST.md").write_text(
                 _render_readme(
                     stage=stage,
                     source=source,
                     destination=target,
                     settings_hash=settings_hash,
-                    matter_model=matter_model,
                     copied_tables=tables,
+                    copied_plots=plots,
                 ),
                 encoding="utf-8",
                 newline="\n",
@@ -493,7 +496,7 @@ def create_student_view(
     return StudentView(
         path=target,
         readme=target / "01_READ_ME_FIRST.md",
-        plots=target.parent / "plots",
+        plots=target / "02_PLOTS",
         primary_data=target / "03_PRIMARY_DATA",
         optional_diagnostics=target / "04_OPTIONAL_DIAGNOSTICS",
         data_dictionary=target / "DATA_DICTIONARY.md",

@@ -48,10 +48,8 @@ from eos_generation._internal._summary_markdown import (
     render_summary_markdown as _render_summary_markdown_impl,
 )
 from eos_generation._internal._summary_model import (
-    CFL_PACKET_SCHEMA_ID,
     MAX_SUMMARY_CASE_ROWS,
     PACKET_SCHEMA_ID,
-    SUPPORTED_PACKET_SCHEMA_IDS,
     SUMMARY_SCHEMA_ID,
     build_summary_model as _build_summary_model_impl,
 )
@@ -99,9 +97,7 @@ _write_packet_summary = write_packet_summary
 
 __all__ = [
     "MAX_SUMMARY_CASE_ROWS",
-    "CFL_PACKET_SCHEMA_ID",
     "PACKET_SCHEMA_ID",
-    "SUPPORTED_PACKET_SCHEMA_IDS",
     "SUMMARY_SCHEMA_ID",
     "_build_summary_model",
     "_render_summary_markdown",

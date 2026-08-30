@@ -110,22 +110,12 @@ def _assert_tidal_radius_on_segment(
     return requested
 
 
-def _discontinuity_metadata_is_required(eos_callable: Callable) -> bool:
-    """Return whether this EoS must use its declared discontinuity path."""
-    try:
-        surface_density = float(getattr(eos_callable, "eps_surf", 0.0))
-    except (TypeError, ValueError) as exc:
-        raise ValueError("eps_surf metadata must be finite and nonnegative") from exc
+def _resolved_discontinuities(eos_callable: Callable) -> tuple[EosDiscontinuity, ...]:
+    required = bool(getattr(eos_callable, "requires_discontinuity_metadata", False))
+    surface_density = float(getattr(eos_callable, "eps_surf", 0.0))
     if not math.isfinite(surface_density) or surface_density < 0.0:
         raise ValueError("eps_surf metadata must be finite and nonnegative")
-    return bool(
-        getattr(eos_callable, "requires_discontinuity_metadata", False)
-    ) or surface_density > 0.0
-
-
-def _resolved_discontinuities(eos_callable: Callable) -> tuple[EosDiscontinuity, ...]:
-    required = _discontinuity_metadata_is_required(eos_callable)
-    surface_density = float(getattr(eos_callable, "eps_surf", 0.0))
+    required = required or surface_density > 0.0
     declared = getattr(eos_callable, "discontinuities", None)
     if declared is None:
         if required:
@@ -150,17 +140,6 @@ def _resolved_discontinuities(eos_callable: Callable) -> tuple[EosDiscontinuity,
     return resolved
 
 
-def _segment_pressure_floor(
-    *,
-    lower_discontinuity: EosDiscontinuity | None,
-    settings: TovConfig,
-) -> float:
-    """Use the physical vacuum boundary on an explicit bare-surface segment."""
-    if lower_discontinuity is not None and lower_discontinuity.kind == "surface":
-        return 0.0
-    return float(settings.pressure_min_safe)
-
-
 def _applicable_discontinuities(
     discontinuities: tuple[EosDiscontinuity, ...],
     central_pressure: float,
@@ -182,11 +161,7 @@ def _branch_pressure(
     lower_discontinuity: EosDiscontinuity | None,
     settings: TovConfig,
 ) -> float:
-    pressure_floor = _segment_pressure_floor(
-        lower_discontinuity=lower_discontinuity,
-        settings=settings,
-    )
-    candidate = max(float(pressure), pressure_floor)
+    candidate = max(float(pressure), settings.pressure_min_safe)
     if upper_discontinuity is not None and candidate >= upper_discontinuity.pressure:
         candidate = float(np.nextafter(upper_discontinuity.pressure, -math.inf))
     if (
@@ -195,7 +170,7 @@ def _branch_pressure(
         and candidate <= lower_discontinuity.pressure
     ):
         candidate = float(np.nextafter(lower_discontinuity.pressure, math.inf))
-    return max(candidate, pressure_floor)
+    return max(candidate, settings.pressure_min_safe)
 
 
 def _evaluate_branch(
@@ -219,9 +194,7 @@ def _evaluate_branch(
         raise ValueError("EoS branch returned nonfinite or nonpositive energy density")
     if not math.isfinite(cs2_local):
         raise ValueError("EoS branch returned nonfinite sound speed")
-    if cs2_local <= 0.0:
-        raise ValueError("EoS branch returned nonpositive sound speed")
-    return epsilon, cs2_local
+    return epsilon, max(cs2_local, 1.0e-10)
 
 
 def _background_rhs(
@@ -242,13 +215,7 @@ def _background_rhs(
         lower_discontinuity=lower_discontinuity,
         settings=settings,
     )
-    pressure_safe = max(
-        pressure,
-        _segment_pressure_floor(
-            lower_discontinuity=lower_discontinuity,
-            settings=settings,
-        ),
-    )
+    pressure_safe = max(pressure, settings.pressure_min_safe)
     dm_dr = radius**2 * epsilon * _G_CONV
     if radius <= settings.center_radius_limit:
         dpressure_dr = (
@@ -411,13 +378,7 @@ def _tidal_rhs_on_segment(
         lower_discontinuity=segment.lower_discontinuity,
         settings=settings,
     )
-    pressure_safe = max(
-        pressure,
-        _segment_pressure_floor(
-            lower_discontinuity=segment.lower_discontinuity,
-            settings=settings,
-        ),
-    )
+    pressure_safe = max(pressure, settings.pressure_min_safe)
     y_tidal = float(y_state[0])
     if radius <= settings.center_radius_limit:
         derivative = taylor_expansion(
@@ -497,8 +458,6 @@ def _integrate_tidal(
             pressure_mev_fm3=lower.pressure,
             delta_energy_density_mev_fm3=lower.delta_energy_density,
         )
-        if lower.kind == "surface" and delta_y >= 0.0:
-            raise ValueError("a bare-surface tidal correction must be negative")
         y_after = y_value + delta_y
         if not math.isfinite(y_after):
             raise ValueError("post-jump tidal state is nonfinite")
@@ -639,15 +598,12 @@ def solve_star(
     calculate_tidal: bool = True,
     retain_profile: bool = True,
 ) -> TovStarResult:
-    """Solve one star, preserving a valid background when only Lambda fails.
+    """Solve one star, preserving a valid background when Lambda fails closed.
 
     ``retain_profile=False`` is an exact-work optimization for internal
     searches that consume only the surface and central state.  It does not
     change the ODE, tolerances, events, or returned scalar observables.  The
     default remains ``True`` for public compatibility.
-
-    Required discontinuity metadata and its segmented background are part of
-    background validity.  Their failure therefore returns no star result.
     """
     resolved = _DEFAULT_TOV if settings is None else settings
     pc = _require_finite("central_pressure", central_pressure)
@@ -661,28 +617,18 @@ def solve_star(
         raise ValueError("calculate_tidal must be boolean")
     if not isinstance(retain_profile, bool):
         raise ValueError("retain_profile must be boolean")
-
-    metadata_required = _discontinuity_metadata_is_required(eos_callable)
-    metadata_error = None
-    try:
-        discontinuities = _resolved_discontinuities(eos_callable)
-    except (TypeError, ValueError) as exc:
-        if metadata_required:
-            raise ValueError(f"required_discontinuity_metadata:{exc}") from exc
-        discontinuities = ()
-        metadata_error = f"metadata_validation:{exc}"
-
-    if metadata_required:
-        try:
-            _validate_declared_branch_values(eos_callable, discontinuities)
-        except (TypeError, ValueError, RuntimeError, ArithmeticError) as exc:
-            raise ValueError(f"required_discontinuity_metadata:{exc}") from exc
-
     eps_init, cs2_init = map(float, eos_callable(pc))
     if not math.isfinite(eps_init) or eps_init <= 0.0:
         raise ValueError("initial energy density must be finite and positive")
     if not math.isfinite(cs2_init):
         raise ValueError("initial sound speed must be finite")
+
+    metadata_error = None
+    try:
+        discontinuities = _resolved_discontinuities(eos_callable)
+    except (TypeError, ValueError) as exc:
+        discontinuities = ()
+        metadata_error = f"metadata_validation:{exc}"
 
     try:
         segments, skipped = _integrate_background(
@@ -696,8 +642,6 @@ def solve_star(
             dense_output=bool(calculate_tidal or retain_profile),
         )
     except (ValueError, RuntimeError, ArithmeticError) as exc:
-        if metadata_required:
-            raise RuntimeError(f"segmented_background:{exc}") from exc
         if not discontinuities:
             raise
         metadata_error = f"segmented_background:{exc}"
@@ -718,11 +662,6 @@ def solve_star(
     surface_pressure = float(final_state[1])
     if not math.isfinite(mass) or not math.isfinite(radius) or mass <= 0.0 or radius <= 0.0:
         raise ValueError("background surface mass/radius is invalid")
-    if (
-        any(item.kind == "surface" for item in discontinuities)
-        and surface_pressure != 0.0
-    ):
-        raise ValueError("a declared bare surface must terminate exactly at P=0")
     if retain_profile:
         radius_profile, mass_profile = _profile_from_segments(
             segments, points=resolved.dense_profile_points
@@ -743,8 +682,7 @@ def solve_star(
         )
     elif metadata_error is None:
         try:
-            if not metadata_required:
-                _validate_declared_branch_values(eos_callable, discontinuities)
+            _validate_declared_branch_values(eos_callable, discontinuities)
             lambda_diagnostic = _integrate_tidal(
                 eos_callable,
                 pc,
@@ -796,9 +734,7 @@ for _compatibility_object in (
     _tidal_segment_bounds,
     _bounded_tidal_first_step,
     _assert_tidal_radius_on_segment,
-    _discontinuity_metadata_is_required,
     _resolved_discontinuities,
-    _segment_pressure_floor,
     _applicable_discontinuities,
     _branch_pressure,
     _evaluate_branch,

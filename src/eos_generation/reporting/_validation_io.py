@@ -116,15 +116,6 @@ def _read_csv(packet: Path, relative: str, layer: _Layer) -> list[dict[str, str]
 
 
 def _default_configuration_hash(configuration: Mapping[str, Any]) -> str:
-    matter_model = configuration.get("matter_model", "bsk24")
-    if matter_model == "cfl":
-        # Keep the established BSk24 validation import path unchanged.  CFL
-        # planning is imported only for a packet that declares that model.
-        from eos_generation.cfl.planning import CFLTrialConfig
-
-        return CFLTrialConfig.from_dict(configuration).deterministic_hash()
-    if matter_model != "bsk24":
-        raise ValueError(f"unsupported saved matter_model: {matter_model!r}")
     return BSk24TrialConfig.from_dict(configuration).deterministic_hash()
 
 
