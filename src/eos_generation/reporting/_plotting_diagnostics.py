@@ -36,10 +36,13 @@ def _radial_case_role(case_id: str, coordinates: pd.Series) -> str:
     return "positive_endpoint" if float(amplitude) > 0.0 else "negative_endpoint"
 
 
-def _radial_case_title(case_id: str, coordinates: pd.Series) -> str:
+def _radial_case_title(
+    case_id: str, coordinates: pd.Series, *, matter_model: str = "bsk24"
+) -> str:
     role = _radial_case_role(case_id, coordinates)
     if role == "direct":
-        return "Direct BSk24 baseline radial structure"
+        model = "CFL" if matter_model == "cfl" else "BSk24"
+        return f"Direct {model} baseline radial structure"
     amplitude = float(coordinates["amplitude"])
     delta = float(coordinates["delta_mev_fm3"])
     if role == "a0":
@@ -144,7 +147,14 @@ def _radial(packet, config, plt, axis_style) -> bool:
         sound_speed = pd.to_numeric(case_frame["cs2"], errors="coerce")
         if bool(sound_speed.notna().all()) and bool((sound_speed >= 0.0).all()):
             axes.flat[2].set_ylim(bottom=0.0)
-        fig.suptitle(_radial_case_title(case_id, coordinates), fontsize=13.0)
+        fig.suptitle(
+            _radial_case_title(
+                case_id,
+                coordinates,
+                matter_model=getattr(config, "matter_model", "bsk24"),
+            ),
+            fontsize=13.0,
+        )
         mappable = ScalarMappable(norm=norm, cmap=palette)
         mappable.set_array(np.asarray(masses, dtype=float))
         colorbar = fig.colorbar(
@@ -380,7 +390,14 @@ def _response(packet, config, plt, axis_style, *, baryonic: bool) -> bool:
     if not baryonic:
         fig.suptitle("Exact fixed-mass stellar response", fontsize=13.0)
     else:
-        fig.suptitle("Baryonic response relative to direct BSk24", fontsize=12.5)
+        model = (
+            "CFL"
+            if getattr(config, "matter_model", "bsk24") == "cfl"
+            else "BSk24"
+        )
+        fig.suptitle(
+            f"Baryonic response relative to direct {model}", fontsize=12.5
+        )
     _footer(
         fig,
         config,

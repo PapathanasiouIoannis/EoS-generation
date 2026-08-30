@@ -1,7 +1,7 @@
 {
   "schema_id": "eos_generation_public_quickstart_contract_v1",
   "quickstart": {
-    "configuration_hash": "efd69b6b315898ccc3a2b289fb9514ff88cfb2947f86d0eea39024dcec63c312",
+    "configuration_hash": "4503755d6738c1fb042597f09b3332a18d64b6891348444e9cd0e1ac415b0ca4",
     "case_ids_in_order": [
       "dp40_a0_88dcc71ce4",
       "dp40_ap0p01_9520f70d33"
@@ -9,7 +9,7 @@
     "estimates": {
       "proposed_deformation_cases": 2,
       "direct_baseline_cases": 1,
-      "thermodynamic_case_stage_evaluations": 6,
+      "thermodynamic_case_stage_evaluations": 4,
       "stellar_case_stage_evaluations": 0,
       "fixed_mass_root_targets": 0
     }

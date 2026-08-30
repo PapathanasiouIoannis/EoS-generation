@@ -3,10 +3,12 @@
 [![CI](https://github.com/PapathanasiouIoannis/EoS-generation/actions/workflows/ci.yml/badge.svg)](https://github.com/PapathanasiouIoannis/EoS-generation/actions/workflows/ci.yml)
 
 EoS Generation is a focused Python package for controlled sound-speed
-deformations of the analytical BSk24 neutron-star equation of state. It
-constructs a smooth proposal, applies fail-closed thermodynamic checks,
-reconstructs an effective cold one-fluid barotrope, and can optionally solve
-for stellar and tidal observables.
+deformations of two separately governed cold-matter baselines: analytical
+BSk24 neutron-star matter and one frozen, pure, bare, self-bound
+color-flavor-locked (CFL) quark-matter model. It constructs a smooth proposal,
+applies fail-closed thermodynamic checks, reconstructs an effective cold
+one-fluid barotrope, and can optionally solve for stellar and tidal
+observables.
 
 The repository has one workflow:
 
@@ -17,11 +19,6 @@ settings -> passive plan -> explicit run -> validation -> saved plots
 Planning never calls a scientific solver and never writes a result. Execution
 requires an explicit `--execute` gate. Local results go below the ignored
 `runs/` directory.
-
-The supported 1.1.x surface is the BSk24 workflow documented here. Alternate
-matter models, bulk campaign orchestration, generated result packets, and
-local analysis helpers are intentionally outside this public repository
-contract.
 
 ## Install
 
@@ -74,79 +71,59 @@ Python interpreter selected to execute notebook cells.
 See [`docs/quickstart.md`](docs/quickstart.md) for installation checks and a
 complete first run.
 
-## Run the experiment notebook
+## Choose an entry point
 
-VS Code and JupyterLab are two interfaces to the same notebook and production
-workflow. They use the same environment, calculations, validation, result
-packets, and student view.
+For a first run, use the small thermodynamic configuration in
+[`configs/quickstart.json`](configs/quickstart.json), not a campaign notebook.
+Its passive plan is fast to inspect, makes zero solver calls, and writes
+nothing. The parallel CFL onboarding configuration is
+[`configs/cfl_quickstart.json`](configs/cfl_quickstart.json).
 
-### Guide A — VS Code
+The four tracked notebooks are passive by default, but their intended scopes
+are different:
 
-1. Use **File > Open Folder** and select the repository folder itself: the
-   folder containing `environment.yml`, `pyproject.toml`, `configs/`, and
-   `notebooks/`. Do not open only its parent download directory.
-2. In the Explorer, right-click that top-level folder and select **Open in
-   Integrated Terminal**, then complete the installation block above one line
-   at a time.
-3. Open `notebooks/bsk24_experiment.ipynb`. Select **Python: Select
-   Interpreter**, then **Select Kernel**, and choose `eos-generation` in both
-   places. The selected interpreter must be Python 3.12 from that environment.
-4. Leave `EXECUTE_REVIEWED_PLAN = False` and choose **Run All**. This first
-   pass only prints the passive plan and writes no result.
-5. Review the settings, work count, cases, and new destination. Change only
-   `EXECUTE_REVIEWED_PLAN` to `True`, then choose **Run All** again in the
-   same kernel. Restarting the kernel discards the reviewed authorization and
-   requires another `False` preview pass.
-6. Open the displayed **Student result locations** and start with **Read me
-   first**.
+- `bsk24_experiment.ipynb` is preconfigured as a large stellar campaign:
+  125 deformation geometries crossed with nine amplitudes under the
+  experimental `dataset_40` profile. It is not a starter notebook.
+- `cfl_experiment.ipynb` is the accepted CFL quick/strict experiment interface.
+  Quick remains exploratory, and the recorded software/equation acceptance
+  does not by itself establish publication-level physical claims.
+- `bsk24_dataset.ipynb` and `cfl_dataset.ipynb` are focused dataset routes.
+  Their single-stage `dataset_40_curves` and `dataset_40` profiles are
+  experimental and are not STRICT convergence certificates.
 
-### Guide B — JupyterLab in a browser
-
-Open PowerShell at the repository root. Run these commands one line at a time;
-they deliberately reuse the environment that worked in VS Code:
-
-```powershell
-conda activate eos-generation
-python -c "import sys; print(sys.executable)"
-python -m pip install -e . --no-deps
-python -m pip install -e ".[notebook]"
-python -m ipykernel install --user --name eos-generation --display-name "Python (eos-generation)"
-python -m jupyterlab notebooks/bsk24_experiment.ipynb
-```
-
-The printed executable must identify the `eos-generation` environment. Keep
-the launching terminal open while JupyterLab is running. In the browser:
-
-1. Use **Kernel > Change Kernel** if necessary and select **Python
-   (eos-generation)**.
-2. Leave `EXECUTE_REVIEWED_PLAN = False` and choose **Run > Run All Cells**.
-3. Review the passive plan, cases, work count, and new destination.
-4. Change only `EXECUTE_REVIEWED_PLAN` to `True`, then choose **Run > Run All
-   Cells** again without restarting or changing the kernel.
-5. Open the displayed **Student result locations** and start with **Read me
-   first**.
-
-Do not launch this workflow from a base-Anaconda Jupyter shortcut or mix a
-base Jupyter server with an `eos-generation` kernel. If activation is
-uncertain, the explicit equivalent is:
-
-```powershell
-conda run -n eos-generation --no-capture-output python -m jupyterlab notebooks/bsk24_experiment.ipynb
-```
-
-After a successful run, use the notebook's **Student result locations** links.
-Start with `STUDENT_VIEW/01_READ_ME_FIRST.md`; primary CSV data is below
-`STUDENT_VIEW/03_PRIMARY_DATA/` and the sealed technical packet remains
-separate. [`docs/csv-data-guide.md`](docs/csv-data-guide.md) explains exactly
-which rows belong to each EoS, the saved column meanings, and safe preparation
-for plotting or machine learning.
+Opening or passively previewing any notebook is safe. Setting
+`EXECUTE_REVIEWED_PLAN = True` authorizes the exact reviewed plan, so inspect
+the case count, solver work, destination, and profile before changing that
+flag. See the [notebook route](docs/quickstart.md#notebook-route) for kernel and
+two-pass instructions, and [`docs/dataset.md`](docs/dataset.md) for the dataset
+qualification boundary.
 
 ## Plan before calculating
+
+For the experimental five-figure dataset workflow, use the separate
+[`notebooks/bsk24_dataset.ipynb`](notebooks/bsk24_dataset.ipynb) or
+[`notebooks/cfl_dataset.ipynb`](notebooks/cfl_dataset.ipynb), and read
+[`docs/dataset.md`](docs/dataset.md). The BSk24 route selects
+`dataset_40_curves`; the CFL route selects `dataset_40`. Both use one 40-point
+stellar stage at rtol=1e-10 / atol=1e-12, with up to six case workers. The
+BSk24 curve-only profile omits residual reporting, fixed/max-mass refinements,
+retained radial profiles, and duplicate presentation trees while preserving
+the raw gate and final curve grids. Neither is a per-case STRICT convergence
+certificate. Restart the kernel and review a fresh passive preview after
+updating; no execution is enabled by default.
 
 The safe first command is:
 
 ```powershell
 bsk24-trial plan --config configs/quickstart.json --output-root runs
+```
+
+`bsk24-trial` remains the compatibility command name for both matter models.
+For the passive CFL example, use:
+
+```powershell
+bsk24-trial plan --config configs/cfl_quickstart.json --output-root runs
 ```
 
 The plan resolves defaults, expands the named numerical profile, lists every
@@ -164,13 +141,14 @@ bsk24-trial plot $experiment
 Copy the reviewed hash exactly; the run fails if the settings or destination
 no longer match it. The run prints its deterministic
 `runs/experiment_<hash>` path; substitute that path in the three inspection
-commands. The supplied quickstart performs thermodynamics only. Stellar
-calculations are deliberately a separate, more expensive choice.
+commands. Use the exact same config filename that produced the reviewed hash.
+Both supplied quickstarts perform thermodynamics only. Stellar calculations
+are deliberately a separate, more expensive choice.
 
 ## Configure an experiment
 
-A complete JSON configuration has one required `$schema` annotation and nine
-scientific settings:
+A complete legacy BSk24 JSON configuration has one required `$schema`
+annotation and nine scientific settings:
 
 ```json
 {
@@ -187,6 +165,12 @@ scientific settings:
 }
 ```
 
+Omitting `matter_model` is the canonical legacy BSk24 contract. A CFL
+configuration adds the explicit discriminator `"matter_model": "cfl"` and
+must use `"epsilon_match": "surface"`; see
+[`configs/cfl_quickstart.json`](configs/cfl_quickstart.json). The frozen CFL
+microphysical constants are not public sweep fields.
+
 `center`, `width`, and `ramp_width` accept either one number or a list. The
 code expands their combinations deterministically. `precision` selects a
 governed internal numerical profile; the fully expanded settings are recorded
@@ -195,17 +179,62 @@ with the result, so the simple input does not hide what was calculated.
 Start from one of these files:
 
 - [`configs/quickstart.json`](configs/quickstart.json): small passive and
-  thermodynamic smoke workflow;
+  BSk24 thermodynamic smoke workflow;
+- [`configs/cfl_quickstart.json`](configs/cfl_quickstart.json): small passive
+  CFL thermodynamic workflow;
 - [`configs/custom_experiment.json`](configs/custom_experiment.json): strict
   template for editing;
 - [`configs/stellar_example.json`](configs/stellar_example.json): strict
   stellar and tidal example;
 - [`configs/schema.json`](configs/schema.json): editor and validation schema.
 
-All quantities named `center`, `width`, `ramp_width`, and a numeric
+All quantities named `center`, `width`, `ramp_width`, and a numeric BSk24
 `epsilon_match` are total-energy-density coordinates in MeV fm^-3.
 Amplitudes add directly to dimensionless `c_s^2` in units with `c = 1`.
 Fixed masses are gravitational masses in solar masses.
+
+## Notebooks
+
+Choose the notebook for the intended scope:
+
+```powershell
+jupyter lab notebooks/bsk24_experiment.ipynb
+jupyter lab notebooks/bsk24_dataset.ipynb
+jupyter lab notebooks/cfl_experiment.ipynb
+jupyter lab notebooks/cfl_dataset.ipynb
+```
+
+Edit only the settings cell. Leave `EXECUTE_REVIEWED_PLAN = False`, run all
+cells, and inspect the passive plan. Set it to `True` only after the plan and
+destination are correct. The notebook delegates to the same production API as
+the command line.
+
+The general BSk24 notebook is a campaign template, not the quickstart: its
+checked-in settings expand 125 geometries across nine amplitudes and request
+the experimental single-stage `dataset_40` stellar profile. The focused BSk24
+dataset notebook uses `dataset_40_curves`, which retains the requested curve
+grids and fail-closed gates while omitting fixed/max-mass refinement and other
+non-curve products. Preview either plan carefully before authorizing it.
+
+The CFL experiment notebook defaults to a small stellar experiment with
+`PRECISION = "quick"`; change to `"strict"` and preview again for the governed
+refinement stages. This quick/strict notebook is the accepted CFL interface.
+Its frozen microphysics and self-bound surface are not editable sweep controls.
+
+The CFL notebook automatically displays combined M–R, Λ–M, and k₂–M plots
+from accepted saved sequences, plus thermodynamic curves and availability
+tables. `FIXED_MASSES = [1.4]` adds a comparison point, not a restriction on
+the full sequences. Reopen completed results with `LOAD_EXPERIMENT` and
+execution disabled; loading and viewing existing plots are read-only. See
+the [notebook quickstart](docs/quickstart.md#notebook-route).
+
+For large CFL data collection, `cfl_dataset.ipynb` fixes the experimental
+`dataset_40` profile, disables scientific packet PNG rendering, retains all
+required evidence and statuses in the authoritative packet, and builds the
+seven-file `CFL_DATASET/` view after successful validation. Reporting reads
+each required saved table once and makes zero solver calls. The route is
+passive by default, but it is outside the quick/strict acceptance evidence and
+is not a substitute for a matched STRICT convergence study.
 
 ## Python interface
 
@@ -264,21 +293,35 @@ equilibrium. A maximum mass is reported as resolved only when the governed
 turning-point procedure succeeds, and fixed-mass observables require a true
 stable-branch bracket.
 
+The CFL model is zero-temperature ideal CFL matter with frozen
+`m_s = 100 MeV`, `Delta = 100 MeV`, and authoritative
+`B = 57.5 MeV fm^-3` (derived `B^(1/4) = 144.97957215191494 MeV`). It describes a
+bare quark star joined directly from a finite-density zero-pressure surface to
+vacuum, with no crust or hadronic envelope. The CFL-only phase does not test
+the separate two-flavor stability condition needed to protect ordinary
+nuclei. Extended CFL radial diagnostics are unsupported and fail closed.
+Read the exact equations, formula-derived binary64 domain, tidal surface jump,
+and validation status in [`docs/cfl.md`](docs/cfl.md) before interpreting a
+CFL result.
+
 ## Repository map
 
 | Path | Purpose |
 |---|---|
 | [`src/eos_generation/`](src/eos_generation/) | Installable implementation and public API |
-| [`configs/`](configs/) | Three user configurations and their schema |
-| [`notebooks/`](notebooks/) | Passive-by-default experiment notebook |
+| [`configs/`](configs/) | Five user configurations and their schema |
+| [`notebooks/`](notebooks/) | Separate passive-by-default BSk24 and CFL notebooks |
 | [`docs/`](docs/) | Short method and usage guides |
 | [`tests/`](tests/) | Focused scientific and interface regression tests |
 
 See [`docs/method.md`](docs/method.md) for the construction,
 [`docs/results.md`](docs/results.md) for interpreting saved packets, and
 [`docs/csv-data-guide.md`](docs/csv-data-guide.md) for using CSV data in
-spreadsheets, Python, or machine-learning workflows. Problems and contribution
-requirements are covered by
+spreadsheets, Python, or machine-learning workflows. The frozen CFL contract
+is in [`docs/cfl.md`](docs/cfl.md). Published CFL
+stellar claims still require a strict convergence study, published benchmark,
+and independent solver comparison; the quick example is exploratory only.
+Problems and contribution requirements are covered by
 [`docs/troubleshooting.md`](docs/troubleshooting.md) and
 [`CONTRIBUTING.md`](CONTRIBUTING.md).
 

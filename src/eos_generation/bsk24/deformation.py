@@ -622,7 +622,7 @@ def windowed_gaussian_pressure_primitive(
 
 @dataclass
 class BSk24WindowedEos:
-    """Non-extrapolating windowed EoS and reconstructed thermodynamic state."""
+    """Published-fit-bounded windowed EoS on its first causal branch."""
 
     baseline: BSk24ConsistentBaseline
     deformation: BSk24WindowedDeformation
@@ -756,7 +756,7 @@ class BSk24WindowedEos:
             "microscopic_composition_status": "unavailable",
             "species_chemical_potential_status": "unavailable",
             "beta_equilibrium_status": "unassessed",
-            "no_extrapolation": True,
+            "no_extrapolation_outside_published_fit_domain": True,
             "sound_speed_clipping": False,
             "diagnostics": self.diagnostics,
         }
@@ -841,7 +841,16 @@ def _authoritative_retained_endpoint(
 ) -> tuple[float, bool]:
     """Validate and return one raw-gate-selected retained endpoint."""
 
-    expected_domain = [float(baseline.epsilon[0]), float(baseline.epsilon[-1])]
+    expected_domain = [
+        float(baseline.epsilon[0]),
+        (
+            float(baseline.epsilon[-1])
+            if deformation.amplitude == 0.0
+            else float(
+                baseline.eos.energy_density_max_published_fit_mev_fm3
+            )
+        ),
+    ]
     retained = raw_gate_report.get("retained_domain")
     if (
         raw_gate_report.get("status") != "accepted_raw_local_physics_gate"
@@ -874,7 +883,7 @@ def _authoritative_retained_endpoint(
         or not math.isfinite(endpoint_cs2)
         or retained_minimum != expected_domain[0]
         or not baseline.anchor.energy_density_mev_fm3 < endpoint
-        or endpoint > float(baseline.epsilon[-1])
+        or endpoint > expected_domain[1]
         or endpoint_pressure <= 0.0
         or not 0.0 < endpoint_cs2 <= 1.0
     ):
@@ -911,7 +920,8 @@ def _authoritative_retained_endpoint(
     reason = retained.get("endpoint_reason")
     if reason == "direct_bsk24_causal_endpoint":
         if (
-            endpoint != expected_domain[1]
+            deformation.amplitude != 0.0
+            or endpoint != expected_domain[1]
             or crossing is not None
             or raw_gate_report.get("full_retained_domain_passed") is not True
             or raw_gate_report.get(
@@ -921,6 +931,21 @@ def _authoritative_retained_endpoint(
         ):
             raise ValueError(
                 "direct raw-gate endpoint must be the complete BSk24 causal endpoint"
+            )
+        return endpoint, False
+    if reason == "published_bsk24_fit_endpoint":
+        if (
+            deformation.amplitude == 0.0
+            or endpoint != expected_domain[1]
+            or crossing is not None
+            or raw_gate_report.get("full_retained_domain_passed") is not True
+            or raw_gate_report.get(
+                "complete_raw_proposal_causal_through_declared_assessment_endpoint"
+            )
+            is not True
+        ):
+            raise ValueError(
+                "published-fit raw-gate endpoint must be the complete fit endpoint"
             )
         return endpoint, False
     if reason != "first_continuous_causal_crossing":
@@ -1016,7 +1041,7 @@ def _authoritative_retained_endpoint(
         or crossing.get("cs2_values_modified") is not False
         or raw_gate_report.get("full_retained_domain_passed") is not False
         or raw_gate_report.get(
-            "complete_raw_proposal_causal_through_direct_endpoint"
+            "complete_raw_proposal_causal_through_declared_assessment_endpoint"
         )
         is not False
         or crossing_epsilon != endpoint
@@ -1074,12 +1099,17 @@ def _analytical_tabulation_certificate(
             "probe_count": 0,
             "criterion": "not_applicable_exact_zero_amplitude",
         }
+    def analytical_cs2(value: Any) -> float | np.ndarray:
+        result = np.asarray(
+            _windowed_cs2(np.asarray(value), baseline, deformation),
+            dtype=float,
+        )
+        return float(result) if result.ndim == 0 else result
+
     return _analytical_pressure_derivative_certificate(
         epsilon,
         pressure,
-        lambda value: float(
-            _windowed_cs2(np.asarray(value), baseline, deformation)
-        ),
+        analytical_cs2,
         spacing_certificate,
         intervals_per_scale=RETAINED_INTERVALS_PER_SCALE,
     )
@@ -1112,7 +1142,33 @@ def build_windowed_eos(
             "require_full_domain received a valid but case-truncated raw proposal"
         )
 
-    raw_epsilon = baseline.epsilon.copy()
+    raw_domain = raw_gate_report[
+        "complete_proposed_retained_domain_mev_fm3"
+    ]
+    raw_upper = float(raw_domain[1])
+    if raw_upper == float(baseline.epsilon[-1]):
+        raw_epsilon = baseline.epsilon.copy()
+    else:
+        terminal_spacing = float(
+            baseline.epsilon[-1] - baseline.epsilon[-2]
+        )
+        extension_intervals = int(
+            math.ceil(
+                (raw_upper - float(baseline.epsilon[-1]))
+                / terminal_spacing
+            )
+        )
+        raw_epsilon = np.concatenate(
+            (
+                baseline.epsilon,
+                np.linspace(
+                    float(baseline.epsilon[-1]),
+                    raw_upper,
+                    extension_intervals + 1,
+                    dtype=float,
+                )[1:],
+            )
+        )
     raw_pressure = _windowed_pressure(raw_epsilon, baseline, deformation)
     raw_cs2 = _windowed_cs2(raw_epsilon, baseline, deformation)
     if (
@@ -1319,11 +1375,9 @@ def build_windowed_eos(
         },
         "causal_domain": {
             "observed_upper_causal_crossing": has_causal_crossing,
-            "endpoint_reason": (
-                "first_continuous_causal_crossing"
-                if has_causal_crossing
-                else "direct_bsk24_causal_endpoint"
-            ),
+            "endpoint_reason": raw_gate_report["retained_domain"][
+                "endpoint_reason"
+            ],
             "refined_epsilon_mev_fm3": (
                 endpoint_epsilon if has_causal_crossing else None
             ),
@@ -1332,7 +1386,7 @@ def build_windowed_eos(
             "retained_pressure_max_mev_fm3": float(pressure[-1]),
             "retained_cs2_endpoint": float(cs2[-1]),
             "repair_or_clipping": "none",
-            "extrapolation": "forbidden",
+            "extrapolation": "forbidden_outside_published_fit_domain",
         },
         "microscopic_composition_status": "unavailable",
         "species_chemical_potential_status": "unavailable",

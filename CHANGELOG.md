@@ -2,20 +2,98 @@
 
 All notable changes to the supported package are recorded here.
 
-## Unreleased
+## 1.2.0 - 2026-08-30
+
+### Added
+
+- Governed `matter_model = "cfl"` support for pure, cold, bare, self-bound
+  CFL quark stars using the frozen `cfl_bag_full_ms_delta2_v1` formulation.
+- Surface-anchored CFL sound-speed deformation, complete-domain raw gating,
+  cold first-law reconstruction, deterministic zero-amplitude aliasing, and
+  bare-surface TOV/tidal handling with exactly-once `y`-jump evidence.
+- A dedicated passive-by-default `notebooks/cfl_experiment.ipynb` workflow
+  with editable deformation controls, governed quick/strict profiles, and
+  saved-table M-R, Lambda-M, k2-M, and thermodynamic plots.
+- A passive-by-default `notebooks/cfl_dataset.ipynb` workflow using the
+  explicitly experimental 40-point profile at final STRICT ODE tolerances.
+  Scientific child-packet PNG rendering is disabled; complete tables are
+  retained and exactly five combined saved-table plots are built afterward.
+- A frozen CFL source manifest, scientific contract, acceptance record,
+  focused regression suite, and opt-in independent reference solver.
+
+- Separate `dataset_10_tighter` combined sampling/tolerance pilot: 10 sequence
+  stars with all-node tides at rtol=1e-11 / atol=1e-13. Existing profiles,
+  notebook defaults, physical gates and maximum-mass rules remain unchanged.
+  This single-stage experiment is not STRICT certification.
+
+- Explicit `dataset_20` sampling pilot: 20 sequence stars with all-node tides
+  at rtol=1e-10 / atol=1e-12. No changes to existing profiles, defaults,
+  thermodynamics, physical gates, maximum-mass rules or validation.
+
+- Separate `dataset_40` sampling candidate: 40 sequence stars and all-node
+  tides at dataset's tight rtol=1e-10 / atol=1e-12. Existing profiles,
+  notebook defaults, certification and maximum-mass logic are unchanged.
+
+- Separate `dataset_relaxed_80` sampling candidate: 80 sequence stars with
+  all-node tides at the existing dataset_relaxed tolerances (1e-8 / 1e-10).
+  Existing profiles, notebook defaults and maximum-mass logic remain unchanged.
+
+- Explicit experimental `dataset_relaxed` tolerance-only candidate, selectable
+  in the focused notebook: rtol 1e-8 / atol 1e-10 with all 61 tidal sequence
+  points and 1201 radial samples. Existing profiles, notebook defaults,
+  physical gates, refinement rules and validators are unchanged.
+
+- Experimental `dataset` profile and a separate focused notebook with five
+  combined accepted-only figure families. STRICT/QUICK profiles, all physical
+  gates, solvers and tolerances remain unchanged. Dataset uses one 61-model
+  stellar stage at STRICT final tolerances and retains maximum-mass checks;
+  it explicitly lacks a per-case stellar refinement envelope. See docs/dataset.md.
 
 ### Changed
 
-- Restored the supported single-method BSk24 surface and canonical notebook
-  after an unreleased bulk dataset and alternate-matter-model synchronization.
-- Excluded repository-local publication scratch, generated output, website
-  sources, archives, and root-level notebook copies from version control.
+- The frozen pure-CFL baseline is refrozen to the Lugones-Horvath high-mass
+  family at authoritative `B = 57.5 MeV fm^-3`, `m_s = 100 MeV`, and
+  `Delta = 100 MeV`. The parameter-set ID/hash, formula-derived self-bound
+  surface and domain, source manifest, planning identities, and CFL reference
+  evidence change accordingly. Historical packets with the former
+  `B^(1/4) = 165 MeV`, `m_s = 150 MeV` identity are not migrated or relabeled.
 
-### Fixed
+- Public planning, configuration, provenance, validation, and reporting now
+  retain the matter model and CFL frozen-parameter identity while omitted
+  `matter_model` preserves legacy BSk24 serialization and deterministic IDs.
+- CFL uses its explicit bare-self-bound low-mass policy and finite-density
+  vacuum surface; it never imports the BSk24 crust, matching anchor, or
+  hadronic display cuts. Frozen CFL microphysics is not a sweep axis.
 
-- Require an explicit successful validation status before the notebook treats
-  an executed experiment as complete; missing validation status now fails
-  closed.
+- The general BSk24 experiment notebook now defaults to a large
+  125-geometry-by-nine-amplitude `dataset_40` campaign. The focused BSk24
+  dataset notebook instead selects the curve-only `dataset_40_curves` profile;
+  both profiles use 40 sequence points at rtol=1e-10 / atol=1e-12. All tracked
+  notebooks are output-clean and remain passive until a fresh preview is
+  explicitly executed. The shared production case-worker cap and preview
+  budget increase to six, still bounded by CPU/case count with nested pools
+  disabled. Existing profile definitions, including multi-stage STRICT,
+  scientific equations, acceptance gates, and validation are unchanged.
+
+- Skipped response figures retain their mandatory final-stage population and
+  tidal-completeness metadata. Disabling rendering does not disable evidence;
+  the scientific validator is unchanged and still rejects omitted metadata.
+
+- Future notebook runs publish persistent friendly EoS aliases and labelled
+  primary-table copies in `EOS_DATA/`. An append-only catalogue shares IDs
+  across sign batches and matching QUICK/STRICT physical definitions while
+  retaining evaluation provenance, rejected cases, and missing observables.
+  Canonical IDs, scientific settings, solvers, tolerances, existing packets,
+  and byte-for-byte student-view copies are unchanged. Small combined plot
+  families use the aliases; dense families retain colour bars and ID mappings.
+- The append-only EoS catalogue now assigns independent `H` (BSk24) and `C`
+  (CFL) namespaces in one checksum chain, retains a `matter_model` column, and
+  reads the prior BSk24-only transaction schema without renumbering old IDs.
+
+- Notebook runs now publish one flat, checksum-manifested `plots/` folder for
+  the current experiment. Every applicable plot combines accepted EoSs across
+  the sweep; rejected cases and historical experiments are excluded, and the
+  saved-table plotting step makes zero solver calls.
 
 ## 1.1.0 - 2026-08-25
 

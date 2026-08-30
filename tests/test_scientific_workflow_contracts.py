@@ -56,18 +56,18 @@ class EffectiveReconstructionContracts(unittest.TestCase):
             dense_upper_points=1025,
         )
         self.assertEqual("accepted_raw_local_physics_gate", raw_gate["status"])
-        self.assertTrue(raw_gate["full_retained_domain_passed"])
+        self.assertFalse(raw_gate["full_retained_domain_passed"])
 
         eos = deformation.build_windowed_eos(
             self.baseline,
             proposal,
             raw_gate_report=raw_gate,
-            require_full_domain=True,
+            require_full_domain=False,
         )
         self.assertNotEqual(0.0, eos.deformation.amplitude)
         self.assertEqual(
-            "accepted_full_domain_thermodynamic_gate",
-            eos.diagnostics["full_domain_thermodynamic_admissibility"]["status"],
+            "accepted_selected_domain_thermodynamic_gate",
+            eos.diagnostics["retained_domain_thermodynamic_admissibility"]["status"],
         )
 
         pressure_from_euler = (
@@ -268,6 +268,51 @@ class StellarDecisionContracts(unittest.TestCase):
         )
         self.assertGreater(resolved.positive_left_secant, 0.0)
         self.assertLess(resolved.negative_right_secant, 0.0)
+
+        turning_rows = (
+            (1.8, 12.2, math.nan, 1.0, 101.0, 0.5, 0.0),
+            (2.1, 12.0, math.nan, 10.0, 110.0, 0.5, 0.0),
+            (1.9, 11.8, math.nan, 100.0, 200.0, 0.5, 0.0),
+        )
+        turning_profiles = tuple(((), ()) for _ in turning_rows)
+        turning_evidence = _build_sequence_evidence(
+            full_sequence=turning_rows,
+            stable_sequence=turning_rows[:2],
+            full_dense_profiles=turning_profiles,
+            stable_dense_profiles=turning_profiles[:2],
+            full_tidal_diagnostics=None,
+            stable_tidal_diagnostics=None,
+            full_lambda_diagnostics=None,
+            stable_lambda_diagnostics=None,
+            attempted_central_pressures=[1.0, 10.0, 100.0],
+            failed_central_pressures=[],
+            sampled_peak_index=1,
+            sampled_secants=_sampled_mass_secants(turning_rows),
+            eos_endpoint_pressure=100.0,
+            max_mass_stable=2.1,
+        )
+        displaced_optimizer = SimpleNamespace(
+            x=math.log(10.001),
+            success=True,
+            nfev=1,
+        )
+        with patch(
+            "eos_generation.stellar._tov_maximum.minimize_scalar",
+            return_value=displaced_optimizer,
+        ):
+            retained_sample = refine_maximum_mass_from_sequence(
+                object(),
+                turning_evidence,
+                refinement_pressure_rtol=1.0e-10,
+                star_solver=parabolic_mass_solver,
+            )
+        self.assertTrue(retained_sample.maximum_mass_resolved)
+        self.assertEqual(2.1, retained_sample.maximum_mass_msun)
+        self.assertEqual(10.0, retained_sample.central_pressure_mev_fm3)
+        self.assertEqual(
+            retained_sample.maximum_mass_msun,
+            max(row[1] for row in retained_sample.stable_branch_models),
+        )
 
         sampled_rows = (
             (1.0, 12.0, math.nan, 1.0, 101.0, 0.5, 0.0),
@@ -566,6 +611,115 @@ class SavedSummaryContracts(unittest.TestCase):
 
 
 class FailClosedOrchestrationContracts(unittest.TestCase):
+    def test_deduplicated_bsk24_a0_never_reaches_stellar_generated_cases(
+        self,
+    ) -> None:
+        class StellarProbeComplete(RuntimeError):
+            pass
+
+        with tempfile.TemporaryDirectory(
+            prefix="synthetic-bsk24-a0-dedup-",
+        ) as temporary:
+            packet = Path(temporary) / "packet"
+            config = BSk24TrialConfig(
+                amplitudes=(0.0, 0.2),
+                deltas_mev_fm3=(40.0,),
+                zero_amplitude_control_owner=True,
+                thermodynamic_stages=(
+                    BSk24ThermodynamicStage("synthetic", 17, 17),
+                ),
+                tov_stages=(
+                    BSk24TOVStage("synthetic", 5, 1.0e-8, 1.0e-10, 3),
+                ),
+                raw_gate_lower_points=17,
+                raw_gate_upper_points=17,
+                stellar_enabled=True,
+            )
+            logical_zero = "logical-zero"
+            physical_zero = config.zero_amplitude_physical_case_id
+            nonzero = "nonzero"
+            case_table = pd.DataFrame(
+                (
+                    {
+                        "case_id": logical_zero,
+                        "physical_case_id": physical_zero,
+                        "amplitude": 0.0,
+                        "epsilon0_mev_fm3": 200.0,
+                        "sigma_mev_fm3": 50.0,
+                        "delta_mev_fm3": 40.0,
+                        "planned_for_execution": True,
+                    },
+                    {
+                        "case_id": nonzero,
+                        "physical_case_id": nonzero,
+                        "amplitude": 0.2,
+                        "epsilon0_mev_fm3": 200.0,
+                        "sigma_mev_fm3": 50.0,
+                        "delta_mev_fm3": 40.0,
+                        "planned_for_execution": True,
+                    },
+                )
+            )
+            plan = SimpleNamespace(
+                output_path=packet,
+                case_table=case_table,
+                logical_alias_table=case_table.iloc[0:0].copy(),
+                logical_case_table=case_table,
+                to_dict=lambda: {"schema_id": "synthetic_passive_plan"},
+            )
+            baseline = SimpleNamespace()
+
+            def raw_gate(
+                _baseline: object,
+                proposal: deformation.BSk24WindowedDeformation,
+                **_kwargs: object,
+            ) -> tuple[dict[str, object], np.ndarray, np.ndarray]:
+                return (
+                    {
+                        "case_id": proposal.case_id,
+                        "status": "accepted_raw_local_physics_gate",
+                    },
+                    np.asarray([1.0]),
+                    np.asarray([0.5]),
+                )
+
+            def build_windowed(
+                _baseline: object,
+                proposal: deformation.BSk24WindowedDeformation,
+                **_kwargs: object,
+            ) -> SimpleNamespace:
+                return SimpleNamespace(deformation=proposal)
+
+            def stellar_probe(**kwargs: object) -> None:
+                generated = kwargs["generated"]
+                self.assertEqual({nonzero}, set(generated))
+                self.assertNotIn(physical_zero, generated)
+                raise StellarProbeComplete
+
+            callbacks = RunCallbacks(
+                prepare_trial=lambda _config: plan,
+                load_trial=Mock(),
+                generate_plots=Mock(),
+                validate_packet=Mock(),
+                build_consistent_baseline=lambda *_args, **_kwargs: baseline,
+                raw_local_physics_gate=raw_gate,
+                raw_gate_frame=lambda **kwargs: pd.DataFrame(
+                    {"case_id": [kwargs["case_id"]]}
+                ),
+                build_windowed_eos=build_windowed,
+                thermodynamic_profile_frame=lambda *_args: pd.DataFrame(),
+                thermodynamic_residual_frame=lambda *_args: pd.DataFrame(),
+                window_characterization=lambda *_args: {},
+                thermodynamic_convergence=lambda *_args: {"status": "synthetic"},
+                run_stellar=stellar_probe,
+            )
+            with (
+                patch("eos_generation._internal.execution.write_json_atomic"),
+                patch("eos_generation._internal.execution.write_csv_atomic"),
+                self.assertRaises(StellarProbeComplete),
+            ):
+                run_bsk24_trial(config, callbacks=callbacks)
+
     def test_rejected_case_never_crosses_downstream_case_boundaries(self) -> None:
         reconstructed_case_ids: list[str] = []
         stellar_case_ids: set[str] = set()

@@ -241,6 +241,70 @@ class PublicWorkflowTests(unittest.TestCase):
         self.assertEqual(4, len(plan.child_plans))
         self.assertEqual({1, 2, 3, 4}, set(plan.case_table["geometry_index"]))
 
+    def test_bsk24_cartesian_zero_control_has_one_physical_owner(self) -> None:
+        settings = ExperimentSettings.from_values(
+            amplitudes=(0.0, 0.01, -0.01),
+            center=(240.0, 200.0),
+            width=50.0,
+            ramp_width=(40.0, 30.0),
+            precision="quick",
+        )
+        plan = plan_experiment(
+            settings, output_root=ROOT / "runs" / "test-bsk24-a0-owner"
+        )
+        self.assertEqual(12, len(plan.case_table))
+        self.assertEqual(
+            9, sum(len(child.case_table) for child in plan.child_plans)
+        )
+        self.assertEqual(
+            3, sum(len(child.logical_alias_table) for child in plan.child_plans)
+        )
+        owners = [
+            child
+            for child in plan.child_plans
+            if child.config.zero_amplitude_control_owner
+        ]
+        self.assertEqual(1, len(owners))
+        owner = owners[0].config
+        self.assertEqual((200.0, 50.0, 30.0), (
+            owner.epsilon0_mev_fm3,
+            owner.sigma_mev_fm3,
+            owner.deltas_mev_fm3[0],
+        ))
+        zero_rows = plan.case_table.loc[plan.case_table["amplitude"].eq(0.0)]
+        self.assertEqual(4, len(zero_rows))
+        self.assertEqual(1, zero_rows["physical_case_id"].nunique())
+        self.assertEqual(3, plan.estimates["deduplicated_logical_case_aliases"])
+        self.assertEqual(9, plan.estimates["physical_deformation_cases"])
+        self.assertTrue(plan.to_dict()["planning_is_passive"])
+        self.assertEqual(0, plan.to_dict()["scientific_solver_calls"])
+
+        from eos_generation._internal.planning import BSk24TrialConfig
+
+        saved_owner = owners[0].config.to_dict()
+        recovered_owner = BSk24TrialConfig.from_dict(saved_owner)
+        self.assertEqual(owners[0].config, recovered_owner)
+        tampered = dict(
+            saved_owner,
+            zero_amplitude_physical_case_id="bsk24_baseline_tampered",
+        )
+        with self.assertRaisesRegex(ValueError, "disagrees with its inputs"):
+            BSk24TrialConfig.from_dict(tampered)
+
+    def test_legacy_direct_bsk24_trial_does_not_enable_alias_mode(self) -> None:
+        from eos_generation._internal.planning import (
+            BSk24TrialConfig,
+            prepare_bsk24_trial,
+        )
+
+        config = BSk24TrialConfig(amplitudes=(0.0, 0.01))
+        self.assertIsNone(config.zero_amplitude_control_owner)
+        self.assertNotIn("zero_amplitude_control_owner", config.to_dict())
+        self.assertNotIn("logical_amplitudes", config.to_dict())
+        child = prepare_bsk24_trial(config)
+        self.assertNotIn("logical_alias_table", child.to_dict())
+        self.assertTrue(child.logical_alias_table.empty)
+
     def test_accidental_cartesian_explosions_fail_before_planning(self) -> None:
         with self.assertRaisesRegex(ValueError, "public planning limit is 256"):
             ExperimentSettings.from_values(center=tuple(range(1, 258)))
@@ -288,16 +352,25 @@ class PublicWorkflowTests(unittest.TestCase):
 
     def test_default_and_leading_runs_paths_are_checkout_relative(self) -> None:
         settings = ExperimentSettings.from_values(amplitudes=(0.0,))
+        runs = ROOT / "runs"
+        runs_preexisted = runs.exists()
+        entries_before = set(runs.iterdir()) if runs_preexisted else set()
         previous = Path.cwd()
         try:
             os.chdir(ROOT / "docs")
-            default = plan_experiment(settings)
-            explicit = plan_experiment(settings, output_root="runs/from-docs")
+            with patch.object(Path, "mkdir", side_effect=AssertionError("planning wrote a directory")), \
+                 patch.object(Path, "write_text", side_effect=AssertionError("planning wrote text")), \
+                 patch.object(Path, "write_bytes", side_effect=AssertionError("planning wrote bytes")):
+                default = plan_experiment(settings)
+                explicit = plan_experiment(settings, output_root="runs/from-docs")
         finally:
             os.chdir(previous)
         self.assertEqual(ROOT / "runs", default.experiment_path.parent)
         self.assertEqual(ROOT / "runs" / "from-docs", explicit.experiment_path.parent)
-        self.assertFalse((ROOT / "runs").exists())
+        # Existing user runs are allowed and must never be removed for a test.
+        # The same assertion still forbids creating runs/ in a clean checkout.
+        self.assertEqual(runs_preexisted, runs.exists())
+        self.assertEqual(entries_before, set(runs.iterdir()) if runs.exists() else set())
 
 
 if __name__ == "__main__":

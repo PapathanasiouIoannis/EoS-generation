@@ -65,19 +65,16 @@ def runs_root() -> Path:
     return project_root() / "runs"
 
 
-def _is_relative_to(path: Path, parent: Path) -> bool:
-    try:
-        path.relative_to(parent)
-        return True
-    except ValueError:
-        return False
-
-
 def ensure_within_runs(path: str | Path) -> Path:
     """Resolve ``path`` and require containment below ``runs/``."""
-    resolved = Path(path).expanduser().resolve(strict=False)
-    allowed = runs_root().resolve(strict=False)
-    if resolved == allowed or not _is_relative_to(resolved, allowed):
+
+    allowed = Path(os.path.realpath(runs_root().resolve(strict=False)))
+    resolved = Path(os.path.realpath(Path(path).expanduser()))
+    try:
+        common = Path(os.path.commonpath((str(allowed), str(resolved))))
+    except ValueError as exc:
+        raise ValueError(f"Generated path is outside runs/: {resolved}") from exc
+    if resolved == allowed or common != allowed:
         raise ValueError(f"Generated path is outside runs/: {resolved}")
     return resolved
 

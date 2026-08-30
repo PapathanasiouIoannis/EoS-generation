@@ -13,6 +13,12 @@ from eos_generation._internal.saved_tables import (
     classify_saved_tidal_rows,
     summarize_fixed_mass_response_population,
 )
+from eos_generation.stellar.tov import (
+    EOS_DISCONTINUITY_CONTRACT_VERSION,
+    LAMBDA_FRAMEWORK_CAPABILITY,
+    TIDAL_CORRECTION_VERSION,
+    TIDAL_JUMP_FORMULA,
+)
 from eos_generation.reporting._validation_cases import (
     _case_ids,
     _csv_json_records_equal,
@@ -157,6 +163,436 @@ def _two_floats_or_none(value: Any) -> tuple[float, float] | None:
     return lower, upper
 
 
+def _a0_alias_mode(configuration: Mapping[str, Any]) -> bool:
+    return configuration.get("matter_model", "bsk24") == "cfl" or isinstance(
+        configuration.get("zero_amplitude_control_owner"), bool
+    )
+
+
+def _cfl_direct_baseline_expected(configuration: Mapping[str, Any]) -> bool:
+    if not _a0_alias_mode(configuration):
+        return True
+    return configuration.get("zero_amplitude_control_owner") is True
+
+
+def _validate_cfl_a0_identity(
+    configuration: Mapping[str, Any],
+    identity: Any,
+    rows: list[dict[str, str]] | None,
+    layer: _Layer,
+) -> None:
+    """Validate CFL A=0 ownership and exact binary64 identity evidence."""
+
+    if configuration.get("matter_model", "bsk24") != "cfl":
+        return
+    prefix = "cfl_a0_identity"
+    if not isinstance(identity, Mapping):
+        layer.fail(f"{prefix}:report_missing_or_invalid")
+        return
+    owner = configuration.get("zero_amplitude_control_owner")
+    baseline_id = configuration.get("zero_amplitude_physical_case_id")
+    if not isinstance(owner, bool):
+        layer.fail(f"{prefix}:owner_flag_invalid")
+        return
+    if identity.get("schema_id") != "eos_generation_cfl_a0_identity_v1":
+        layer.fail(f"{prefix}:schema_invalid")
+    if identity.get("zero_amplitude_control_owner") is not owner:
+        layer.fail(f"{prefix}:owner_flag_mismatch")
+    physical_ids = identity.get("physical_zero_case_ids")
+
+    if not owner:
+        if physical_ids != []:
+            layer.fail(f"{prefix}:nonowner_physical_cases_not_empty")
+        if identity.get("stellar_identity_status") != (
+            "not_applicable_no_owned_a0_case"
+        ):
+            layer.fail(f"{prefix}:nonowner_status_invalid")
+        if rows is None:
+            layer.fail(f"{prefix}:table_missing")
+        elif rows:
+            layer.fail(f"{prefix}:nonowner_table_not_empty")
+        return
+
+    if not isinstance(baseline_id, str) or not baseline_id:
+        layer.fail(f"{prefix}:baseline_physical_id_invalid")
+    elif physical_ids != [baseline_id]:
+        layer.fail(f"{prefix}:owned_physical_case_mismatch")
+    if identity.get("floating_point_policy") != "numpy.array_equal_binary64":
+        layer.fail(f"{prefix}:floating_point_policy_invalid")
+    expected_stellar_status = (
+        "pass_shared_direct_solution_alias"
+        if _configuration_background_tov_requested(configuration)
+        else "not_requested"
+    )
+    if identity.get("stellar_identity_status") != expected_stellar_status:
+        layer.fail(f"{prefix}:stellar_identity_status_invalid")
+    if rows is None:
+        layer.fail(f"{prefix}:table_missing")
+        return
+    expected_quantities = {
+        "epsilon",
+        "pressure",
+        "cs2",
+        "baryon_density",
+        "baryon_chemical_potential",
+    }
+    observed_quantities = [row.get("quantity", "") for row in rows]
+    if len(rows) != len(expected_quantities) or set(observed_quantities) != (
+        expected_quantities
+    ):
+        layer.fail(f"{prefix}:table_quantity_coverage_invalid")
+    for index, row in enumerate(rows):
+        context = f"{prefix}:row_{index}"
+        residual = _float_or_none(row.get("maximum_absolute_residual"))
+        if (
+            row.get("scope") != "thermodynamic"
+            or row.get("stage") != "reference"
+            or row.get("array_equal") != "True"
+            or row.get("status") != "pass"
+            or residual != 0.0
+        ):
+            layer.fail(f"{context}:not_exact_binary64_identity")
+
+
+def _validate_bsk24_a0_identity(
+    configuration: Mapping[str, Any],
+    identity: Any,
+    rows: list[dict[str, str]] | None,
+    layer: _Layer,
+) -> None:
+    """Validate deduplicated BSk24 A=0 identity and owner semantics."""
+
+    if (
+        configuration.get("matter_model", "bsk24") != "bsk24"
+        or not isinstance(
+            configuration.get("zero_amplitude_control_owner"), bool
+        )
+    ):
+        return
+    prefix = "bsk24_a0_identity"
+    if not isinstance(identity, Mapping):
+        layer.fail(f"{prefix}:report_missing_or_invalid")
+        return
+    owner = configuration["zero_amplitude_control_owner"]
+    baseline_id = configuration.get("zero_amplitude_physical_case_id")
+    if identity.get("schema_id") != "eos_generation_bsk24_a0_identity_v2":
+        layer.fail(f"{prefix}:schema_invalid")
+    if identity.get("zero_amplitude_control_owner") is not owner:
+        layer.fail(f"{prefix}:owner_flag_mismatch")
+    if identity.get("zero_amplitude_physical_case_id") != baseline_id:
+        layer.fail(f"{prefix}:baseline_physical_id_mismatch")
+    if identity.get("duplicate_zero_amplitude_stellar_solver_calls") != 0:
+        layer.fail(f"{prefix}:duplicate_stellar_call_evidence_invalid")
+    local = identity.get("local_thermodynamic_identity")
+    if not isinstance(local, Mapping):
+        layer.fail(f"{prefix}:local_report_invalid")
+    if rows is None:
+        layer.fail(f"{prefix}:table_missing")
+        return
+    if not owner:
+        if rows:
+            layer.fail(f"{prefix}:nonowner_table_not_empty")
+        if not isinstance(local, Mapping) or local.get("status") != (
+            "not_applicable_no_owned_a0_case"
+        ):
+            layer.fail(f"{prefix}:nonowner_local_status_invalid")
+        expected_nonowner_stellar = (
+            "not_applicable_no_owned_a0_case"
+            if _configuration_background_tov_requested(configuration)
+            else "not_requested"
+        )
+        if identity.get("stellar_identity_status") != expected_nonowner_stellar:
+            layer.fail(f"{prefix}:nonowner_stellar_status_invalid")
+        return
+    if not isinstance(baseline_id, str) or not baseline_id.startswith(
+        "bsk24_baseline_"
+    ):
+        layer.fail(f"{prefix}:baseline_physical_id_invalid")
+    if not isinstance(local, Mapping) or local.get("status") != "pass":
+        layer.fail(f"{prefix}:local_status_invalid")
+    expected_stellar_status = (
+        "pass_shared_direct_solution_alias"
+        if _configuration_background_tov_requested(configuration)
+        else "not_requested"
+    )
+    if identity.get("stellar_identity_status") != expected_stellar_status:
+        layer.fail(f"{prefix}:stellar_identity_status_invalid")
+    if not rows:
+        layer.fail(f"{prefix}:owned_table_empty")
+    local_deltas = local.get("deltas") if isinstance(local, Mapping) else None
+    expected_rows: set[tuple[float, str]] = set()
+    if isinstance(local_deltas, Mapping):
+        for delta, quantities in local_deltas.items():
+            delta_value = _float_or_none(delta)
+            if delta_value is None or not isinstance(quantities, Mapping):
+                layer.fail(f"{prefix}:local_delta_evidence_invalid")
+                continue
+            expected_rows.update(
+                (delta_value, str(quantity)) for quantity in quantities
+            )
+    else:
+        layer.fail(f"{prefix}:local_delta_evidence_invalid")
+    observed_rows = {
+        (_float_or_none(row.get("delta_mev_fm3")), str(row.get("quantity", "")))
+        for row in rows
+    }
+    if None in {item[0] for item in observed_rows} or observed_rows != expected_rows:
+        layer.fail(f"{prefix}:table_quantity_coverage_invalid")
+    for index, row in enumerate(rows):
+        residual = _float_or_none(row.get("maximum_absolute_residual"))
+        if (
+            row.get("scope") != "thermodynamic"
+            or row.get("stage") != "refined"
+            or row.get("array_equal") != "True"
+            or row.get("status") != "pass"
+            or residual != 0.0
+        ):
+            layer.fail(f"{prefix}:row_{index}:not_exact_binary64_identity")
+
+
+def _cfl_surface_energy_density(
+    configuration: Mapping[str, Any],
+) -> float | None:
+    if configuration.get("matter_model", "bsk24") != "cfl":
+        return None
+    profile = configuration.get("baseline_profile")
+    surface = profile.get("surface") if isinstance(profile, Mapping) else None
+    if not isinstance(surface, Mapping):
+        return None
+    value = _float_or_none(surface.get("energy_density_mev_fm3"))
+    return value if value is not None and value > 0.0 else None
+
+
+def _accepted_physical_output_case_ids(
+    configuration: Mapping[str, Any],
+    accepted: set[str],
+    case_ledger: list[dict[str, str]] | None,
+    layer: _Layer,
+) -> set[str]:
+    """Resolve accepted lifecycle IDs to unique reconstructed identities."""
+
+    if not _a0_alias_mode(configuration):
+        return set(accepted)
+    if case_ledger is None:
+        layer.fail("cfl_case_aliases:case_ledger_unavailable")
+        return set()
+    physical_ids: list[str] = []
+    covered: set[str] = set()
+    for row in case_ledger:
+        case_id = str(row.get("case_id", ""))
+        if case_id not in accepted:
+            continue
+        covered.add(case_id)
+        physical_id = str(row.get("physical_case_id", ""))
+        if not physical_id:
+            layer.fail(f"cfl_case_aliases:physical_id_missing:{case_id}")
+            continue
+        if physical_id not in physical_ids:
+            physical_ids.append(physical_id)
+    if covered != accepted:
+        layer.fail(
+            "cfl_case_aliases:accepted_ledger_coverage_mismatch:"
+            f"{sorted(accepted - covered)}"
+        )
+    physical = set(physical_ids)
+    layer.checks["cfl_accepted_logical_case_count"] = len(accepted)
+    layer.checks["cfl_accepted_physical_case_count"] = len(physical)
+    return physical
+
+
+def _expected_saved_stellar_case_ids(
+    configuration: Mapping[str, Any],
+    accepted: set[str],
+    case_ledger: list[dict[str, str]] | None,
+    layer: _Layer,
+    *,
+    accepted_physical_case_ids: set[str] | None = None,
+) -> set[str]:
+    """Resolve logical CFL aliases to the unique saved stellar identities."""
+
+    if not _a0_alias_mode(configuration):
+        return {"direct", *accepted}
+    if not isinstance(
+        configuration.get("zero_amplitude_control_owner"), bool
+    ):
+        layer.fail("cfl_case_aliases:zero_amplitude_control_owner_invalid")
+    baseline_id = configuration.get("zero_amplitude_physical_case_id")
+    if not isinstance(baseline_id, str) or not baseline_id:
+        layer.fail("cfl_case_aliases:baseline_physical_id_invalid")
+        return set()
+    physical_ids = (
+        _accepted_physical_output_case_ids(
+            configuration,
+            accepted,
+            case_ledger,
+            layer,
+        )
+        if accepted_physical_case_ids is None
+        else accepted_physical_case_ids
+    )
+    owner = configuration.get("zero_amplitude_control_owner") is True
+    if not owner and baseline_id in physical_ids:
+        layer.fail("cfl_case_aliases:nonowner_claims_physical_a0")
+    expected = {
+        physical_id
+        for physical_id in physical_ids
+        if physical_id != baseline_id
+    }
+    if owner:
+        expected.add("direct")
+    layer.checks["cfl_saved_stellar_case_ids"] = sorted(expected)
+    return expected
+
+
+def _strict_json_object(value: Any) -> tuple[dict[str, Any] | None, str | None]:
+    if not isinstance(value, str) or not value:
+        return None, "missing_json"
+
+    def reject_constant(token: str) -> None:
+        raise ValueError(f"non-standard JSON constant {token!r}")
+
+    try:
+        payload = json.loads(value, parse_constant=reject_constant)
+    except (TypeError, ValueError):
+        return None, "invalid_json"
+    if not isinstance(payload, dict):
+        return None, "json_not_object"
+    try:
+        canonical = json.dumps(
+            payload,
+            allow_nan=False,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+    except (TypeError, ValueError):
+        return None, "json_not_strict"
+    if canonical != value:
+        return None, "json_not_canonical"
+    return payload, None
+
+
+def _validate_cfl_tidal_jump_row(
+    row: Mapping[str, Any],
+    *,
+    schema: str,
+    surface_energy_density: float,
+    layer: _Layer,
+    context: str,
+) -> None:
+    """Require one saved, negative, exactly-once bare-surface correction."""
+
+    prefix = f"cfl_tidal_surface_jump:{schema}:{context}"
+
+    def fail(reason: str) -> None:
+        layer.fail(f"{prefix}:{reason}")
+
+    for field in (
+        "tidal_expected_jump_count",
+        "tidal_applied_jump_count",
+        "tidal_surface_jump_count",
+    ):
+        if _integer_or_none(row.get(field)) != 1:
+            fail(f"{field}_not_one")
+    delta_y = _float_or_none(row.get("tidal_surface_delta_y"))
+    y_before = _float_or_none(row.get("tidal_surface_y_before"))
+    y_after = _float_or_none(row.get("tidal_surface_y_after"))
+    surface_pressure = _float_or_none(
+        row.get("tidal_surface_event_pressure_mev_fm3")
+    )
+    if delta_y is None or delta_y >= 0.0:
+        fail("delta_y_not_finite_negative")
+    if y_before is None or y_after is None:
+        fail("surface_y_values_not_finite")
+    elif delta_y is not None and y_after != y_before + delta_y:
+        fail("surface_y_algebra_mismatch")
+    if surface_pressure != 0.0:
+        fail("surface_event_pressure_not_exact_zero")
+
+    payload, json_error = _strict_json_object(
+        row.get("tidal_jump_evidence_json")
+    )
+    if payload is None:
+        fail(str(json_error))
+        return
+    if payload.get("schema_version") != "tov_lambda_diagnostic_v1":
+        fail("diagnostic_schema_mismatch")
+    if payload.get("scientific_status") != LAMBDA_FRAMEWORK_CAPABILITY:
+        fail("diagnostic_status_not_validated")
+    if payload.get("calculation_lambda_validated") is not True:
+        fail("diagnostic_validation_claim_missing")
+    if payload.get("expected_jump_count") != 1:
+        fail("diagnostic_expected_jump_count_not_one")
+    if payload.get("applied_jump_count") != 1:
+        fail("diagnostic_applied_jump_count_not_one")
+    if payload.get("skipped_discontinuity_ids") != []:
+        fail("diagnostic_skipped_discontinuities_present")
+    if payload.get("surface_event_pressure_MeV_fm3") != 0.0:
+        fail("diagnostic_surface_pressure_not_exact_zero")
+    if payload.get("correction_formula") != TIDAL_JUMP_FORMULA:
+        fail("diagnostic_correction_formula_mismatch")
+    if payload.get("correction_version") != TIDAL_CORRECTION_VERSION:
+        fail("diagnostic_correction_version_mismatch")
+    if (
+        payload.get("discontinuity_contract_version")
+        != EOS_DISCONTINUITY_CONTRACT_VERSION
+    ):
+        fail("diagnostic_discontinuity_contract_mismatch")
+    row_identity_fields = (
+        (
+            "central_pressure_MeV_fm3",
+            "central_pressure_mev_fm3",
+        ),
+        ("Mass", "Mass" if schema == "sequence" else "mass_msun"),
+        ("Radius", "Radius" if schema == "sequence" else "radius_km"),
+    )
+    for payload_field, row_field in row_identity_fields:
+        row_value = _float_or_none(row.get(row_field))
+        if row_value is None or payload.get(payload_field) != row_value:
+            fail(f"diagnostic_row_identity_mismatch:{payload_field}")
+
+    jumps = payload.get("applied_jumps")
+    if not isinstance(jumps, list) or len(jumps) != 1:
+        fail("diagnostic_jump_list_not_exactly_one")
+        return
+    jump = jumps[0]
+    if not isinstance(jump, Mapping) or jump.get("type") != "surface":
+        fail("diagnostic_only_jump_not_surface")
+        return
+    if jump.get("pressure_MeV_fm3") != 0.0:
+        fail("jump_pressure_not_exact_zero")
+    if jump.get("inner_energy_density_MeV_fm3") != surface_energy_density:
+        fail("jump_inner_energy_not_frozen_surface")
+    if jump.get("outer_energy_density_MeV_fm3") != 0.0:
+        fail("jump_outer_energy_not_vacuum")
+    if (
+        jump.get("signed_outward_delta_energy_density_MeV_fm3")
+        != surface_energy_density
+    ):
+        fail("jump_energy_difference_mismatch")
+    denominator = _float_or_none(jump.get("correction_denominator_Msun"))
+    if denominator is None or denominator <= 0.0:
+        fail("jump_denominator_not_positive")
+    if jump.get("delta_y") != delta_y:
+        fail("jump_delta_y_row_mismatch")
+    if jump.get("y_before") != y_before or jump.get("y_after") != y_after:
+        fail("jump_y_row_mismatch")
+    if payload.get("y_surface_interior") != y_before:
+        fail("diagnostic_interior_y_mismatch")
+    if payload.get("y_surface_vacuum") != y_after:
+        fail("diagnostic_vacuum_y_mismatch")
+    if (
+        payload.get("y_supplied_to_k2") != y_after
+        or payload.get("y_R") != y_after
+    ):
+        fail("diagnostic_k2_y_mismatch")
+    lambda_column = "Lambda" if schema == "sequence" else "lambda_dimensionless"
+    if payload.get("k2") != _float_or_none(row.get("k2")):
+        fail("diagnostic_k2_row_mismatch")
+    if payload.get("Lambda") != _float_or_none(row.get(lambda_column)):
+        fail("diagnostic_lambda_row_mismatch")
+
+
 def _extended_output_claimed(configuration: Any, metadata: Any) -> bool:
     if isinstance(configuration, dict) and configuration.get(
         "extended_stellar_diagnostics_enabled"
@@ -183,6 +619,7 @@ def _validate_fixed_mass_completeness(
     availability: _Layer,
     require_tides: bool = True,
     retained_pressure_endpoints: Mapping[str, float] | None = None,
+    expected_case_ids: set[str] | None = None,
 ) -> None:
     rows = _read_csv(packet, "fixed_mass_observables.csv", layer)
     if rows is None:
@@ -203,7 +640,11 @@ def _validate_fixed_mass_completeness(
         for item in configuration.get("fixed_masses_msun", [])
         if (value := _float_or_none(item)) is not None
     ]
-    case_ids = {"direct", *accepted}
+    case_ids = (
+        {"direct", *accepted}
+        if expected_case_ids is None
+        else expected_case_ids
+    )
     if retained_pressure_endpoints is not None:
         missing_endpoints = case_ids - set(retained_pressure_endpoints)
         if missing_endpoints:
@@ -226,6 +667,10 @@ def _validate_fixed_mass_completeness(
     hard_tidal_invalid = 0
     missing_reason = 0
     has_tidal_failure_reason = not rows or "tidal_failure_reason" in rows[0]
+    is_cfl = configuration.get("matter_model", "bsk24") == "cfl"
+    cfl_surface_energy = _cfl_surface_energy_density(configuration)
+    if is_cfl and cfl_surface_energy is None:
+        layer.fail("cfl_tidal_surface_jump:frozen_surface_energy_unavailable")
     if not has_tidal_failure_reason:
         layer.fail("fixed_mass:tidal_failure_reason_column_missing")
     for position, row in enumerate(rows):
@@ -239,6 +684,21 @@ def _validate_fixed_mass_completeness(
         actual.add(key)
         classification = tidal_classification.iloc[position]
         background_ok = bool(classification["background_success"])
+        if (
+            is_cfl
+            and row.get("tidal_status") == LAMBDA_FRAMEWORK_CAPABILITY
+            and cfl_surface_energy is not None
+        ):
+            _validate_cfl_tidal_jump_row(
+                row,
+                schema="fixed_mass",
+                surface_energy_density=cfl_surface_energy,
+                layer=layer,
+                context=(
+                    f"{row.get('case_id', '')}:{row.get('stage', '')}:"
+                    f"{row.get('target_mass_msun', '')}"
+                ),
+            )
         if not background_ok:
             background_unavailable += 1
             status = str(row.get("status", ""))
@@ -448,6 +908,7 @@ def _validate_sequence_completeness(
     require_tides: bool = True,
     require_configured_count: bool = True,
     retained_pressure_endpoints: Mapping[str, float] | None = None,
+    expected_case_ids: set[str] | None = None,
 ) -> None:
     rows = _read_csv(packet, "stellar_sequences.csv", layer)
     if rows is None:
@@ -458,8 +919,12 @@ def _validate_sequence_completeness(
     tidal_classification = classify_saved_tidal_rows(
         frame, schema="sequence"
     )
+    case_ids = (
+        {"direct", *accepted}
+        if expected_case_ids is None
+        else expected_case_ids
+    )
     expected_groups: dict[tuple[str, str], int] = {}
-    case_ids = {"direct", *accepted}
     if retained_pressure_endpoints is not None:
         missing_endpoints = case_ids - set(retained_pressure_endpoints)
         if missing_endpoints:
@@ -481,12 +946,31 @@ def _validate_sequence_completeness(
     hard_tidal_invalid = 0
     endpoint_below_floor_groups: set[tuple[str, str]] = set()
     invalid_endpoint_below_floor_groups: set[tuple[str, str]] = set()
+    is_cfl = configuration.get("matter_model", "bsk24") == "cfl"
+    cfl_surface_energy = _cfl_surface_energy_density(configuration)
+    if is_cfl and cfl_surface_energy is None:
+        layer.fail("cfl_tidal_surface_jump:frozen_surface_energy_unavailable")
     for position, row in enumerate(rows):
         key = (row.get("case_id", ""), row.get("stage", ""))
         actual_groups[key] = actual_groups.get(key, 0) + 1
         classification = tidal_classification.iloc[position]
         background_ok = bool(classification["background_success"])
         tidal_ok = bool(classification["tidal_valid"])
+        if (
+            is_cfl
+            and row.get("tidal_status") == LAMBDA_FRAMEWORK_CAPABILITY
+            and cfl_surface_energy is not None
+        ):
+            _validate_cfl_tidal_jump_row(
+                row,
+                schema="sequence",
+                surface_energy_density=cfl_surface_energy,
+                layer=layer,
+                context=(
+                    f"{row.get('case_id', '')}:{row.get('stage', '')}:"
+                    f"{row.get('attempted_index', '')}"
+                ),
+            )
         if not background_ok:
             background_failures += 1
             status = str(row.get("calculation_status") or "").strip()
@@ -714,7 +1198,19 @@ def _configuration_background_tov_requested(
 def _configuration_fixed_mass_requested(
     configuration: Mapping[str, Any],
 ) -> bool:
-    return configuration.get("stellar_enabled") is True
+    return (
+        configuration.get("stellar_enabled") is True
+        and configuration.get("curve_only_output") is not True
+    )
+
+
+def _configuration_maximum_mass_requested(
+    configuration: Mapping[str, Any],
+) -> bool:
+    return (
+        configuration.get("stellar_enabled") is True
+        and configuration.get("curve_only_output") is not True
+    )
 
 
 def _configuration_tidal_requested(
@@ -737,11 +1233,17 @@ def _saved_lifecycle_configuration(
         if isinstance(item, Mapping) and item.get("name")
     )
     return SimpleNamespace(
+        zero_amplitude_physical_case_id=configuration.get(
+            "zero_amplitude_physical_case_id"
+        ),
         background_tov_requested=(
             _configuration_background_tov_requested(configuration)
         ),
         fixed_mass_background_requested=(
             _configuration_fixed_mass_requested(configuration)
+        ),
+        maximum_mass_requested=(
+            _configuration_maximum_mass_requested(configuration)
         ),
         fixed_masses_msun=tuple(
             value
@@ -757,6 +1259,8 @@ def _validate_final_lifecycle(
     configuration: Mapping[str, Any],
     accepted: set[str],
     layer: _Layer,
+    *,
+    expected_stellar_case_ids: set[str] | None = None,
 ) -> None:
     rows = _read_csv(packet, "case_ledger.csv", layer)
     if rows is None:
@@ -788,13 +1292,16 @@ def _validate_final_lifecycle(
             if (packet / "stellar_sequences.csv").is_file()
             else None
         )
-        accepted_physical_ids = tuple(
-            dict.fromkeys(
-                str(row.get("physical_case_id") or row.get("case_id", ""))
-                for row in rows
-                if row.get("case_id", "") in accepted
+        if expected_stellar_case_ids is None:
+            accepted_physical_ids = tuple(
+                dict.fromkeys(
+                    str(row.get("physical_case_id") or row.get("case_id", ""))
+                    for row in rows
+                    if row.get("case_id", "") in accepted
+                )
             )
-        )
+        else:
+            accepted_physical_ids = tuple(sorted(expected_stellar_case_ids))
         completed_stellar = _completed_stellar_case_ids(
             sequences,
             fixed,
@@ -807,12 +1314,19 @@ def _validate_final_lifecycle(
         physical_case_id = str(
             row.get("physical_case_id") or case_id
         )
+        saved_stellar_case_id = physical_case_id
+        if (
+            _a0_alias_mode(configuration)
+            and physical_case_id
+            == configuration.get("zero_amplitude_physical_case_id")
+        ):
+            saved_stellar_case_id = "direct"
         expected_stellar = (
             "completed"
             if (
                 accepted_row
                 and stellar_enabled
-                and physical_case_id in completed_stellar
+                and saved_stellar_case_id in completed_stellar
             )
             else "incomplete_or_failed"
             if accepted_row and stellar_enabled
@@ -839,13 +1353,13 @@ def _validate_final_lifecycle(
         try:
             expected_fixed = _requested_fixed_masses_status(
                 saved_config,
-                case_id,
+                saved_stellar_case_id,
                 accepted=accepted_row,
                 fixed_mass_rows=fixed,
             )
             expected_maximum = _maximum_mass_availability_status(
                 saved_config,
-                case_id,
+                saved_stellar_case_id,
                 accepted=accepted_row,
                 maximum_mass_rows=maximum,
             )
@@ -871,7 +1385,7 @@ def _validate_final_lifecycle(
             "evidence_only_raw_gate_not_accepted"
             if not accepted_row
             else "eligible_thermodynamic_case"
-            if not stellar_enabled
+            if not stellar_enabled or expected_fixed == "not_requested"
             else "eligible_all_requested_fixed_masses_succeeded"
             if expected_fixed == "all_requested_fixed_masses_succeeded"
             else "ineligible_requested_fixed_masses_incomplete"
@@ -1203,6 +1717,7 @@ def _validate_maximum_mass_artifacts(
     layer: _Layer,
     availability: _Layer,
     retained_pressure_endpoints: Mapping[str, float] | None = None,
+    expected_case_ids: set[str] | None = None,
 ) -> None:
     """Validate one complete set of saved maximum-mass evidence."""
 
@@ -1221,7 +1736,11 @@ def _validate_maximum_mass_artifacts(
     )
     expected_pairs = {
         (case_id, stage)
-        for case_id in {"direct", *accepted}
+        for case_id in (
+            {"direct", *accepted}
+            if expected_case_ids is None
+            else expected_case_ids
+        )
         for stage in stage_names
     }
     if retained_pressure_endpoints is not None:
@@ -1411,7 +1930,12 @@ def _validate_maximum_mass_artifacts(
         sorted(unresolved_statuses.items())
     )
     if isinstance(reports, dict):
-        if reports.get("schema_id") != "bsk24_maximum_mass_reports_v2":
+        expected_schema = (
+            "eos_generation_cfl_maximum_mass_reports_v1"
+            if configuration.get("matter_model", "bsk24") == "cfl"
+            else "bsk24_maximum_mass_reports_v2"
+        )
+        if reports.get("schema_id") != expected_schema:
             layer.fail("maximum_mass:unsupported_report_schema")
         report_cases = reports.get("cases")
         expected_report_ids = {
@@ -1896,10 +2420,63 @@ def _strictly_increasing(values: list[float]) -> bool:
     )
 
 
+def _validate_cfl_retained_pressure_endpoints(
+    packet: Path,
+    *,
+    expected_stellar_case_ids: set[str],
+    layer: _Layer,
+) -> dict[str, tuple[float, float]]:
+    """Validate CFL saved endpoints without importing BSk24 anchor semantics."""
+
+    rows = _read_csv(packet, "thermodynamic_profiles.csv", layer)
+    if rows is None:
+        layer.fail("missing_thermodynamic_output:thermodynamic_profiles.csv")
+        return {}
+    _order, blocks = _ordered_case_blocks(
+        rows,
+        relative="thermodynamic_profiles.csv",
+        layer=layer,
+    )
+    endpoints: dict[str, tuple[float, float]] = {}
+    for case_id in sorted(expected_stellar_case_ids):
+        case_rows = blocks.get(case_id)
+        if not case_rows:
+            layer.fail(f"cfl_thermodynamic_endpoint:profile_missing:{case_id}")
+            continue
+        epsilon = [_float_or_none(row.get("epsilon_mev_fm3")) for row in case_rows]
+        pressure = [_float_or_none(row.get("pressure_mev_fm3")) for row in case_rows]
+        if any(value is None for value in (*epsilon, *pressure)):
+            layer.fail(f"cfl_thermodynamic_endpoint:nonfinite:{case_id}")
+            continue
+        epsilon_values = [float(value) for value in epsilon if value is not None]
+        pressure_values = [float(value) for value in pressure if value is not None]
+        if (
+            not epsilon_values
+            or not pressure_values
+            or epsilon_values[0] <= 0.0
+            or pressure_values[0] != 0.0
+            or not _strictly_increasing(epsilon_values)
+            or not _strictly_increasing(pressure_values)
+            or pressure_values[-1] <= 0.0
+        ):
+            layer.fail(f"cfl_thermodynamic_endpoint:invalid_profile:{case_id}")
+            continue
+        endpoints[case_id] = (epsilon_values[-1], pressure_values[-1])
+    unexpected = set(endpoints) - expected_stellar_case_ids
+    if unexpected:
+        layer.fail(
+            "cfl_thermodynamic_endpoint:unexpected_stellar_cases:"
+            f"{sorted(unexpected)}"
+        )
+    return endpoints
+
+
 def _validate_thermodynamic_outputs(
     packet: Path,
     *,
     accepted: set[str],
+    direct_expected: bool = True,
+    curve_only: bool = False,
     layer: _Layer,
 ) -> dict[str, tuple[float, float]]:
     """Validate saved reconstructed state without judging finite diagnostics.
@@ -1910,7 +2487,7 @@ def _validate_thermodynamic_outputs(
     sign, or trend threshold here.
     """
 
-    expected_raw_domain: tuple[float, float] | None = None
+    expected_raw_lower: float | None = None
     expected_direct_pressure: float | None = None
     raw_gate = _load_json(packet, "raw_gate_report.json", layer)
     raw_cases = raw_gate.get("cases") if isinstance(raw_gate, dict) else None
@@ -1958,19 +2535,20 @@ def _validate_thermodynamic_outputs(
                     zero_amplitude_endpoints.add(
                         (epsilon_min, epsilon_max, pressure_max)
                     )
-        if len(raw_domains) == 1:
-            expected_raw_domain = next(iter(raw_domains))
+        raw_lowers = {domain[0] for domain in raw_domains}
+        if len(raw_lowers) == 1:
+            expected_raw_lower = next(iter(raw_lowers))
         else:
-            layer.fail("thermodynamic_output:raw_domain_not_authoritative")
+            layer.fail("thermodynamic_output:raw_domain_lower_not_authoritative")
         if len(zero_amplitude_endpoints) == 1:
             zero_endpoint = next(iter(zero_amplitude_endpoints))
-            if expected_raw_domain == zero_endpoint[:2]:
+            if expected_raw_lower == zero_endpoint[0]:
                 expected_direct_pressure = zero_endpoint[2]
             else:
                 layer.fail(
-                    "thermodynamic_output:a0_direct_endpoint_domain_mismatch"
+                    "thermodynamic_output:a0_direct_lower_endpoint_mismatch"
                 )
-        else:
+        elif direct_expected:
             layer.fail("thermodynamic_output:a0_direct_endpoint_not_authoritative")
     else:
         layer.fail("thermodynamic_output:raw_gate_cases_unavailable")
@@ -1982,7 +2560,12 @@ def _validate_thermodynamic_outputs(
             matches = [
                 row
                 for row in ledger_rows
-                if str(row.get("case_id") or "") == case_id
+                if str(
+                    row.get("physical_case_id")
+                    or row.get("case_id")
+                    or ""
+                )
+                == case_id
             ]
             epsilon_endpoint = (
                 _float_or_none(matches[0].get("retained_epsilon_max_mev_fm3"))
@@ -2022,7 +2605,9 @@ def _validate_thermodynamic_outputs(
             relative=profile_relative,
             layer=layer,
         )
-        expected = {"direct", *accepted}
+        expected = set(accepted)
+        if direct_expected:
+            expected.add("direct")
         present = set(profile_blocks)
         if present != expected:
             layer.fail(
@@ -2030,7 +2615,7 @@ def _validate_thermodynamic_outputs(
                 f"missing={sorted(expected - present)}:"
                 f"unexpected={sorted(present - expected)}"
             )
-        if profile_order and profile_order[0] != "direct":
+        if direct_expected and profile_order and profile_order[0] != "direct":
             layer.fail("thermodynamic_output:direct_baseline_not_first")
 
         for case_id, case_rows in profile_blocks.items():
@@ -2038,13 +2623,18 @@ def _validate_thermodynamic_outputs(
             pressure: list[float] = []
             density: list[float] = []
             for position, row in enumerate(case_rows):
+                required_profile_columns = (
+                    ("epsilon_mev_fm3", "pressure_mev_fm3", "cs2")
+                    if curve_only
+                    else _THERMODYNAMIC_PROFILE_REQUIRED_NUMERIC_COLUMNS
+                )
                 missing_columns = sorted(
-                    set(_THERMODYNAMIC_PROFILE_REQUIRED_NUMERIC_COLUMNS)
+                    set(required_profile_columns)
                     - set(row)
                 )
                 invalid_columns = [
                     column
-                    for column in _THERMODYNAMIC_PROFILE_REQUIRED_NUMERIC_COLUMNS
+                    for column in required_profile_columns
                     if column in row and _float_or_none(row.get(column)) is None
                 ]
                 if case_id != "direct":
@@ -2065,14 +2655,22 @@ def _validate_thermodynamic_outputs(
                 epsilon_value = float(row["epsilon_mev_fm3"])
                 pressure_value = float(row["pressure_mev_fm3"])
                 cs2_value = float(row["cs2"])
-                density_value = float(row["baryon_density_fm3"])
-                enthalpy_value = float(row["effective_baryon_enthalpy_mev"])
+                density_value = (
+                    None
+                    if curve_only
+                    else float(row["baryon_density_fm3"])
+                )
+                enthalpy_value = (
+                    None
+                    if curve_only
+                    else float(row["effective_baryon_enthalpy_mev"])
+                )
                 if (
                     epsilon_value <= 0.0
                     or pressure_value <= 0.0
                     or not 0.0 < cs2_value <= 1.0
-                    or density_value <= 0.0
-                    or enthalpy_value <= 0.0
+                    or (density_value is not None and density_value <= 0.0)
+                    or (enthalpy_value is not None and enthalpy_value <= 0.0)
                 ):
                     layer.fail(
                         "thermodynamic_output:invalid_profile_core_state:"
@@ -2080,28 +2678,32 @@ def _validate_thermodynamic_outputs(
                     )
                 epsilon.append(epsilon_value)
                 pressure.append(pressure_value)
-                density.append(density_value)
+                if density_value is not None:
+                    density.append(density_value)
 
             if len(epsilon) != len(case_rows):
                 continue
-            for coordinate, values in (
+            coordinates = [
                 ("epsilon_mev_fm3", epsilon),
                 ("pressure_mev_fm3", pressure),
-                ("baryon_density_fm3", density),
-            ):
+            ]
+            if not curve_only:
+                coordinates.append(("baryon_density_fm3", density))
+            for coordinate, values in coordinates:
                 if not _strictly_increasing(values):
                     layer.fail(
                         "thermodynamic_output:nonmonotone_profile_coordinate:"
                         f"{case_id}:{coordinate}"
                     )
-            if expected_raw_domain is not None and epsilon[0] != expected_raw_domain[0]:
+            if expected_raw_lower is not None and epsilon[0] != expected_raw_lower:
                 layer.fail(
                     "thermodynamic_output:profile_lower_endpoint_mismatch:"
                     f"{case_id}"
                 )
-            if case_id == "direct" and expected_raw_domain is not None:
+            if case_id == "direct" and zero_amplitude_endpoints:
+                zero_endpoint = next(iter(zero_amplitude_endpoints))
                 if (
-                    epsilon[-1] != expected_raw_domain[1]
+                    epsilon[-1] != zero_endpoint[1]
                     or pressure[-1] != expected_direct_pressure
                 ):
                     layer.fail(
@@ -2123,11 +2725,15 @@ def _validate_thermodynamic_outputs(
                 )
 
     residual_relative = "thermodynamic_residuals.csv"
-    residual_rows = _read_csv(packet, residual_relative, layer)
-    if residual_rows is None:
+    residual_rows = (
+        None
+        if curve_only
+        else _read_csv(packet, residual_relative, layer)
+    )
+    if not curve_only and residual_rows is None:
         if accepted:
             layer.fail(f"missing_thermodynamic_output:{residual_relative}")
-    else:
+    elif residual_rows is not None:
         _, residual_blocks = _ordered_case_blocks(
             residual_rows,
             relative=residual_relative,
@@ -2191,14 +2797,35 @@ def _validate_scientific_completeness(
     configuration: Any,
     metadata: Any,
     accepted: set[str],
+    case_ledger: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     layer = _Layer()
     availability = _Layer()
     if not isinstance(configuration, dict):
         layer.fail("configuration_unavailable")
     else:
+        accepted_output_case_ids = _accepted_physical_output_case_ids(
+            configuration,
+            accepted,
+            case_ledger,
+            layer,
+        )
+        expected_stellar_case_ids = _expected_saved_stellar_case_ids(
+            configuration,
+            accepted,
+            case_ledger,
+            layer,
+            accepted_physical_case_ids=accepted_output_case_ids,
+        )
         stellar_enabled = configuration.get("stellar_enabled") is True
+        curve_only = configuration.get("curve_only_output") is True
         background_requested = _configuration_background_tov_requested(
+            configuration
+        )
+        fixed_mass_requested = _configuration_fixed_mass_requested(
+            configuration
+        )
+        maximum_mass_requested = _configuration_maximum_mass_requested(
             configuration
         )
         tidal_requested = _configuration_tidal_requested(configuration)
@@ -2206,64 +2833,108 @@ def _validate_scientific_completeness(
         layer.checks["stellar_enabled"] = stellar_enabled
         layer.checks["background_tov_requested"] = background_requested
         layer.checks["extended_outputs_claimed"] = extended_claimed
-        retained_endpoints = _validate_thermodynamic_outputs(
-            packet,
-            accepted=accepted,
-            layer=layer,
+        retained_endpoints = (
+            _validate_cfl_retained_pressure_endpoints(
+                packet,
+                expected_stellar_case_ids=expected_stellar_case_ids,
+                layer=layer,
+            )
+            if configuration.get("matter_model", "bsk24") == "cfl"
+            else _validate_thermodynamic_outputs(
+                packet,
+                accepted=accepted_output_case_ids,
+                direct_expected=_cfl_direct_baseline_expected(
+                    configuration
+                ),
+                curve_only=curve_only,
+                layer=layer,
+            )
         )
         retained_pressure_endpoints = {
             case_id: endpoint[1]
             for case_id, endpoint in retained_endpoints.items()
         }
-        if background_requested:
-            required_stellar_files = (
-                *STELLAR_REQUIRED_FILES,
-                *CURRENT_STELLAR_STATUS_FILES,
+        if curve_only:
+            for relative in (
+                "thermodynamic_residuals.csv",
+                "window_characterization.csv",
+                "fixed_mass_observables.csv",
                 "maximum_mass_screening.csv",
                 "maximum_mass_reports.json",
+                "stellar_status_summary.csv",
+                "stellar_status_summary.json",
+                "radial_profiles.csv",
+            ):
+                if (packet / relative).exists():
+                    layer.fail(f"curve_only_output:unexpected_output:{relative}")
+        if background_requested:
+            required_stellar_files = (
+                "stellar_sequences.csv",
+                "stellar_convergence.json",
+                *(
+                    (
+                        "fixed_mass_observables.csv",
+                        *CURRENT_STELLAR_STATUS_FILES,
+                    )
+                    if fixed_mass_requested
+                    else ()
+                ),
+                *(
+                    (
+                        "maximum_mass_screening.csv",
+                        "maximum_mass_reports.json",
+                    )
+                    if maximum_mass_requested
+                    else ()
+                ),
             )
             for relative in required_stellar_files:
                 if not (packet / relative).is_file():
                     layer.fail(f"missing_stellar_output:{relative}")
 
-            _validate_maximum_mass_artifacts(
-                packet,
-                configuration=configuration,
-                accepted=accepted,
-                layer=layer,
-                availability=availability,
-                retained_pressure_endpoints=retained_pressure_endpoints,
-            )
-            summary_csv = _read_csv(
-                packet, "stellar_status_summary.csv", layer
-            )
-            summary_json = _load_json(
-                packet, "stellar_status_summary.json", layer
-            )
-            if isinstance(summary_json, dict) and summary_json.get(
-                "schema_id"
-            ) != STELLAR_STATUS_SCHEMA:
-                layer.fail("stellar_status_summary:unsupported_schema")
-            if summary_csv is not None and isinstance(summary_json, dict):
-                summary_rows = _inventory_records(summary_json.get("rows"))
-                if summary_rows is None:
-                    layer.fail("stellar_status_summary:json_rows_invalid")
-                elif not _csv_json_records_equal(summary_csv, summary_rows):
-                    layer.fail("stellar_status_summary:csv_json_rows_mismatch")
+            if maximum_mass_requested:
+                _validate_maximum_mass_artifacts(
+                    packet,
+                    configuration=configuration,
+                    accepted=accepted,
+                    layer=layer,
+                    availability=availability,
+                    retained_pressure_endpoints=retained_pressure_endpoints,
+                    expected_case_ids=expected_stellar_case_ids,
+                )
+            if fixed_mass_requested:
+                summary_csv = _read_csv(
+                    packet, "stellar_status_summary.csv", layer
+                )
+                summary_json = _load_json(
+                    packet, "stellar_status_summary.json", layer
+                )
+                if isinstance(summary_json, dict) and summary_json.get(
+                    "schema_id"
+                ) != STELLAR_STATUS_SCHEMA:
+                    layer.fail("stellar_status_summary:unsupported_schema")
+                if summary_csv is not None and isinstance(summary_json, dict):
+                    summary_rows = _inventory_records(summary_json.get("rows"))
+                    if summary_rows is None:
+                        layer.fail("stellar_status_summary:json_rows_invalid")
+                    elif not _csv_json_records_equal(summary_csv, summary_rows):
+                        layer.fail("stellar_status_summary:csv_json_rows_mismatch")
 
             if all(
                 (packet / relative).is_file()
                 for relative in required_stellar_files
             ):
-                _validate_fixed_mass_completeness(
-                    packet,
-                    configuration,
-                    accepted,
-                    layer,
-                    availability=availability,
-                    require_tides=tidal_requested,
-                    retained_pressure_endpoints=retained_pressure_endpoints,
-                )
+                if fixed_mass_requested:
+                    _validate_fixed_mass_completeness(
+                        packet,
+                        configuration,
+                        accepted,
+                        layer,
+                        availability=availability,
+                        require_tides=tidal_requested,
+                        retained_pressure_endpoints=retained_pressure_endpoints,
+                        expected_case_ids=expected_stellar_case_ids,
+                    )
                 _validate_sequence_completeness(
                     packet,
                     configuration,
@@ -2273,38 +2944,106 @@ def _validate_scientific_completeness(
                     require_tides=tidal_requested,
                     require_configured_count=True,
                     retained_pressure_endpoints=retained_pressure_endpoints,
+                    expected_case_ids=expected_stellar_case_ids,
                 )
-                _validate_stellar_status_reporting(
-                    packet, configuration, metadata, layer
-                )
-                _validate_response_population_reporting(
-                    packet, configuration, metadata, layer
-                )
+                if fixed_mass_requested:
+                    _validate_stellar_status_reporting(
+                        packet, configuration, metadata, layer
+                    )
+                    _validate_response_population_reporting(
+                        packet, configuration, metadata, layer
+                    )
             _validate_final_lifecycle(
-                packet, configuration, accepted, layer
+                packet,
+                configuration,
+                accepted,
+                layer,
+                expected_stellar_case_ids=expected_stellar_case_ids,
             )
         else:
             _validate_final_lifecycle(
-                packet, configuration, accepted, layer
+                packet,
+                configuration,
+                accepted,
+                layer,
+                expected_stellar_case_ids=expected_stellar_case_ids,
             )
         if extended_claimed:
             for relative in EXTENDED_CORE_REQUIRED_FILES:
                 if not (packet / relative).is_file():
                     layer.fail(f"missing_claimed_extended_output:{relative}")
 
-        characterization = _read_csv(
-            packet, "window_characterization.csv", layer
+        thermodynamic_outputs = (
+            ("thermodynamic_profiles.csv", True),
+            ("thermodynamic_residuals.csv", False),
+            ("window_characterization.csv", False),
         )
-        if characterization is not None:
-            missing_accepted = accepted - _case_ids(characterization)
+        for relative, direct_expected in thermodynamic_outputs:
+            if curve_only and relative != "thermodynamic_profiles.csv":
+                if (packet / relative).exists():
+                    layer.fail(
+                        f"curve_only_output:unexpected_thermodynamic_output:{relative}"
+                    )
+                continue
+            if (
+                relative == "thermodynamic_residuals.csv"
+                and accepted
+                and not (packet / relative).is_file()
+            ):
+                layer.fail(f"missing_thermodynamic_output:{relative}")
+                continue
+            rows = _read_csv(packet, relative, layer)
+            if rows is None:
+                continue
+            present = _case_ids(rows)
+            missing_accepted = accepted_output_case_ids - present
             if missing_accepted:
                 layer.fail(
                     "thermodynamic_output:missing_accepted_cases:"
-                    "window_characterization.csv:"
+                    f"{relative}:"
                     f"{sorted(missing_accepted)}"
+                )
+            if _a0_alias_mode(configuration):
+                duplicated_logical_aliases = (
+                    accepted - accepted_output_case_ids
+                ) & present
+                if duplicated_logical_aliases:
+                    layer.fail(
+                        "thermodynamic_output:duplicated_logical_aliases:"
+                        f"{relative}:{sorted(duplicated_logical_aliases)}"
+                    )
+            require_direct = (
+                direct_expected
+                and _cfl_direct_baseline_expected(configuration)
+            )
+            if require_direct and "direct" not in present:
+                layer.fail(
+                    f"thermodynamic_output:direct_baseline_missing:{relative}"
+                )
+            if (
+                _a0_alias_mode(configuration)
+                and not _cfl_direct_baseline_expected(configuration)
+                and "direct" in present
+            ):
+                layer.fail(
+                    f"thermodynamic_output:unexpected_nonowner_direct:{relative}"
                 )
 
     identity = _load_json(packet, "identity_report.json", layer)
+    identity_rows = _read_csv(packet, "a0_identity_table.csv", layer)
+    if isinstance(configuration, dict):
+        _validate_cfl_a0_identity(
+            configuration,
+            identity,
+            identity_rows,
+            layer,
+        )
+        _validate_bsk24_a0_identity(
+            configuration,
+            identity,
+            identity_rows,
+            layer,
+        )
     if isinstance(identity, dict) and identity.get("status") != "pass":
         layer.fail(f"identity_not_pass:{identity.get('status')}")
 

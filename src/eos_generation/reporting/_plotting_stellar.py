@@ -42,7 +42,11 @@ def _stellar(packet, config, plt, axis_style) -> bool:
     style_rows = _saved_case_style_rows(packet, selected)
     styles = _style_rows(style_rows)
     if "direct" in styles:
-        styles["direct"]["label"] = "Direct BSk24"
+        styles["direct"]["label"] = (
+            "Direct CFL"
+            if getattr(config, "matter_model", "bsk24") == "cfl"
+            else "Direct BSk24"
+        )
     fixed = _table(packet, "fixed_mass_observables.csv")
     fixed_stage = fixed.loc[fixed.stage == stage]
     fixed = fixed_stage.loc[fixed_stage.status == "bracketed_and_solved"]

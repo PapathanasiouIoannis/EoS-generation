@@ -16,7 +16,7 @@ from eos_generation._internal.artifacts import project_root
 
 
 METHODS_RUNTIME_SPECIFICATION = "environment.yml"
-SOURCE_INVENTORY_ID = "eos_generation_active_source_inventory_v1"
+SOURCE_INVENTORY_ID = "eos_generation_active_source_inventory_v2"
 SEQUENCE_TABLE_SOURCE_PATH = (
     "src/eos_generation/_internal/sequence_tables.py"
 )
@@ -44,6 +44,12 @@ _SOURCE_PATHS = (
     "src/eos_generation/bsk24/reconstruction.py",
     "src/eos_generation/bsk24/deformation.py",
     "src/eos_generation/bsk24/source_manifest.json",
+    "src/eos_generation/cfl/__init__.py",
+    "src/eos_generation/cfl/baseline.py",
+    "src/eos_generation/cfl/deformation.py",
+    "src/eos_generation/cfl/planning.py",
+    "src/eos_generation/cfl/reconstruction.py",
+    "src/eos_generation/cfl/source_manifest.json",
     "src/eos_generation/stellar/__init__.py",
     "src/eos_generation/stellar/discontinuities.py",
     "src/eos_generation/stellar/_tov_algebra.py",
@@ -56,6 +62,7 @@ _SOURCE_PATHS = (
     "src/eos_generation/_internal/__init__.py",
     "src/eos_generation/_internal/config.py",
     "src/eos_generation/_internal/artifacts.py",
+    "src/eos_generation/_internal/cfl_thermodynamics.py",
     "src/eos_generation/_internal/planning.py",
     "src/eos_generation/_internal/execution.py",
     "src/eos_generation/_internal/runtime.py",
@@ -90,6 +97,8 @@ _SOURCE_PATHS = (
     "src/eos_generation/reporting/plot_style.py",
     "src/eos_generation/reporting/plotting.py",
     "src/eos_generation/reporting/plot_orchestration.py",
+    "src/eos_generation/reporting/cfl_dataset.py",
+    "src/eos_generation/reporting/notebook_results.py",
     "src/eos_generation/reporting/validation.py",
 )
 _PROVENANCE_PACKAGES = (

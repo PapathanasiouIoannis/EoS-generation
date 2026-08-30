@@ -30,7 +30,7 @@ dist/
 # Local scientific results
 runs/
 
-# Repository-local publication and tooling artifacts
+# Repository-local publication and tool artifacts
 /.codex_tmp/
 /output/
 /website/

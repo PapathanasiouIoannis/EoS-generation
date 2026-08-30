@@ -14,8 +14,12 @@ from eos_generation._internal.artifacts import (
     project_root,
     repository_root_scope,
 )
-from eos_generation._internal.execution import RunCallbacks, run_bsk24_trial
-from eos_generation._internal.loading import load_bsk24_trial
+from eos_generation._internal.execution import (
+    RunCallbacks,
+    run_bsk24_trial,
+    run_cfl_trial,
+)
+from eos_generation._internal.loading import load_trial_packet
 from eos_generation._internal.planning import (
     BSk24TrialConfig,
     BSk24TrialPlan,
@@ -40,7 +44,7 @@ from eos_generation.reporting.plot_orchestration import (
     generate_bsk24_trial_plots,
 )
 from eos_generation.reporting.validation import (
-    validate_bsk24_trial_packet_layers,
+    validate_trial_packet_layers,
 )
 
 
@@ -49,7 +53,7 @@ class TrialResult:
     """Passive handle to one saved and validated trial packet."""
 
     packet_path: Path
-    config: BSk24TrialConfig
+    config: Any
     metadata: dict[str, Any]
     plot_inventory: pd.DataFrame
     repository_root: Path | None = None
@@ -165,13 +169,85 @@ class TrialResult:
         )
 
 
-def plan_trial(config: BSk24TrialConfig) -> BSk24TrialPlan:
+def plan_trial(config: Any) -> Any:
     """Passively validate and estimate one ordinary trial."""
+    if getattr(config, "matter_model", "bsk24") == "cfl":
+        from eos_generation.cfl.planning import prepare_cfl_trial
+
+        return prepare_cfl_trial(config)
     return prepare_bsk24_trial(config)
 
 
-def execute_trial(config: BSk24TrialConfig) -> TrialResult:
+def execute_trial(config: Any) -> TrialResult:
     """Explicitly execute one ordinary trial."""
+    if getattr(config, "matter_model", "bsk24") == "cfl":
+        from eos_generation._internal.cfl_thermodynamics import (
+            _cfl_a0_identity_table,
+            _cfl_deformations,
+            _cfl_raw_gate_frame,
+            _cfl_thermodynamic_convergence,
+            _cfl_thermodynamic_profile_frame,
+            _cfl_thermodynamic_residual_frame,
+        )
+        from eos_generation.cfl.baseline import build_cfl_baseline
+        from eos_generation.cfl.deformation import (
+            raw_local_physics_gate as cfl_raw_local_physics_gate,
+            window_characterization as cfl_window_characterization,
+        )
+        from eos_generation.cfl.planning import prepare_cfl_trial
+        from eos_generation.cfl.reconstruction import (
+            build_windowed_eos as build_cfl_windowed_eos,
+        )
+
+        def raw_gate_adapter(
+            baseline,
+            deformation,
+            *,
+            dense_lower_points: int,
+            dense_upper_points: int,
+        ):
+            return cfl_raw_local_physics_gate(
+                deformation,
+                baseline=baseline,
+                dense_points=max(dense_lower_points, dense_upper_points),
+            )
+
+        def reconstruction_adapter(
+            baseline,
+            deformation,
+            *,
+            raw_gate_report,
+        ):
+            return build_cfl_windowed_eos(
+                deformation,
+                baseline=baseline,
+                raw_gate_report=raw_gate_report,
+                grid_points=baseline.settings.points,
+            )
+
+        callbacks = RunCallbacks(
+            prepare_trial=prepare_cfl_trial,
+            load_trial=load_trial,
+            generate_plots=generate_trial_plots,
+            validate_packet=validate_trial,
+            build_consistent_baseline=build_cfl_baseline,
+            raw_local_physics_gate=raw_gate_adapter,
+            raw_gate_frame=_cfl_raw_gate_frame,
+            build_windowed_eos=reconstruction_adapter,
+            thermodynamic_profile_frame=_cfl_thermodynamic_profile_frame,
+            thermodynamic_residual_frame=_cfl_thermodynamic_residual_frame,
+            window_characterization=(
+                lambda _baseline, deformation: cfl_window_characterization(
+                    deformation
+                )
+            ),
+            thermodynamic_convergence=_cfl_thermodynamic_convergence,
+            run_stellar=_run_stellar,
+            resolve_deformations=_cfl_deformations,
+            a0_identity_table=_cfl_a0_identity_table,
+        )
+        return run_cfl_trial(config, callbacks=callbacks)
+
     callbacks = RunCallbacks(
         prepare_trial=prepare_bsk24_trial,
         load_trial=load_trial,
@@ -202,7 +278,7 @@ def load_trial(
         else repository_root_scope(repository_root)
     )
     with scope:
-        return load_bsk24_trial(packet_path, result_factory=TrialResult)
+        return load_trial_packet(packet_path, result_factory=TrialResult)
 
 
 def validate_trial(
@@ -217,12 +293,9 @@ def validate_trial(
         else repository_root_scope(repository_root)
     )
     with scope:
-        return validate_bsk24_trial_packet_layers(
+        return validate_trial_packet_layers(
             packet_path,
             current_source_hashes=_source_hashes(),
-            configuration_hash_fn=lambda payload: BSk24TrialConfig.from_dict(
-                payload
-            ).deterministic_hash(),
             required_source_paths=(
                 "src/eos_generation/stellar/discontinuities.py",
                 "src/eos_generation/stellar/tov.py",
