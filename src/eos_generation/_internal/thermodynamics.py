@@ -16,10 +16,7 @@ from eos_generation._internal.planning import (
     BSk24TrialConfig,
     BSk24TrialPlan,
 )
-from eos_generation.bsk24.reconstruction import (
-    BSk24ConsistentBaseline,
-    _bidirectional_baryon_reconstruction,
-)
+from eos_generation.bsk24.reconstruction import BSk24ConsistentBaseline
 from eos_generation.bsk24.deformation import (
     BSk24WindowedDeformation,
     BSk24WindowedEos,
@@ -48,25 +45,16 @@ def _maximum_absolute_residual(
 def _deformations(
     plan: BSk24TrialPlan,
 ) -> dict[str, BSk24WindowedDeformation]:
-    result: dict[str, BSk24WindowedDeformation] = {}
-    for row in plan.case_table.itertuples(index=False):
-        if getattr(row, "planned_for_execution", True) is not True:
-            continue
-        physical_case_id = str(
-            getattr(row, "physical_case_id", None) or row.case_id
-        )
-        if physical_case_id in result:
-            raise RuntimeError(
-                "deterministic BSk24 physical case-ID collision"
-            )
-        result[physical_case_id] = BSk24WindowedDeformation(
-            case_id=physical_case_id,
+    return {
+        str(row.case_id): BSk24WindowedDeformation(
+            case_id=str(row.case_id),
             amplitude=float(row.amplitude),
             epsilon0_mev_fm3=float(row.epsilon0_mev_fm3),
             sigma_mev_fm3=float(row.sigma_mev_fm3),
             delta_mev_fm3=float(row.delta_mev_fm3),
         )
-    return result
+        for row in plan.case_table.itertuples(index=False)
+    }
 
 
 def _raw_gate_frame(
@@ -88,8 +76,7 @@ def _raw_gate_frame(
         dtype=float,
     )
     direct_pressure = np.asarray(
-        baseline.eos.published_fit_pressure_from_energy_density(epsilon),
-        dtype=float,
+        baseline.eos.pressure_from_energy_density(epsilon), dtype=float
     )
     return pd.DataFrame(
         {
@@ -153,34 +140,11 @@ def _thermodynamic_profile_frame(
     for case_id, eos in generated.items():
         epsilon = eos.epsilon
         direct_pressure = np.asarray(
-            baseline.eos.published_fit_pressure_from_energy_density(epsilon),
-            dtype=float,
+            baseline.eos.pressure_from_energy_density(epsilon), dtype=float
         )
-        if epsilon[-1] <= baseline.epsilon[-1]:
-            direct_density = np.asarray(
-                baseline.consistent_baryon_density_from_energy_density(
-                    epsilon
-                ),
-                dtype=float,
-            )
-        else:
-            anchor_matches = np.flatnonzero(
-                epsilon == baseline.anchor.energy_density_mev_fm3
-            )
-            if len(anchor_matches) != 1:
-                raise ValueError(
-                    "extended direct comparison requires the exact anchor"
-                )
-            anchor_index = int(anchor_matches[0])
-            upper_density = _bidirectional_baryon_reconstruction(
-                epsilon[anchor_index:],
-                direct_pressure[anchor_index:],
-                anchor_index=0,
-                anchor_density_fm3=baseline.anchor.baryon_density_fm3,
-            )
-            direct_density = np.concatenate(
-                (baseline.baryon_density[:anchor_index], upper_density)
-            )
+        direct_density = np.asarray(
+            baseline.consistent_baryon_density_from_energy_density(epsilon), dtype=float
+        )
         direct_enthalpy = (epsilon + direct_pressure) / direct_density
         frames.append(
             pd.DataFrame(
@@ -510,116 +474,6 @@ def _a0_identity_table(
         for eos in generated.values()
         if eos.deformation.amplitude == 0.0
     }
-    if config.a0_deduplication_enabled:
-        owner = config.zero_amplitude_control_owner is True
-        if not a0_cases and not owner:
-            report = {
-                "schema_id": "eos_generation_bsk24_a0_identity_v2",
-                "identity_target": (
-                    "one shared physical direct BSk24 baseline represented by "
-                    "logical A=0 aliases"
-                ),
-                "a0_was_injected": config.a0_was_injected,
-                "logical_a0_was_injected": config.logical_a0_was_injected,
-                "zero_amplitude_control_owner": False,
-                "zero_amplitude_physical_case_id": (
-                    config.zero_amplitude_physical_case_id
-                ),
-                "local_thermodynamic_identity": {
-                    "schema_id": "bsk24_windowed_a0_identity_v1",
-                    "status": "not_applicable_no_owned_a0_case",
-                    "deltas": {},
-                },
-                "stellar_identity_status": (
-                    "not_requested"
-                    if not config.stellar_enabled
-                    else "not_applicable_no_owned_a0_case"
-                ),
-                "duplicate_zero_amplitude_stellar_solver_calls": 0,
-                "status": "pass",
-            }
-            return report, pd.DataFrame(columns=columns)
-        if len(a0_cases) != 1 or not owner:
-            report = {
-                "schema_id": "eos_generation_bsk24_a0_identity_v2",
-                "identity_target": (
-                    "one shared physical direct BSk24 baseline represented by "
-                    "logical A=0 aliases"
-                ),
-                "a0_was_injected": config.a0_was_injected,
-                "logical_a0_was_injected": config.logical_a0_was_injected,
-                "zero_amplitude_control_owner": owner,
-                "zero_amplitude_physical_case_id": (
-                    config.zero_amplitude_physical_case_id
-                ),
-                "local_thermodynamic_identity": {
-                    "schema_id": "bsk24_windowed_a0_identity_v1",
-                    "status": "fail",
-                    "reason": "owned physical A=0 case is missing or duplicated",
-                    "deltas": {},
-                },
-                "stellar_identity_status": "fail",
-                "duplicate_zero_amplitude_stellar_solver_calls": 0,
-                "status": "fail",
-            }
-            return report, pd.DataFrame(columns=columns)
-
-        local = windowed_a0_identity_report(baseline, a0_cases)
-        rows: list[dict[str, Any]] = []
-        for delta, local_report in local["deltas"].items():
-            for quantity, item in local_report.items():
-                rows.append(
-                    {
-                        "scope": "thermodynamic",
-                        "delta_mev_fm3": float(delta),
-                        "stage": "refined",
-                        "quantity": quantity,
-                        "maximum_absolute_residual": item[
-                            "maximum_absolute_residual"
-                        ],
-                        "array_equal": item["array_equal"],
-                        "status": item["status"],
-                    }
-                )
-        stellar_status = "not_requested"
-        if config.stellar_enabled:
-            sequence_ids = (
-                set()
-                if sequences is None or sequences.empty
-                else set(sequences["case_id"].astype(str))
-            )
-            stellar_status = (
-                "pass_shared_direct_solution_alias"
-                if "direct" in sequence_ids
-                and config.zero_amplitude_physical_case_id not in sequence_ids
-                else "fail"
-            )
-        report = {
-            "schema_id": "eos_generation_bsk24_a0_identity_v2",
-            "identity_target": (
-                "one shared physical direct BSk24 baseline represented by "
-                "logical A=0 aliases"
-            ),
-            "a0_was_injected": config.a0_was_injected,
-            "logical_a0_was_injected": config.logical_a0_was_injected,
-            "zero_amplitude_control_owner": True,
-            "zero_amplitude_physical_case_id": (
-                config.zero_amplitude_physical_case_id
-            ),
-            "local_thermodynamic_identity": local,
-            "stellar_identity_status": stellar_status,
-            "duplicate_zero_amplitude_stellar_solver_calls": 0,
-            "floating_comparison_policy": "exact binary64 array identity",
-            "status": (
-                "pass"
-                if local["status"] == "pass"
-                and stellar_status
-                in {"not_requested", "pass_shared_direct_solution_alias"}
-                else "fail"
-            ),
-        }
-        return report, pd.DataFrame(rows, columns=columns)
-
     if not a0_cases:
         local = {
             "schema_id": "bsk24_windowed_a0_identity_v1",

@@ -36,14 +36,8 @@ def render_summary_markdown(model: Mapping[str, Any]) -> str:
     stellar = _mapping_or_empty(model.get("stellar_tidal"))
     artifacts = _mapping_or_empty(model.get("artifacts"))
     reproduction = _mapping_or_empty(model.get("reproduction"))
-    matter_model = _text(model.get("matter_model"), "bsk24")
-    title = (
-        "# CFL trial result summary"
-        if matter_model == "cfl"
-        else "# BSk24 trial result summary"
-    )
     lines = [
-        title,
+        "# BSk24 trial result summary",
         "",
         f"<!-- schema_id: {_text(model.get('schema_id'))} -->",
         "",
@@ -80,8 +74,6 @@ def render_summary_markdown(model: Mapping[str, Any]) -> str:
         "## Case outcomes",
         "",
     ]
-    if matter_model == "cfl":
-        lines.insert(7, "- Matter model: `cfl`")
     if bool(cases.get("rows_included")):
         lines.extend(
             [

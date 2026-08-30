@@ -28,7 +28,6 @@ from eos_generation.bsk24.reconstruction import (
     COMPOSE_CORE_ENTRY_EPSILON_MEV_FM3,
     BSk24GridSettings,
 )
-from eos_generation.bsk24.baseline import MODEL_VERSION
 from eos_generation.bsk24._deformation_bounds import (
     DEFORMATION_SUPPORT_SIGMAS,
     _meaningful_support_interval,
@@ -47,7 +46,6 @@ from eos_generation.bsk24.deformation import (
 TRIAL_PLAN_SCHEMA = "eos_generation_trial_plan_v1"
 DEFAULT_OUTPUT_STEM = "bsk24_trial"
 PLOT_GROUPS = (
-    "none",
     "thermodynamics",
     "stellar",
     "stellar-diagnostics",
@@ -169,37 +167,6 @@ def deterministic_case_id(
     )
 
 
-def bsk24_physical_baseline_id(
-    epsilon_match_mev_fm3: float | None = None,
-) -> str:
-    """Return the physical identity shared by logical BSk24 A=0 controls.
-
-    The exploratory matching anchor changes the reconstructed baryon-density
-    normalization, so it remains part of the physical baseline identity even
-    though the undeformed pressure curve is the same.
-    """
-
-    effective_match = (
-        BSK24_RETAINED_EPSILON_MATCH_MEV_FM3
-        if epsilon_match_mev_fm3 is None
-        else _positive_number(
-            "epsilon_match_mev_fm3", epsilon_match_mev_fm3
-        )
-    )
-    payload = {
-        "matter_model": "bsk24",
-        "baseline_model_version": MODEL_VERSION,
-        "epsilon_match_mev_fm3": effective_match.hex(),
-        "retained_epsilon_max_mev_fm3": (
-            BSK24_RETAINED_EPSILON_MAX_MEV_FM3.hex()
-        ),
-    }
-    digest = hashlib.sha256(
-        canonical_json(payload).encode("utf-8")
-    ).hexdigest()
-    return f"bsk24_baseline_{digest[:16]}"
-
-
 @dataclass(frozen=True)
 class BSk24ThermodynamicStage:
     """One named C4-consistent thermodynamic grid."""
@@ -301,7 +268,6 @@ class BSk24TrialConfig:
     output_packet_name: str | None = None
     output_path: str | Path | None = None
     resume_policy: str = "error"
-    zero_amplitude_control_owner: bool | None = None
 
     def __post_init__(self) -> None:
         amplitudes = _unique_floats("amplitudes", self.amplitudes)
@@ -377,13 +343,6 @@ class BSk24TrialConfig:
             if not isinstance(getattr(self, key), bool):
                 raise ValueError(f"{key} must be boolean")
         if (
-            self.zero_amplitude_control_owner is not None
-            and not isinstance(self.zero_amplitude_control_owner, bool)
-        ):
-            raise ValueError(
-                "zero_amplitude_control_owner must be boolean or None"
-            )
-        if (
             not isinstance(self.extended_stellar_diagnostics_case_policy, str)
             or self.extended_stellar_diagnostics_case_policy
             not in EXTENDED_STELLAR_DIAGNOSTICS_CASE_POLICIES
@@ -416,8 +375,6 @@ class BSk24TrialConfig:
         invalid_groups = sorted(set(groups) - set(PLOT_GROUPS))
         if not groups or invalid_groups:
             raise ValueError(f"requested_plot_groups must use {PLOT_GROUPS}; invalid={invalid_groups}")
-        if "none" in groups and len(groups) != 1:
-            raise ValueError("plot group 'none' must be used alone")
         if "all-applicable" in groups and len(groups) > 1:
             groups = ("all-applicable",)
         if self.resume_policy not in RESUME_POLICIES:
@@ -467,44 +424,13 @@ class BSk24TrialConfig:
 
     @property
     def a0_was_injected(self) -> bool:
-        if not self.a0_deduplication_enabled:
-            return self.logical_a0_was_injected
-        return bool(
-            self.zero_amplitude_control_owner
-            and self.logical_a0_was_injected
-        )
-
-    @property
-    def logical_a0_was_injected(self) -> bool:
         return not any(value == 0.0 for value in self.amplitudes)
 
     @property
-    def a0_deduplication_enabled(self) -> bool:
-        return self.zero_amplitude_control_owner is not None
-
-    @property
-    def logical_amplitudes(self) -> tuple[float, ...]:
-        if not self.a0_deduplication_enabled:
-            if not self.logical_a0_was_injected:
-                return self.amplitudes
-            return (0.0, *self.amplitudes)
-        return (0.0, *(value for value in self.amplitudes if value != 0.0))
-
-    @property
     def effective_amplitudes(self) -> tuple[float, ...]:
-        if not self.a0_deduplication_enabled:
-            return self.logical_amplitudes
-        if self.zero_amplitude_control_owner is False:
-            return tuple(
-                value for value in self.logical_amplitudes if value != 0.0
-            )
-        return self.logical_amplitudes
-
-    @property
-    def zero_amplitude_physical_case_id(self) -> str | None:
-        if not self.a0_deduplication_enabled:
-            return None
-        return bsk24_physical_baseline_id(self.epsilon_match_mev_fm3)
+        if not self.a0_was_injected:
+            return self.amplitudes
+        return (0.0, *self.amplitudes)
 
     @property
     def exploratory_anchor_requested(self) -> bool:
@@ -549,8 +475,6 @@ class BSk24TrialConfig:
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
-        if not self.a0_deduplication_enabled:
-            data.pop("zero_amplitude_control_owner", None)
         if self.epsilon_match_mev_fm3 is None:
             data.pop("epsilon_match_mev_fm3", None)
         if self.extended_stellar_diagnostics_case_policy == "endpoints":
@@ -569,14 +493,6 @@ class BSk24TrialConfig:
                 data.pop(key, None)
         data["effective_amplitudes"] = list(self.effective_amplitudes)
         data["a0_identity_control_injected"] = self.a0_was_injected
-        if self.a0_deduplication_enabled:
-            data["logical_amplitudes"] = list(self.logical_amplitudes)
-            data["logical_a0_identity_control_injected"] = (
-                self.logical_a0_was_injected
-            )
-            data["zero_amplitude_physical_case_id"] = (
-                self.zero_amplitude_physical_case_id
-            )
         data["generator_id"] = WINDOWED_GAUSSIAN_GENERATOR_ID
         data["preserved_generator_id"] = PURE_GAUSSIAN_GENERATOR_ID
         data["reference_compatible"] = self.reference_compatible
@@ -586,18 +502,8 @@ class BSk24TrialConfig:
         """Return every resolved calculation and operational setting."""
 
         data = asdict(self)
-        if not self.a0_deduplication_enabled:
-            data.pop("zero_amplitude_control_owner", None)
         data["effective_amplitudes"] = list(self.effective_amplitudes)
         data["a0_identity_control_injected"] = self.a0_was_injected
-        if self.a0_deduplication_enabled:
-            data["logical_amplitudes"] = list(self.logical_amplitudes)
-            data["logical_a0_identity_control_injected"] = (
-                self.logical_a0_was_injected
-            )
-            data["zero_amplitude_physical_case_id"] = (
-                self.zero_amplitude_physical_case_id
-            )
         data["effective_epsilon_match_mev_fm3"] = (
             self.effective_epsilon_match_mev_fm3
         )
@@ -620,17 +526,13 @@ class BSk24TrialConfig:
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "BSk24TrialConfig":
         values = dict(data)
-        supplied = dict(values)
         if "$schema" in values:
             schema_annotation = values.pop("$schema")
             if not isinstance(schema_annotation, str):
                 raise ValueError("top-level $schema must be a string")
         for extra in (
             "effective_amplitudes",
-            "logical_amplitudes",
             "a0_identity_control_injected",
-            "logical_a0_identity_control_injected",
-            "zero_amplitude_physical_case_id",
             "generator_id",
             "preserved_generator_id",
             "reference_compatible",
@@ -656,20 +558,7 @@ class BSk24TrialConfig:
         ):
             if key in values and values[key] is not None:
                 values[key] = tuple(values[key])
-        result = cls(**values)
-        canonical = result.to_dict()
-        for name in (
-            "effective_amplitudes",
-            "logical_amplitudes",
-            "a0_identity_control_injected",
-            "logical_a0_identity_control_injected",
-            "zero_amplitude_physical_case_id",
-        ):
-            if name in supplied and supplied[name] != canonical.get(name):
-                raise ValueError(
-                    f"saved BSk24 configuration {name} disagrees with its inputs"
-                )
-        return result
+        return cls(**values)
 
 
 @dataclass(frozen=True)
@@ -678,29 +567,10 @@ class BSk24TrialPlan:
 
     config: BSk24TrialConfig
     case_table: pd.DataFrame
-    logical_alias_table: pd.DataFrame
     a0_identity_control_injected: bool
     anticipated_plot_inventory: pd.DataFrame
     estimates: Mapping[str, int]
     output_path: Path
-
-    @property
-    def logical_case_table(self) -> pd.DataFrame:
-        if not self.config.a0_deduplication_enabled:
-            return self.case_table
-        frames = [
-            frame
-            for frame in (self.case_table, self.logical_alias_table)
-            if not frame.empty
-        ]
-        if not frames:
-            return pd.DataFrame()
-        combined = pd.concat(frames, ignore_index=True)
-        return combined.sort_values(
-            ["logical_delta_index", "logical_amplitude_index"],
-            kind="stable",
-            ignore_index=True,
-        )
 
     def to_dict(self) -> dict[str, Any]:
         expanded = self.config.expanded_dict()
@@ -708,7 +578,7 @@ class BSk24TrialPlan:
             name: expanded.pop(name)
             for name in ("output_packet_name", "output_path", "resume_policy")
         }
-        result = {
+        return {
             "schema_id": TRIAL_PLAN_SCHEMA,
             "configuration_hash": self.config.deterministic_hash(),
             "expanded_configuration": expanded,
@@ -724,16 +594,11 @@ class BSk24TrialPlan:
             "scientific_solver_calls": 0,
             "filesystem_writes": 0,
         }
-        if self.config.a0_deduplication_enabled:
-            result["logical_alias_table"] = _json_records(
-                self.logical_alias_table
-            )
-        return result
 
     def _repr_html_(self) -> str:
         return (
             "<h3>BSk24 trial plan</h3>"
-            + self.logical_case_table.to_html(index=False)
+            + self.case_table.to_html(index=False)
             + "<h4>Anticipated figure applicability</h4>"
             + self.anticipated_plot_inventory.to_html(index=False)
         )
@@ -782,10 +647,6 @@ def _selected_groups(groups: Sequence[str]) -> tuple[str, ...]:
     invalid = sorted(set(values) - set(PLOT_GROUPS))
     if not values or invalid:
         raise ValueError(f"plot groups must use {PLOT_GROUPS}; invalid={invalid}")
-    if "none" in values:
-        if len(values) != 1:
-            raise ValueError("plot group 'none' must be used alone")
-        return ()
     if "all-applicable" in values:
         return ("thermodynamics", "stellar", "stellar-diagnostics")
     return values
@@ -813,117 +674,54 @@ def _output_path(config: BSk24TrialConfig) -> Path:
     return resolved
 
 
-def _case_row(
-    config: BSk24TrialConfig,
-    *,
-    amplitude: float,
-    delta: float,
-    delta_index: int,
-    amplitude_index: int,
-    planned_for_execution: bool,
-) -> dict[str, Any]:
-    case_id = deterministic_case_id(
-        amplitude=amplitude,
-        delta_mev_fm3=delta,
-        epsilon0_mev_fm3=config.epsilon0_mev_fm3,
-        sigma_mev_fm3=config.sigma_mev_fm3,
-        epsilon_match_mev_fm3=config.epsilon_match_mev_fm3,
-    )
-    physical_case_id = (
-        config.zero_amplitude_physical_case_id
-        if amplitude == 0.0 and config.a0_deduplication_enabled
-        else case_id
-    )
-    row = {
-        "case_id": case_id,
-        "amplitude": amplitude,
-        "epsilon_match_mev_fm3": config.effective_epsilon_match_mev_fm3,
-        "anchor_mode": (
-            "exploratory" if config.exploratory_anchor_requested else "standard"
-        ),
-        "epsilon0_mev_fm3": config.epsilon0_mev_fm3,
-        "sigma_mev_fm3": config.sigma_mev_fm3,
-        "delta_mev_fm3": delta,
-        "is_a0_identity_control": amplitude == 0.0,
-        "identity_control_injected": (
-            amplitude == 0.0 and config.logical_a0_was_injected
-        ),
-        "planned_thermodynamic_stages": ",".join(
-            stage.name for stage in config.thermodynamic_stages
-        ),
-        "planned_stellar_stages": (
-            ",".join(stage.name for stage in config.tov_stages)
-            if config.background_tov_requested
-            else ""
-        ),
-        "anticipated_plot_groups": ",".join(
-            _selected_groups(config.requested_plot_groups)
-        ),
-    }
-    if config.a0_deduplication_enabled:
-        row.update(
-            {
-                "physical_case_id": physical_case_id,
-                "matter_model": "bsk24",
-                "logical_delta_index": delta_index,
-                "logical_amplitude_index": amplitude_index,
-                "is_physical_case_alias": physical_case_id != case_id,
-                "planned_for_execution": planned_for_execution,
-                "physical_case_owner": planned_for_execution,
-            }
-        )
-    return row
-
-
 def _case_rows(config: BSk24TrialConfig) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    owner_delta = min(config.deltas_mev_fm3)
-    for delta_index, delta in enumerate(config.deltas_mev_fm3):
-        for amplitude_index, amplitude in enumerate(config.logical_amplitudes):
-            if (
-                config.a0_deduplication_enabled
-                and amplitude == 0.0
-                and (
-                    config.zero_amplitude_control_owner is False
-                    or delta != owner_delta
-                )
-            ):
-                continue
+    for delta in config.deltas_mev_fm3:
+        for amplitude in config.effective_amplitudes:
             rows.append(
-                _case_row(
-                    config,
-                    amplitude=amplitude,
-                    delta=delta,
-                    delta_index=delta_index,
-                    amplitude_index=amplitude_index,
-                    planned_for_execution=True,
-                )
+                {
+                    "case_id": deterministic_case_id(
+                        amplitude=amplitude,
+                        delta_mev_fm3=delta,
+                        epsilon0_mev_fm3=config.epsilon0_mev_fm3,
+                        sigma_mev_fm3=config.sigma_mev_fm3,
+                        epsilon_match_mev_fm3=(
+                            config.epsilon_match_mev_fm3
+                        ),
+                    ),
+                    "amplitude": amplitude,
+                    "epsilon_match_mev_fm3": (
+                        config.effective_epsilon_match_mev_fm3
+                    ),
+                    "anchor_mode": (
+                        "exploratory"
+                        if config.exploratory_anchor_requested
+                        else "standard"
+                    ),
+                    "epsilon0_mev_fm3": config.epsilon0_mev_fm3,
+                    "sigma_mev_fm3": config.sigma_mev_fm3,
+                    "delta_mev_fm3": delta,
+                    "is_a0_identity_control": amplitude == 0.0,
+                    "identity_control_injected": (
+                        amplitude == 0.0 and config.a0_was_injected
+                    ),
+                    "planned_thermodynamic_stages": ",".join(
+                        stage.name for stage in config.thermodynamic_stages
+                    ),
+                    "planned_stellar_stages": (
+                        ",".join(stage.name for stage in config.tov_stages)
+                        if config.background_tov_requested
+                        else ""
+                    ),
+                    "anticipated_plot_groups": ",".join(
+                        _selected_groups(config.requested_plot_groups)
+                    ),
+                }
             )
     ids = [row["case_id"] for row in rows]
     if len(ids) != len(set(ids)):
         raise RuntimeError("deterministic case-ID collision")
     return rows
-
-
-def _logical_alias_rows(config: BSk24TrialConfig) -> list[dict[str, Any]]:
-    if not config.a0_deduplication_enabled:
-        return []
-    aliases: list[dict[str, Any]] = []
-    owner_delta = min(config.deltas_mev_fm3)
-    for delta_index, delta in enumerate(config.deltas_mev_fm3):
-        if config.zero_amplitude_control_owner is True and delta == owner_delta:
-            continue
-        aliases.append(
-            _case_row(
-                config,
-                amplitude=0.0,
-                delta=delta,
-                delta_index=delta_index,
-                amplitude_index=0,
-                planned_for_execution=False,
-            )
-        )
-    return aliases
 
 
 def _anticipated_plot_inventory(config: BSk24TrialConfig) -> pd.DataFrame:
@@ -981,28 +779,13 @@ def prepare_bsk24_trial(config: BSk24TrialConfig) -> BSk24TrialPlan:
     if not isinstance(config, BSk24TrialConfig):
         raise TypeError("config must be a BSk24TrialConfig")
     cases = pd.DataFrame(_case_rows(config))
-    aliases = pd.DataFrame(_logical_alias_rows(config))
-    if cases.empty and not len(cases.columns) and not aliases.empty:
-        cases = aliases.iloc[0:0].copy()
-    if config.a0_deduplication_enabled:
-        physical_cases = (
-            int(cases["physical_case_id"].nunique()) if not cases.empty else 0
-        )
-        thermodynamic_cases = physical_cases
-        stellar_cases = physical_cases if config.background_tov_requested else 0
-    else:
-        physical_cases = len(cases)
-        thermodynamic_cases = 1 + physical_cases
-        stellar_cases = (
-            thermodynamic_cases if config.background_tov_requested else 0
-        )
+    thermodynamic_cases = 1 + len(cases)
+    stellar_cases = (
+        thermodynamic_cases if config.background_tov_requested else 0
+    )
     estimates = {
         "proposed_deformation_cases": int(len(cases)),
-        "direct_baseline_cases": (
-            int(bool(config.zero_amplitude_control_owner))
-            if config.a0_deduplication_enabled
-            else 1
-        ),
+        "direct_baseline_cases": 1,
         "thermodynamic_case_stage_evaluations": int(
             thermodynamic_cases * len(config.thermodynamic_stages)
         ),
@@ -1017,17 +800,6 @@ def prepare_bsk24_trial(config: BSk24TrialConfig) -> BSk24TrialPlan:
             else 0
         ),
     }
-    if config.a0_deduplication_enabled:
-        estimates.update(
-            {
-                "logical_deformation_cases": int(len(cases) + len(aliases)),
-                "physical_deformation_cases": int(physical_cases),
-                "deduplicated_logical_case_aliases": int(len(aliases)),
-                "baseline_construction_stage_evaluations": len(
-                    config.thermodynamic_stages
-                ),
-            }
-        )
     if config.stellar_enabled:
         estimates["sampled_sequence_tidal_targets"] = int(
             stellar_cases
@@ -1046,7 +818,6 @@ def prepare_bsk24_trial(config: BSk24TrialConfig) -> BSk24TrialPlan:
     return BSk24TrialPlan(
         config=config,
         case_table=cases,
-        logical_alias_table=aliases,
         a0_identity_control_injected=config.a0_was_injected,
         anticipated_plot_inventory=_anticipated_plot_inventory(config),
         estimates=estimates,
@@ -1073,7 +844,6 @@ __all__ = [
     "PlotSpec",
     "RESUME_POLICIES",
     "TRIAL_PLAN_SCHEMA",
-    "bsk24_physical_baseline_id",
     "deterministic_case_id",
     "prepare_bsk24_trial",
 ]

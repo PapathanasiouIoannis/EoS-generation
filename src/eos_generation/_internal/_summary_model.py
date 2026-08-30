@@ -32,8 +32,6 @@ from eos_generation._internal._summary_evidence import (
 
 
 PACKET_SCHEMA_ID = "eos_generation_trial_packet_v1"
-CFL_PACKET_SCHEMA_ID = "eos_generation_cfl_trial_packet_v1"
-SUPPORTED_PACKET_SCHEMA_IDS = (PACKET_SCHEMA_ID, CFL_PACKET_SCHEMA_ID)
 SUMMARY_SCHEMA_ID = "eos_generation_trial_summary_v1"
 MAX_SUMMARY_CASE_ROWS = 20
 
@@ -231,10 +229,6 @@ def build_summary_model(
         )
 
     packet_schema = _text(metadata.get("schema_id"), PACKET_SCHEMA_ID)
-    matter_model = _text(
-        metadata.get("matter_model", configuration.get("matter_model")),
-        "bsk24",
-    )
     model: dict[str, Any] = {
         "schema_id": SUMMARY_SCHEMA_ID,
         "packet_schema": packet_schema,
@@ -311,8 +305,6 @@ def build_summary_model(
             ),
         },
     }
-    if matter_model == "cfl":
-        model["matter_model"] = "cfl"
     if validation is not None:
         model["validation"] = validation
     return model

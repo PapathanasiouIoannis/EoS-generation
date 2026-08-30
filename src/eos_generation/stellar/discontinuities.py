@@ -9,8 +9,6 @@ from typing import Any, Iterable, Literal
 
 EOS_DISCONTINUITY_CONTRACT_VERSION = "eos_discontinuity_v1"
 DISCONTINUITY_KINDS = ("internal", "surface")
-BARE_SELF_BOUND_SEQUENCE_POLICY = "bare_self_bound_positive_mass_radius_v1"
-SEED_PRESERVING_LOCAL_REFINEMENT_POLICY = "seed_preserving_split_log_pressure_v1"
 
 
 def _finite(name: str, value: Any) -> float:

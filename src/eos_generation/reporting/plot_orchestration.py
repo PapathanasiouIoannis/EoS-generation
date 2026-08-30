@@ -28,7 +28,6 @@ from eos_generation._internal.saved_tables import (
     summarize_fixed_mass_response_population,
 )
 from eos_generation._internal.summary import PACKET_SCHEMA_ID, write_packet_summary
-from eos_generation._internal.summary import CFL_PACKET_SCHEMA_ID
 
 
 WINDOWED_FIGURES = (
@@ -76,7 +75,7 @@ _TIDAL_PLOT_SCOPES: Mapping[str, tuple[str, ...]] = {
 
 def _actual_plot_inventory(
     packet: Path,
-    config: Any,
+    config: BSk24TrialConfig,
     *,
     groups: Sequence[str],
 ) -> pd.DataFrame:
@@ -106,10 +105,7 @@ def _actual_plot_inventory(
                     f"missing prerequisite table(s): {', '.join(missing)}; "
                     f"requires {spec.prerequisite}"
                 )
-        # Saved response-population evidence is mandatory even when rendering
-        # is disabled. Keep an unrequested figure skipped, but record the same
-        # final-stage population that the unchanged validator recomputes.
-        if (packet / "fixed_mass_observables.csv").is_file() and spec.filename in {
+        if status == "applicable" and spec.filename in {
             "observable_response_vs_amplitude.png",
             "observable_response_vs_delta.png",
         }:
@@ -149,13 +145,13 @@ def _actual_plot_inventory(
                 tidal_completeness_status = str(
                     population_summary["tidal_completeness_status"]
                 )
-                if population.empty and status == "applicable":
+                if population.empty:
                     status, reason = (
                         "skipped",
                         "no final-stage fixed-mass deformation group has at "
                         f"least two distinct {versus} values",
                     )
-                elif tidal_omitted_count and status == "applicable":
+                elif tidal_omitted_count:
                     status = "applicable_partial"
                     reason = (
                         f"shared {versus} response population retains "
@@ -304,7 +300,7 @@ def _append_radial_companion_inventory(
     return pd.concat((inventory, pd.DataFrame(additions)), ignore_index=True)
 
 
-def generate_trial_plots_from_saved_tables(
+def generate_bsk24_trial_plots(
     packet_path: str | Path,
     *,
     groups: Sequence[str] = ("all-applicable",),
@@ -344,7 +340,7 @@ def generate_trial_plots_from_saved_tables(
     packet_schema = (
         metadata.get("schema_id") if isinstance(metadata, dict) else None
     )
-    if packet_schema not in {PACKET_SCHEMA_ID, CFL_PACKET_SCHEMA_ID}:
+    if packet_schema != PACKET_SCHEMA_ID:
         raise ValueError(
             "plot generation requires a recognized packet schema; found "
             f"{packet_schema!r}"
@@ -354,20 +350,9 @@ def generate_trial_plots_from_saved_tables(
         raise ValueError(
             "plot regeneration requires a trial complete_configuration.json"
         )
-    config_payload = json.loads(config_path.read_text(encoding="utf-8"))
-    matter_model = str(config_payload.get("matter_model", "bsk24"))
-    if matter_model == "cfl":
-        from eos_generation.cfl.planning import CFLTrialConfig
-
-        if packet_schema != CFL_PACKET_SCHEMA_ID:
-            raise ValueError("CFL configuration and packet schema disagree")
-        config = CFLTrialConfig.from_dict(config_payload)
-    elif matter_model == "bsk24":
-        if packet_schema != PACKET_SCHEMA_ID:
-            raise ValueError("BSk24 configuration and packet schema disagree")
-        config = BSk24TrialConfig.from_dict(config_payload)
-    else:
-        raise ValueError(f"unsupported saved matter_model: {matter_model!r}")
+    config = BSk24TrialConfig.from_dict(
+        json.loads(config_path.read_text(encoding="utf-8"))
+    )
     inventory = _actual_plot_inventory(packet, config, groups=groups)
     applicable = inventory.loc[
         inventory.status.isin(("applicable", "applicable_partial")), "figure"
@@ -518,28 +503,10 @@ def generate_trial_plots_from_saved_tables(
     return inventory
 
 
-def generate_bsk24_trial_plots(
-    packet_path: str | Path,
-    *,
-    groups: Sequence[str] = ("all-applicable",),
-    authorize_plot_overwrite: bool = False,
-    _initial_packet_generation: bool = False,
-) -> pd.DataFrame:
-    """Backward-compatible name for saved-table governed plot generation."""
-
-    return generate_trial_plots_from_saved_tables(
-        packet_path,
-        groups=groups,
-        authorize_plot_overwrite=authorize_plot_overwrite,
-        _initial_packet_generation=_initial_packet_generation,
-    )
-
-
 __all__ = [
     "ALL_FIGURES",
     "EXTENDED_FIGURES",
     "WINDOWED_FIGURES",
     "_actual_plot_inventory",
     "generate_bsk24_trial_plots",
-    "generate_trial_plots_from_saved_tables",
 ]

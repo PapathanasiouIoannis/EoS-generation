@@ -30,6 +30,13 @@ dist/
 # Local scientific results
 runs/
 
+# Repository-local publication and tooling artifacts
+/.codex_tmp/
+/output/
+/website/
+/*.ipynb
+/*.zip
+
 # Scratch files
 scratch/
 .scratch/

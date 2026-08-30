@@ -26,18 +26,6 @@ from eos_generation._internal.saved_tables import (
 )
 
 
-def _zero_amplitude_physical_case_id(config: Any) -> str | None:
-    value = getattr(config, "zero_amplitude_physical_case_id", None)
-    if isinstance(value, str) and value:
-        return value
-    to_dict = getattr(config, "to_dict", None)
-    if callable(to_dict):
-        saved = to_dict().get("zero_amplitude_physical_case_id")
-        if isinstance(saved, str) and saved:
-            return saved
-    return None
-
-
 def _completed_stellar_case_ids(
     sequences: pd.DataFrame | None,
     fixed: pd.DataFrame | None,
@@ -56,11 +44,8 @@ def _completed_stellar_case_ids(
         return set()
     completed: set[str] = set()
     for case_id in accepted_case_ids:
-        saved_case_id = str(case_id)
-        if saved_case_id == _zero_amplitude_physical_case_id(config):
-            saved_case_id = "direct"
         case_sequence = sequences.loc[
-            sequences["case_id"].astype(str).eq(saved_case_id)
+            sequences["case_id"].astype(str).eq(str(case_id))
         ]
         sequence_complete = True
         for stage in config.tov_stages:
@@ -81,7 +66,7 @@ def _completed_stellar_case_ids(
             fixed_complete = True
         else:
             case_fixed = fixed.loc[
-                fixed["case_id"].astype(str).eq(saved_case_id)
+                fixed["case_id"].astype(str).eq(str(case_id))
             ]
             expected_fixed = len(config.tov_stages) * len(
                 config.fixed_masses_msun
@@ -121,15 +106,8 @@ def _case_lifecycle_ledger(
         physical_case_id = str(
             getattr(row, "physical_case_id", case_id)
         )
-        accepted = case_id in accepted_set or physical_case_id in accepted_set
-        gate_report = gate_reports.get(
-            physical_case_id, gate_reports.get(case_id)
-        )
-        if gate_report is None:
-            raise KeyError(
-                f"missing raw-gate evidence for logical case {case_id!r} "
-                f"and physical case {physical_case_id!r}"
-            )
+        accepted = case_id in accepted_set
+        gate_report = gate_reports[case_id]
         failure = gate_report.get("first_failure")
         gate_status = gate_report.get("status")
         if accepted and gate_status != "accepted_raw_local_physics_gate":
@@ -141,9 +119,7 @@ def _case_lifecycle_ledger(
         endpoint_reason = retained.get("endpoint_reason")
         if accepted and endpoint_reason not in {
             "direct_bsk24_causal_endpoint",
-            "published_bsk24_fit_endpoint",
             "first_continuous_causal_crossing",
-            "formula_derived_cfl_domain_endpoint",
         }:
             raise ValueError(
                 f"accepted case {case_id!r} has no resolved retained endpoint"
@@ -193,18 +169,15 @@ def _case_lifecycle_ledger(
             stellar_calculation = "completed"
         else:
             stellar_calculation = "incomplete_or_failed"
-        saved_stellar_case_id = physical_case_id
-        if physical_case_id == _zero_amplitude_physical_case_id(plan.config):
-            saved_stellar_case_id = "direct"
         fixed_mass_status = _requested_fixed_masses_status(
             plan.config,
-            saved_stellar_case_id,
+            case_id,
             accepted=accepted,
             fixed_mass_rows=fixed_mass_rows,
         )
         maximum_mass_status = _maximum_mass_availability_status(
             plan.config,
-            saved_stellar_case_id,
+            case_id,
             accepted=accepted,
             maximum_mass_rows=maximum_mass_rows,
         )
@@ -280,34 +253,8 @@ def _case_lifecycle_ledger(
                 "stellar_calculation": stellar_calculation,
                 "clipping_or_repair": "none",
             }
-        if hasattr(row, "physical_case_id"):
-            record["physical_case_id"] = physical_case_id
-            record["is_physical_case_alias"] = bool(
-                getattr(row, "is_physical_case_alias", physical_case_id != case_id)
-            )
         rows.append(record)
-    if rows:
-        return pd.DataFrame(rows)
-    columns = [
-        "case_id",
-        "amplitude",
-        "epsilon_match_mev_fm3",
-        "anchor_mode",
-        "epsilon0_mev_fm3",
-        "sigma_mev_fm3",
-        "delta_mev_fm3",
-        "status",
-        "acceptance_domain",
-        "full_domain_gate_status",
-        "selected_domain_status",
-        "rejection_reason",
-        "pressure_reconstruction",
-        "stellar_calculation",
-        "clipping_or_repair",
-    ]
-    if "physical_case_id" in plan.case_table.columns:
-        columns.extend(("physical_case_id", "is_physical_case_alias"))
-    return pd.DataFrame(columns=columns)
+    return pd.DataFrame(rows)
 
 
 def _final_stage_rows(
