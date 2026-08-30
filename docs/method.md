@@ -117,22 +117,19 @@ and retains the relevant residuals. This is an effective one-fluid
 reconstruction; it does not determine microscopic particle fractions or
 species chemical potentials.
 
-## Fail-closed assessment and causal endpoint
+## Fail-closed assessment and model-specific causal policy
 
-The complete zero-amplitude control over the direct-BSk24 causal domain, or
-the complete nonzero raw proposal over the published analytical-fit domain,
-is assessed and retained as evidence before reconstruction or stellar work. Assessment is
-not limited to the ordinary output grid: deterministic geometry-scale nodes
-resolve the smootherstep ramp and four-sigma support, and bounded local
-refinement examines every discovered extremum basin. The saved resolution
-certificate must show that this continuous assessment and the retained
-tabulation resolve the analytical deformation. Narrow negative-`c_s^2`
-pockets and narrow superluminal islands are therefore not allowed to disappear
-between ordinary grid points. A proposal whose required resolution cannot be
-certified is explicitly unresolved and receives no downstream work.
+Every complete raw proposal is assessed and saved before reconstruction or
+stellar work. Assessment is not limited to the ordinary output grid:
+deterministic geometry-scale nodes resolve the smootherstep ramp and
+four-sigma support, and bounded local refinement examines every discovered
+extremum basin. Saved resolution evidence must certify the analytical
+deformation and retained tabulation. Narrow negative-`c_s^2` pockets and
+superluminal islands cannot disappear between ordinary grid points. An
+unresolved proposal receives no downstream work.
 
-Across the complete assessed raw domain, the workflow requires the declared
-finite and mechanical hard conditions, including
+Across the assessed raw domain, both models require the applicable finite and
+mechanical hard conditions, including
 
 ```text
 ε > 0
@@ -140,7 +137,8 @@ P >= 0
 0 < dP/dε.
 ```
 
-On the usable retained prefix it additionally requires
+The causal rule then differs by model. For BSk24, the usable retained prefix
+additionally requires
 
 ```text
 dP/dε <= 1,
@@ -148,16 +146,21 @@ dP/dε <= 1,
 
 with equality allowed at the included endpoint.
 
-The first continuously resolved crossing of the combined deformed
-`c_s^2 = 1` defines a
-case-specific causal endpoint and is itself included in the retained branch.
-A deformed proposal may reach that endpoint before or after direct BSk24
-without being rejected solely for the changed domain. A softened proposal can
-therefore remain usable above the direct endpoint when its combined
-`c_s^2 <= 1`. Once the first crossing is reached,
-all higher-energy-density values are outside the usable branch even if the raw
-proposal later returns below one. The complete raw proposal and diagnostics
-on both sides of the endpoint remain saved as evidence.
+When the combined proposal reaches `c_s^2 = 1`, the first continuously
+resolved crossing defines the case-specific BSk24 endpoint and is included in
+the retained branch. A proposal may reach it before or after the direct BSk24
+endpoint without being rejected solely for that domain change. A sufficiently
+softened proposal can instead remain causal through the governed upper end of
+the published fit; its retained endpoint records
+`published_bsk24_fit_endpoint`. Values after a first crossing are outside the
+usable branch even if the raw proposal later returns below one. The complete
+raw BSk24 proposal remains saved as evidence.
+
+For CFL, the full formula-derived domain from the finite-density surface to
+the governed upper endpoint is authoritative. The raw proposal must remain
+finite, mechanically stable, and causal throughout that domain. A
+superluminal crossing or other hard failure anywhere rejects the full CFL
+proposal; CFL reconstruction does not shorten the domain at a crossing.
 
 Failed values are never clipped, replaced, extrapolated, or relabelled as
 accepted. A rejected or unresolved case retains its raw result and exact
@@ -205,10 +208,11 @@ an established bare-CFL capability, so CFL rejects `diagnostics = "on"`.
 
 Fixed-mass observables require a true bracket on the successful stable branch.
 A maximum mass is marked resolved only after the turning point is bracketed
-and refined; the largest sampled mass is not automatically a maximum. When
-the retained causal endpoint is reached first, valid requested fixed-mass
-solutions remain available while the maximum mass is reported as unavailable
-or unresolved. That partial availability does not invalidate the EoS.
+and refined; the largest sampled mass is not automatically a maximum. For
+BSk24, an early retained causal endpoint can leave valid requested fixed-mass
+solutions available while maximum mass is reported as unavailable or
+unresolved. That partial availability does not invalidate the EoS. CFL enters
+stellar work only after its complete frozen domain has passed.
 
 The named `quick` and `strict` profiles expand to fixed internal grids,
 tolerances, and convergence stages. The plan shows those settings and the

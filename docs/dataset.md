@@ -1,199 +1,175 @@
-# Focused dataset pilot
+# Dataset workflows
 
-Open `notebooks/bsk24_dataset.ipynb` with the `eos-generation` kernel. Restart
-the kernel after updating package source. Keep `EXECUTE_REVIEWED_PLAN=False`
-for the first Run All, review the exact work/destination, then change only the
-flag to True. The notebook delegates to the existing public experiment API.
-Pure self-bound CFL data collection uses the parallel
-`notebooks/cfl_dataset.ipynb` route; it fixes the CFL surface anchor and
-microphysics while exposing the same deformation axes.
+Dataset-family profiles are experimental single-stage stellar workflows. They
+preserve the governed equations, model-specific raw gates, units, surface
+conventions, and failure semantics, but they are not renamed `strict` runs and
+do not provide a per-case stellar refinement envelope.
 
-The focused BSk24 notebook uses `precision="dataset_40_curves"`: one
-40-pressure sequence at `rtol=1e-10`, `atol=1e-12`, with tides at every point.
-The focused CFL notebook continues to use `precision="dataset_40"`.
-The automatic case-worker cap is six (fewer for small batches or lower-core
-machines), and nested pools are disabled. The preview displays the worker
-budget. This is the governed tight single-stage configuration, not a renamed
-full STRICT calculation. The existing BSk24 route has its prior evidence, and
-the CFL quick/strict interface has the separate acceptance record in
-[`cfl_acceptance.md`](cfl_acceptance.md). That record does not qualify the CFL
-`dataset_40` route: focused regression/passivity checks protect its software
-contract, while a separately authorized matched STRICT comparison and dataset
-execution review remain outstanding. Existing `quick`, `strict`, and
-dataset-family profile definitions are unchanged. The tracked notebooks are
-output-clean; separately archived result packets remain historical evidence
-and their parameter grids are preserved.
+Do not infer convergence, machine-learning suitability, or publication
+readiness from a profile name. Review the complete passive plan and qualify the
+profile against matched evidence for the intended scientific domain.
 
-For CFL, `dataset_40` is the only enabled dataset-family profile. It uses the
-same numerical expansion but remains explicitly experimental until a matched
-CFL STRICT comparison is authorized. CFL child packets select the `none` plot
-group, so no per-case or per-geometry scientific PNGs are rendered. All
-thermodynamic, sequence, fixed-mass, maximum-mass, rejection, surface-jump,
-provenance, and manifest data remain authoritative and complete.
+## Focused BSk24 notebook
 
-## Numerical contract
+[`../notebooks/bsk24_dataset.ipynb`](../notebooks/bsk24_dataset.ipynb) is the
+focused BSk24 curve route. Its active checked-in settings are a large negative-
+amplitude campaign: 90 geometries and 11 declared nonzero amplitudes. With the
+injected logical identity control, the passive plan contains 1,080 logical
+cases and deduplicates the physical baseline. It is not a starter notebook.
 
-`precision="dataset"` is a separate **experimental** profile, not a renamed
-STRICT calculation or a certificate of ML suitability. It requires
-`calculation="stellar"` and `diagnostics="off"`. QUICK and STRICT expansions
-are unchanged. Dataset retains all three STRICT thermodynamic stages and
-raw-domain certification grids; EoS equations, gates, units, causal endpoints,
-TOV/tidal equations, surface conventions and failure semantics are unchanged.
+The default `dataset_40_curves` profile requests:
 
-It calculates one 61-pressure stellar sequence at `rtol=1e-10`, `atol=1e-12`,
-with 1201 radial-profile samples (STRICT final-stage settings). It retains
-fixed-mass roots and the original 17-point-initial maximum-mass refinement.
-This replaces STRICT's 61/121/121 sequence repetitions, but does not weaken
-solver tolerances or pretend that sampled maxima are resolved M_max.
-The saved stellar status explicitly says `single_stage_no_numerical_envelope`.
-Finite thermodynamic residual warnings also remain visible.
+- the final 4,097/8,193-node thermodynamic stage;
+- one 40-pressure stellar stage at rtol `1e-10`, atol `1e-12`, with 1,201
+  radial integration samples and tides at every attempted sequence point;
+- complete raw-gate and reconstruction-admissibility evidence; and
+- only the five curve families: P–ε, sound speed, M–R, k2–M, and Lambda–M.
 
-Every sampled star still receives a tidal solve. Selective tidal sampling and
-the professor's ten aligned tuples are deferred pending separate validation.
-This first candidate tests reduced stellar repetition without changing those
-algorithms. A 61-point curve may undersample a feature even if its fixed-mass
-root is accurate; comparisons must include between-node curve errors and
-maximum-mass status changes, not only R(1.4).
+It does not request repeated thermodynamic residual processing, fixed-mass
+roots, maximum-mass refinement, or retained radial profiles. The
+`FIXED_MASSES` field remains in the public settings but is not solved by this
+profile.
 
-## Output
+After validation, the notebook builds a separate `plots/` directory with
+exactly five figures from saved packet tables. It creates no `STUDENT_VIEW/`,
+`EOS_DATA/`, persistent labels, or duplicate data tree. Reporting makes zero
+scientific solver calls.
 
-### Explicit 10-point candidate at tighter tolerances
+## Focused CFL notebook
 
-`precision="dataset_10_tighter"` uses one 10-pressure stellar stage at
-rtol=1e-11, atol=1e-13 and 1201 radial samples, with tides at every point.
-It changes both sequence sampling and ODE tolerances relative to `dataset`;
-comparisons cannot attribute their combined effect to either change alone.
-All thermodynamics/raw certification, pressure domain, surface convention,
-fixed-mass root settings and maximum-mass refinement rules remain unchanged.
-Ten sequence nodes do not mean ten total solver calls: fixed-mass and adaptive
-maximum-mass searches add work. Sparse sampling is not compensated or certified
-by tighter ODE tolerances. This single-stage pilot has no per-case stellar
-refinement envelope and is not STRICT certification. Existing profiles remain
-unchanged; this is an optional alternative to the focused notebook defaults.
+[`../notebooks/cfl_dataset.ipynb`](../notebooks/cfl_dataset.ipynb) is the
+parallel pure, bare, self-bound CFL route. Its checked-in settings contain
+three amplitudes at one geometry and use `dataset_40`, the only dataset-family
+profile enabled for CFL.
 
-### Explicit sampling-only candidate at tight tolerances
+The profile retains the strict-family thermodynamic/raw-domain stages, one
+40-pressure stellar stage at rtol `1e-10`, atol `1e-12`, fixed-mass roots,
+adaptive maximum-mass refinement, all-node tides, and the exact-once
+finite-density surface-jump evidence. Per-child scientific PNG groups are
+disabled; tables and statuses remain authoritative.
 
-`precision="dataset_20"` is the 20-point sampling-only candidate. Relative to
-`dataset`, only the stage label and sequence count change. It retains
-rtol=1e-10, atol=1e-12, 1201 radial samples, all-node tides, STRICT
-thermodynamics/raw certification, fixed-mass roots and maximum-mass rules.
-It is not full STRICT certification. Sparse curves can miss between-node
-features despite tight integration; compare saved reference curves, not just
-fixed-mass roots. Existing profiles are unchanged.
+After aggregate validation, the notebook creates one `CFL_DATASET/` directory
+with exactly seven files:
 
-`precision="dataset_40"` changes only the dataset stellar stage name and
-sequence count to 40 logarithmically spaced central pressures. It retains
-rtol=1e-10, atol=1e-12, 1201 radial samples, tides at all 40 points, all STRICT
-thermodynamic stages/raw certification, fixed-mass roots and maximum-mass rules.
-It is single-stage experimental evidence, not full STRICT certification.
-It remains the CFL dataset-notebook default. Its pressure grid is not nested in the
-61-point grid; sparse-curve interpolation and turning-point availability need
-separate review. Tight integration alone does not certify curve sampling.
+```text
+CFL_DATASET/
+├── cfl_eos_data.csv
+├── cfl_stellar_data.csv
+├── pressure_energy_density.png
+├── speed_of_sound.png
+├── mass_radius.png
+├── k2_mass.png
+└── lambda_mass.png
+```
 
-### Explicit tolerance-only candidate
+`cfl_0` is the direct baseline. Accepted nonzero deformations receive
+`cfl_1`, `cfl_2`, ... in deterministic geometry/case order. Both CSVs retain
+the canonical experiment, geometry, and case identities. Rejected proposals
+remain in the sealed packet and are not exported as accepted EoSs.
 
-`precision="dataset_relaxed"` is a separately identified experimental variant
-for the same notebook. It changes only the stellar stage name and integration
-tolerances to `rtol=1e-8`, `atol=1e-10`. The 61 pressure nodes, 1201 radial
-samples, all-node tides, thermodynamic stages/certification, fixed-mass root
-settings and maximum-mass refinement rules remain those of `dataset`.
-It is not STRICT certification and has no per-case refinement envelope.
-Changing the focused BSk24 notebook away from `dataset_40_curves` requires a fresh
-passive preview. Validate timing and all required observables on matched
-geometries before deciding whether this candidate suits an ML accuracy budget.
-No existing QUICK, STRICT or dataset profile is redefined by this addition.
+The reporting adapter reads required saved tables once and calls no solver. A
+failed presentation must not trigger a scientific rerun; the notebook retains
+the completed in-memory result so its reporting cell can be retried.
 
-`precision="dataset_relaxed_80"` is the separately named 80-point variant.
-Relative to `dataset_relaxed`, only the stellar stage label and sequence count
-change: 80 logarithmically spaced central pressures instead of 61, with tides
-at every point. It retains rtol=1e-8, atol=1e-10 and 1201 radial-profile samples.
-This alternative does not redefine existing profiles. The two grids are not nested;
-curve comparisons must distinguish directly matched pressure nodes from
-interpolation. More samples do not tighten the integration of an individual
-star or guarantee a resolved maximum mass. All unavailable statuses remain.
+## Passive-to-explicit procedure
 
-### BSk24 curve-only 40-point production profile
+For either focused notebook:
 
-`precision="dataset_40_curves"` is the BSk24 dataset-notebook default. It
-uses the same final 4097/8193-node thermodynamic grid and the same 40 stellar
-pressures, ODE tolerances, and all-node tidal calculation as `dataset_40`.
-It requests only the five curve families: P-epsilon, sound speed, M-R, k2-M,
-and Lambda-M. Repeated thermodynamic stages, residual tables and summaries,
-fixed-mass roots, maximum-mass refinement, and retained radial profiles are
-not requested. The raw fail-closed gate, reconstruction admissibility checks,
-accepted/rejected ledger, exact A=0 identity, source/environment hashes, and
-packet manifest remain authoritative.
+1. Activate the `eos-generation` environment and restart the kernel after
+   changing installed package source.
+2. Leave `EXECUTE_REVIEWED_PLAN = False` and run all cells.
+3. Review geometry/case counts, physical aliases, expanded profile, worker
+   budget, solver targets, and the new destination.
+4. Change only the execution flag to `True` and run all again in the same
+   kernel.
 
-Each child saves the requested numerical curves once in
-`thermodynamic_profiles.csv` and `stellar_sequences.csv`; raw-gate values are
-retained separately as mandatory rejection evidence. The notebook passes
-`create_student_view=False`, does not build `EOS_DATA`, and renders directly
-from validated packet tables. Its sibling `plots/` folder contains exactly
-five PNGs plus a small provenance record and checksum manifest. Plotting makes
-zero scientific solver calls.
+The preview makes zero solver calls and writes nothing. Source, settings,
+environment, worker, kernel, plan, or destination drift requires a new
+disabled preview. Up to six case workers may be selected, bounded by case
+count and available logical CPUs; nested pools remain disabled.
 
-The authoritative experiment preserves all mandatory evidence, statuses,
-configuration/source hashes and manifests. Technical packet plot inventories
-record every unused plot as skipped via the explicit `none` group. No extra
-technical PNGs are rendered. Both focused routes skip `STUDENT_VIEW`; their
-validated technical packets remain the sole evidence archives.
-Skipped response figures still record mandatory final-stage population and
-tidal-completeness metadata. The unchanged validator checks this evidence even
-when a figure is not rendered.
+## Dataset-family profiles
 
-The focused CFL notebook publishes one flat `CFL_DATASET/` directory with
-exactly seven files: `cfl_eos_data.csv`, `cfl_stellar_data.csv`,
-`pressure_energy_density.png`, `speed_of_sound.png`, `mass_radius.png`,
-`k2_mass.png`, and `lambda_mass.png`. `cfl_0` is the direct baseline and
-accepted nonzero deformations are numbered `cfl_1`, `cfl_2`, ... in stable
-geometry/case order. Both tables retain canonical identities. Curves preserve
-failed-attempt gaps and require exact tidal-valid status; the plotted stellar
-prefix ends at the sampled peak and is not an independent stability proof.
-Raw rejected/superluminal evidence remains in the validated packet. Reporting
-reads each required saved table once and never invokes solvers.
+All profiles below require `calculation = "stellar"` and
+`diagnostics = "off"`.
 
-Changing source necessarily changes source-bound plan identities. Never reuse
-a pre-change reviewed plan or rewrite an old packet's hashes. Historical
-packets require their archived matching source for source-equivalent validation.
-Physical H labels still use exact EoS definitions, not the numerical profile.
+| Profile | Models | Single stellar stage |
+|---|---|---|
+| `dataset` | BSk24 | 61 pressures, rtol `1e-10`, atol `1e-12` |
+| `dataset_10_tighter` | BSk24 | 10 pressures, rtol `1e-11`, atol `1e-13`; sampling and tolerance change together |
+| `dataset_20` | BSk24 | 20 pressures, rtol `1e-10`, atol `1e-12` |
+| `dataset_40` | BSk24, CFL | 40 pressures, rtol `1e-10`, atol `1e-12` |
+| `dataset_40_curves` | BSk24 | Final thermodynamic stage and 40-pressure curve-only output at rtol `1e-10`, atol `1e-12` |
+| `dataset_relaxed` | BSk24 | 61 pressures, rtol `1e-8`, atol `1e-10` |
+| `dataset_relaxed_80` | BSk24 | 80 pressures, rtol `1e-8`, atol `1e-10` |
 
-## Saved-data subset helpers
+Except for `dataset_40_curves`, these profiles retain fixed-mass roots and
+adaptive maximum-mass assessment. Every profile requests tides at all sequence
+nodes. The pressure grids for different point counts are not necessarily
+nested. Tighter ODE tolerances do not compensate for sparse curve sampling,
+and more points do not tighten the integration of an individual star.
 
-Three campaign helpers operate only on checksum-bound saved data. They do not
-run thermodynamic, TOV, or tidal solvers, and they never modify the parent
-dataset or its sealed source packets:
+## Saved-data campaign adapters
 
-1. `notebooks/select_combined_hadronic_subset.py` verifies the combined parent
-   and referenced source packets, then writes a separate dry-run selection and
-   coverage report.
-2. `notebooks/materialize_balanced_hadronic_subset.py` accepts only a verified
-   dry run whose validation gates all passed and atomically writes a new
-   derivative dataset.
-3. `notebooks/replot_balanced_hadronic_subset.py` renders a separate plot packet
-   from the verified derivative and its saved parent data.
+The scripts below consume completed, checksum-bound saved data only. They do
+not run thermodynamic, TOV, tidal, fixed-mass, or maximum-mass solvers, and they
+do not modify source packets. All sources and new destinations must remain
+below the same checkout's ignored `runs/` directory.
 
-Use each command from a trusted, reviewed checkout root and pass that same root
-with `--repository-root .`. The helpers load only sibling code from the checkout
-that owns the scripts and reject a different caller-selected root. Parent, dry-run,
-derivative, and replot destinations must all remain below the checkout's
-ignored `runs/` directory. Choose new, unoccupied destinations; preserve the
-inputs for audit and recovery.
+### Combine BSk24 dataset runs
+
+At least two validated source-run directories are required:
 
 ```powershell
-python notebooks/select_combined_hadronic_subset.py --repository-root . --parent runs/PARENT --destination runs/SELECTION_DRYRUN --target-count 2000 --selection-policy balanced
-python notebooks/materialize_balanced_hadronic_subset.py --repository-root . --parent runs/PARENT --dryrun runs/SELECTION_DRYRUN --destination runs/BALANCED_DERIVATIVE
+python notebooks/build_combined_hadronic_dataset.py --repository-root . --source-run runs/RUN_A --source-run runs/RUN_B --destination runs/COMBINED_BSK24
+```
+
+The adapter writes a separate manifested combined dataset, a six-column
+stellar ML table, mappings/provenance, and five figures. It preserves original
+packets and rejects overwrite.
+
+### Build a current cumulative snapshot
+
+The cumulative adapter uses a completed current experiment and the matching
+`quick` or `strict` evaluation scope:
+
+```powershell
+python notebooks/build_combined_all_data.py --repository-root . --current-experiment runs/CURRENT_EXPERIMENT --destination runs/COMBINED_SNAPSHOT --precision strict
+```
+
+It publishes a non-authoritative saved-data snapshot with cumulative M–R and
+sound-speed plots and explicit source indexes.
+
+### Select and materialize a balanced BSk24 subset
+
+Selection is deliberately two-stage: first publish a dry-run selection report,
+then materialize only a report whose validation gates passed.
+
+```powershell
+python notebooks/select_combined_hadronic_subset.py --repository-root . --parent runs/COMBINED_BSK24 --destination runs/SELECTION_DRYRUN --target-count 2000 --selection-policy balanced
+python notebooks/materialize_balanced_hadronic_subset.py --repository-root . --parent runs/COMBINED_BSK24 --dryrun runs/SELECTION_DRYRUN --destination runs/BALANCED_DERIVATIVE
 python notebooks/replot_balanced_hadronic_subset.py --repository-root . --source runs/BALANCED_DERIVATIVE --destination runs/BALANCED_REPLOT
 ```
 
-These commands describe the local workflow; no generated selection, derivative
-dataset, rendered plot packet, or other `runs/` content belongs in Git.
+Whole EoSs are selected; curve rows are not sampled independently. Parent,
+dry-run, derivative, and replot destinations must be distinct and unoccupied.
+Preserve all inputs for audit and recovery.
 
 ## Qualification boundary
 
-Do not assume suitability for a 2,000-EoS campaign from the profile name.
-Benchmark against archived STRICT evidence over the intended sign/geometry
-domain, quantify errors for all requested observables, retain unavailable
-statuses, and agree an accuracy budget before final ML export. Where only
-QUICK references exist, comparison is exploratory and cannot certify STRICT
-accuracy. Runtime savings must be measured on matched cases; no universal
-speedup factor is promised.
+Before using a dataset profile for a large study:
+
+- compare matched geometries against archived `strict` evidence;
+- quantify errors for every required thermodynamic and stellar observable,
+  including between-node curve behavior;
+- preserve rejected cases, failed-attempt gaps, and explicit unavailable
+  statuses;
+- verify maximum-mass availability rather than substituting sampled peaks;
+- document the accepted accuracy budget and split ML data by whole physical
+  EoSs/geometries to avoid leakage; and
+- measure runtime on the intended hardware without promising a universal
+  speedup.
+
+The CFL `dataset_40` route has software/passivity coverage but no matched
+campaign-level `strict` qualification. Its output must remain experimental
+until that comparison is performed.

@@ -1,445 +1,254 @@
 # Results
 
-Every authorized execution writes one self-contained result packet below the
-selected `runs/` destination. The destination must be new; a result is not
-silently overwritten.
+Every authorized execution writes one new aggregate experiment below the
+checkout-local `runs/` tree. Existing destinations are never silently
+overwritten. Generated results are ignored by Git and do not belong in the
+source repository.
 
-## Start with validation and status
+## Validate before interpreting
+
+Use the path printed by execution:
 
 ```powershell
-bsk24-trial validate runs/my-experiment
-bsk24-trial status runs/my-experiment
+bsk24-trial validate runs/experiment_0123456789ab
+bsk24-trial status runs/experiment_0123456789ab
 ```
 
-Validation is read-only. It checks the packet schema, strict JSON, exact file
-manifest, configuration and source identities, and hard scientific validity
-before tables are treated as trusted saved results. Availability is reported
-separately: a structurally sound, hard-valid packet can be scientifically
-partial when a requested observable is explicitly unavailable. Such a packet
-remains loadable; the status fields and reasons determine which observables
-may be used.
+`validate` is read-only and is the diagnostic entry point. It checks aggregate
+and child schemas, strict JSON, exact manifests, configuration/source
+identity, hard scientific validity, and observable-availability evidence. Add
+`--json` for the complete report.
 
-In a child validation report, `scientific_output_validity` is the hard gate
-and `scientific_output_availability` is `complete` or `partial`. The aggregate
-experiment report summarizes the latter as `scientific_availability_status`.
-An availability limitation is reported as a warning/limitation, not rewritten
-as a hard-validity failure.
+`status` strictly loads a completed, currently valid experiment and prints a
+compact summary. It is not a replacement for the failure detail in
+`validate`.
 
-`status` gives a compact health summary: matter model, calculation and
-precision, geometry count, identity and convergence status,
-accepted/rejected counts, and bounded rejection-reason counts. Detailed
-observables remain in the saved tables and plots. Read the summary before
-opening them.
+Hard validity and availability are separate:
 
-## Packet layers
+- `scientific_output_validity` is the child hard gate;
+- `scientific_output_availability` is `complete` or `partial`; and
+- the aggregate reports `scientific_availability_status`.
 
-The exact files depend on `calculation` and `diagnostics`, but a packet records
-these layers:
+A hard-valid packet may be scientifically partial when an explicitly
+requested observable is unavailable. That limitation remains visible without
+being rewritten as an invalid EoS.
 
-| Layer | Contents |
+## Aggregate and child packets
+
+The saved hierarchy is:
+
+```text
+experiment_<settings-hash-prefix>/
+├── experiment.json
+├── experiment_config.json
+├── reviewed_plan.json
+├── reproduction_plan.json
+├── SHA256SUMS.txt
+└── geometry_NNN/
+    ├── metadata.json
+    ├── complete_configuration.json
+    ├── raw_gate_report.json
+    ├── case_ledger.csv
+    ├── thermodynamic_profiles.csv
+    ├── ... calculation-dependent evidence ...
+    └── SHA256SUMS.txt
+```
+
+Exact child files depend on calculation, precision, diagnostics, accepted
+cases, and requested plot groups. The packet layers are:
+
+| Layer | Saved evidence |
 |---|---|
-| Definition | Canonical user settings, matter model, expanded numerical profile, deterministic hash, plan, physical case IDs, and any logical aliases |
-| Lifecycle | Run state and one accepted/rejected outcome with an exact reason for every executed physical case; nonexecuting logical aliases retain their mapping |
-| Thermodynamics | Complete raw gate profiles, continuous-resolution evidence, case-specific retained endpoints, reconstructed profiles, residuals, identity checks, and convergence status |
-| Stellar | Domain-bounded sequences, fixed-mass observables, tidal capability status, and independent turning-point availability when requested |
-| Diagnostics | Applicable radial profiles and deformation-support tables when enabled |
-| Figures | Plots rendered from saved tables and their inventory |
-| Provenance | Environment versions, source hashes, two-step reproduction commands, and exact SHA-256 manifest; machine-specific executable and environment paths are deliberately omitted |
+| Definition | Canonical settings, matter model, expanded numerical profile, plan/configuration hashes, physical case IDs, and logical aliases |
+| Lifecycle | One accepted, rejected, or unresolved outcome with a reason for each executed physical proposal, plus nonexecuting alias mappings |
+| Thermodynamics | Complete raw gate profiles, model-specific domain evidence, reconstructed accepted profiles, identity checks, and requested convergence/residual data |
+| Stellar | Domain-bounded sequences, fixed-mass outcomes, tidal capability evidence, and independent maximum-mass availability when requested |
+| Diagnostics | Applicable extended BSk24 radial/support tables when enabled |
+| Figures | Packet plots rendered from saved tables and an explicit plot inventory |
+| Provenance | Source and runtime identities, portable two-step reproduction commands, and exact SHA-256 manifests |
 
-The packet retains the fully expanded profile behind `quick` or `strict`.
-The short public configuration therefore remains auditable.
+CFL packets additionally retain the frozen formulation/parameter IDs and
+hashes, formula-derived surface/domain values, complete-domain gate evidence,
+and finite-density surface-jump records.
 
-A CFL packet additionally retains the full frozen baseline record, parameter
-SHA-256, formulation and domain IDs, formula-derived surface and endpoint
-values, and the surface-anchored deformation profile version. Absence of
-`matter_model` remains the canonical legacy BSk24 representation; validators
-must not rewrite an old packet merely to insert the default.
+## Cases, identities, and aliases
 
-Reproduction remains an explicit two-step action: first run the saved passive
-plan command, then copy its hash into the saved `run --plan-hash ...
---execute` command. The hash binds authorization to the reviewed settings and
-destination; it is not an optional label.
+Inside each `geometry_NNN` packet:
 
-## Accepted and rejected cases
+```text
+geometry -> case_id -> sampled row
+```
 
-An accepted case passed the hard checks that were actually requested and
-reached every applicable hard-valid stage. It is not a promise that every
-optional observable is available, and it is not a claim of microscopic
-composition or observational preference. In particular, a case can retain
-valid requested fixed-mass observables while its maximum mass is unavailable
-because the causal endpoint is reached before a turning point is established.
+`case_id = direct` identifies the saved analytical baseline in applicable
+thermodynamic and stellar tables. A deterministic amplitude-zero proposal is
+the identity control. Across a Cartesian experiment, one geometry owns the
+physical zero-amplitude calculation and all other zero rows are nonexecuting
+logical aliases to it. The baseline is therefore calculated and plotted once,
+not once per geometry.
 
-A rejected or unresolved case is a valid recorded outcome. It includes the
-failed gate or unresolved certificate and available location evidence. The
-complete raw proposal is preserved, but the case receives no reconstructed or
-stellar values; missing entries must remain explicitly unavailable rather
-than being filled with zero, interpolated across a failure, or repaired for
-presentation.
+Nonzero case IDs encode readable fragments plus a digest of the complete
+deformation coordinates. Use `case_ledger.csv` as the mapping authority; do
+not infer complete scientific identity from the readable prefix. Across
+experiments, retain the experiment/settings hash and geometry identity as
+well as `case_id`.
 
-An accepted proposal can have a shorter or longer domain than direct BSk24.
-Each nonzero proposal is assessed within the published analytical-fit domain,
-and its retained endpoint is the first continuously resolved combined
-`c_s^2 = 1` crossing, included in the profile. Raw samples after that crossing remain evidence only; a later
-return below one does not reopen the usable branch. All reconstructed and
-stellar values must lie at or below the saved case-specific endpoint.
+## Accepted, rejected, and unresolved proposals
 
-For a BSk24 or CFL Cartesian sweep, distinguish logical cases from executed
-physical cases. Each geometry has a logical `A = 0` control, but only the
-deterministic owner geometry executes the undeformed baseline. The other zero
-rows must point to that physical case as nonexecuting aliases. Counts and
-estimates are incorrect if aliases are treated as repeated scientific work
-or as missing outcomes.
+An accepted proposal passed the requested model-specific hard checks and
+reached every applicable hard-valid stage. Acceptance is not an observational
+preference, a microscopic composition claim, or a guarantee that every
+optional observable is available.
 
-## Reading thermodynamic plots
+A rejected or unresolved proposal remains a valid recorded outcome. Its raw
+proposal and failure evidence are saved, but it receives no reconstructed
+profile or stellar sequence. Missing downstream values must remain missing;
+do not fill, smooth, clip, or extrapolate across the failure.
 
-The deformation is local in `c_s^2`, but pressure is an integral of
-`dP/dε`. A pressure difference can therefore persist above the main
-deformation region. Overlapping curves at small amplitudes are not by
-themselves a failure; use the saved differences and residual tables to judge
-scale.
+The causal policy is model-specific:
 
-Plots showing deformation support locate where a chosen fraction of the
-windowed Gaussian is present in the star. Radial fraction and enclosed-mass
-fraction answer different questions: one measures geometric position and the
-other measures how much stellar mass lies inside that position.
+- For BSk24, an otherwise valid proposal may retain the certified prefix
+  through its first continuous `c_s^2 = 1` crossing. The crossing is included,
+  and raw values after it are evidence outside the usable branch. A later
+  return below one does not reopen the EoS.
+- For CFL, the entire formula-derived domain is authoritative. A mechanical or
+  causal failure anywhere rejects the whole proposal; CFL is not truncated to
+  a passing prefix.
 
-## Reading stellar results
+## Stellar availability
 
-Only successful stable-prefix rows may be used for fixed-mass interpolation.
-A requested mass without a true bracket, or whose required central pressure
-would exceed the retained EoS endpoint, is unavailable. Other requested masses
-that were validly solved inside the endpoint remain usable.
+Only successful stable-prefix evidence may support fixed-mass interpolation.
+A target is unavailable when it lacks a true bracket, the solver evidence is
+invalid, or its required central pressure would exceed the EoS domain. Other
+targets solved inside that domain remain usable.
 
-The maximum-mass status must distinguish:
+Maximum-mass assessment must distinguish:
 
 - a bracketed and refined turning point;
-- a sequence truncated by its valid domain;
-- solver failure before a turning point;
-- a merely highest sampled mass.
+- an EoS/domain endpoint reached before a turning point;
+- solver failure before resolution; and
+- the largest sampled mass.
 
-Do not reinterpret the last category as a resolved maximum. Tidal quantities
-must likewise carry an explicit valid capability status; a background TOV
-solution alone does not guarantee a valid tidal result.
+Only the first is a resolved maximum mass. The largest sampled model must not
+be substituted for an unresolved result. For BSk24, a shortened causal branch
+can preserve valid fixed-mass results while maximum mass remains unavailable.
 
-Maximum-mass resolution is an availability result, not a substitute for EoS
-validity. When the retained endpoint prevents a turning-point bracket, the
-maximum-mass value and threshold comparison remain unavailable rather than
-false, while independently solved fixed-mass rows are preserved.
+Tidal quantities require an explicit valid capability status in addition to a
+successful background TOV model. For a bare CFL star, the solver must record
+one negative outward `y` jump at the finite-density zero-pressure surface and
+use the corrected vacuum-side value for `k2`. Missing, repeated, wrong-sign,
+or inconsistent jump evidence fails the CFL tidal capability closed.
 
-For a bare CFL star, the zero-pressure surface has finite inner energy
-density and vacuum outside. A successful CFL tidal row must show exactly one
-negative outward `y` jump and retain the jump count, surface pressure, inner
-and outer energy densities, `y_before`, `delta_y`, and `y_after`. The corrected
-vacuum-side `y` is the value used for `k2`. Missing, repeated, wrong-sign, or
-algebraically inconsistent evidence invalidates the tidal capability. CFL
-extended radial diagnostics are unsupported in 1.2; their absence is expected
-and must carry the declared capability status rather than be inferred from a
-BSk24 diagnostic table.
+CFL extended radial diagnostics are unsupported in 1.2.0. Their absence is
+expected and must not be interpreted using BSk24 diagnostic semantics.
 
-## Saved plots
+## Primary CSV tables
 
-The CFL notebook adds a separate `plots/` sibling beside
-the sealed experiment. It contains sweep-wide M–R, Λ–M, and k₂–M PNGs,
-thermodynamic PNGs, a case catalogue, final-stage fixed-mass and maximum-mass
-tables, an availability inventory, reporting-source hashes, and its own
-manifest. No scientific packet bytes are changed. A missing tidal capability
-produces an explicit unavailable/partial status, not an invented curve.
+| File | One row represents |
+|---|---|
+| `case_ledger.csv` | One logical deformation proposal with lifecycle, retained-domain, and final availability statuses |
+| `thermodynamic_profiles.csv` | One sampled total-energy-density point for `direct` or an accepted reconstructed case |
+| `stellar_sequences.csv` | One attempted stellar model for a case and numerical stage |
+| `fixed_mass_observables.csv` | One requested target-mass outcome, solved or explicitly unavailable |
+| `maximum_mass_screening.csv` | One turning-point/maximum-mass assessment for a case and stage |
 
-Local labels `C000000`, `C000001`, etc. are presentation aids only. Retain the
-canonical physical IDs when comparing experiments. The A=0 physical case is
-drawn once; rejected cases remain in the catalogue but not accepted-EoS
-plots. All numerical stages and logical aliases remain in the source packet.
-Full sampled curves may include unstable configurations; only governed
-stable-prefix brackets support fixed-mass results. A maximum-mass threshold
-comparison is distinct from physical EoS validity.
+A thermodynamics-only packet correctly has no stellar tables. The
+`dataset_40_curves` profile intentionally omits fixed-mass and maximum-mass
+tables because those calculations are not requested.
 
-The focused `cfl_dataset.ipynb` route deliberately does not build this
-seven-figure CFL experiment view or any scientific packet PNGs. Its child
-plot inventories mark all technical figures skipped while retaining mandatory
-population/completeness evidence. After all calculations validate, it creates
-one flat `CFL_DATASET/` directory containing two labelled CSVs and the five
-requested figures: pressure, sound speed, M–R, k2–M, and Lambda–M. There is no
-student view, global catalogue, copied-table set, reporting manifest, or extra
-inventory. The adapter consumes the already validated tables once and performs
-zero scientific solver calls.
+Never compare spreadsheet row numbers across cases. Group by case and use the
+saved physical coordinate, stage, and status. Complete column definitions,
+ordering, join keys, and examples are in the [CSV data guide](csv-data-guide.md).
+
+## Plotting
+
+Inspect the packet plot inventory without writing:
 
 ```powershell
-bsk24-trial plot runs/my-experiment
+bsk24-trial plot runs/experiment_0123456789ab
 ```
 
-The passive form lists or inspects plots already derived from saved tables.
-Plotting must not call the thermodynamic or stellar solver. If a requested
-plot family is absent, first check whether its required calculation and
-capability exist in the packet.
-
-To regenerate applicable figures from the already saved, manifest-verified
-tables, authorize that mutation explicitly:
+Explicitly regenerate applicable packet figures from validated saved tables:
 
 ```powershell
-bsk24-trial plot runs/my-experiment --overwrite
+bsk24-trial plot runs/experiment_0123456789ab --overwrite
 ```
 
-This can replace saved figure files and reseal their manifests, but it still
-does not rerun thermodynamics or stellar structure.
+The latter may replace figure files and reseal manifests, but it does not call
+thermodynamic, TOV, tidal, fixed-mass, or maximum-mass solvers.
 
-Local packets are intentionally ignored by Git. Preserve important runs in
-your own archival or publication workflow together with their manifest; do
-not add large generated results to the source repository.
+The Python result API has a deliberately different shape. Read
+`result.plot_inventory` for passive inspection. Calling `result.plot()` asks
+the packet plotter to generate applicable figures and reseal manifests; it
+does not act as an inventory getter. Existing figure replacement requires
+`result.plot(overwrite=True)`. Neither API plotting path reruns scientific
+solvers.
 
-## Student view from the notebook
+Plot interpretation remains status-driven. Curves can overlap at small
+amplitude; pressure responses can persist above the local `c_s^2` deformation
+because pressure is an integral. Stellar sequence plots can contain attempted
+models beyond the sampled peak; a displayed curve is not by itself a
+turning-point or radial-stability certificate.
 
-After a notebook execution completes and the authoritative experiment passes
-validation, the notebook creates a separate `STUDENT_VIEW/` beside the sealed
-experiment directory. It contains copied PNGs, primary CSV data, optional CSV
-diagnostics, a data dictionary, and its own exact checksum manifest. The
-notebook prints clickable locations for the view and the authoritative
-packet. Because the notebook file lives below `notebooks/`, these links use
-`../runs/...` paths so they resolve correctly in both VS Code and Jupyter.
+## Notebook-derived views
 
-The student view is derived and non-authoritative. It never changes the
-experiment packet, is not included in the packet manifest, and is created
-from saved artifacts without rerunning thermodynamics, stellar structure,
-tidal work, or plotting. An existing student-view destination is rejected
-rather than overwritten.
+Notebook views are derived, non-authoritative siblings of the sealed
+experiment. Their inputs are validated saved tables, and their reporting steps
+make zero scientific solver calls.
 
-Its student-facing structure is:
+| Route | Derived presentation |
+|---|---|
+| General BSk24 notebook | `STUDENT_VIEW/`, persistent-label `EOS_DATA/`, and combined `plots/` |
+| Focused BSk24 dataset notebook | Exactly five combined figures in `plots/`; no `STUDENT_VIEW/` or `EOS_DATA/` |
+| General CFL notebook | `STUDENT_VIEW/` plus a separately manifested combined `plots/` view with run-local C labels |
+| Focused CFL dataset notebook | `CFL_DATASET/` containing exactly `cfl_eos_data.csv`, `cfl_stellar_data.csv`, and five combined figures |
 
-```text
-STUDENT_VIEW/
-├── 01_READ_ME_FIRST.md
-├── 03_PRIMARY_DATA/
-│   └── geometry_NNN/
-├── 04_OPTIONAL_DIAGNOSTICS/
-│   └── geometry_NNN/
-├── DATA_DICTIONARY.md
-└── SHA256SUMS.txt
-```
+### `STUDENT_VIEW/`
 
-The CSV files are byte-for-byte copies of saved artifacts. Packet-level PNGs
-remain in the sealed technical packets; the notebook-facing combined figures
-are published only in the sibling `plots/` folder described below. The two
-Markdown guides and `SHA256SUMS.txt` describe and checksum the student view;
-they do not become part of the authoritative experiment. For a stellar case,
-student-facing eligibility requires all explicitly requested fixed masses to
-have succeeded at the reporting stage; it does not require a resolved maximum
-mass. Fixed-mass and maximum-mass availability remain separate explicit
-statuses in the copied data.
+Where created, `STUDENT_VIEW/` contains copied primary CSVs, optional
+diagnostic CSVs, guidance, and its own exact manifest. It never changes the
+authoritative experiment and rejects an existing destination. For stellar
+cases, eligibility requires every explicitly requested fixed mass to succeed
+at the final reporting stage; it does not require maximum-mass availability.
 
-### Automatic combined accepted plot folder
+### Persistent BSk24 `EOS_DATA/`
 
-After every successful notebook execution, the notebook creates one flat
-`plots/` directory beside `STUDENT_VIEW/` and the authoritative experiment:
+The general BSk24 notebook can publish friendly H labels and labelled primary
+table copies through an append-only shared registry under
+`runs/eos_catalogue/`. `H000000` is the first registered BSk24 baseline.
+Precision and reporting changes do not make an evaluation a new physical EoS,
+but source-definition changes conservatively do.
 
-```text
-plots/
-├── window_profiles.png
-├── gaussian_realization.png
-├── raw_cs2_full_domain.png
-├── raw_cs2_anchor_core_zoom.png
-├── delta_cs2.png
-├── pressure_response.png
-├── baryon_density_response.png
-├── effective_baryon_enthalpy_response.png
-├── gamma_eff_response.png
-├── thermodynamic_residuals.png
-├── stellar_mr_k2_lambda.png                 # stellar runs only
-├── observable_response_vs_amplitude.png     # when applicable
-├── observable_response_vs_delta.png         # when applicable
-├── a0_identity.png
-├── accepted_case_index.csv
-├── included_packets.csv
-├── plot_inventory.csv
-├── plot_generation_provenance.json
-├── README.md
-└── SHA256SUMS.txt
-```
+Archive the registry with its data. Do not reset, edit, or renumber it, and do
+not join independent checkouts on an H label alone. Friendly labels never
+replace canonical case IDs or packet provenance. The focused BSk24 dataset
+notebook does not build this view.
 
-Applicable optional diagnostic figures are added to this same flat directory;
-no per-case or per-geometry plot subdirectories are created there. Every PNG
-combines accepted cases from the current completed experiment only. Historical
-experiments are not mixed automatically. Rejected cases are excluded, while
-their count remains explicit in provenance. Deterministically identical
-direct/A=0 curves are drawn once.
+### CFL labels
 
-The builder verifies every consumed table against its packet's sealed
-`SHA256SUMS.txt`. Stellar plots use only final-stage saved rows and preserve
-failed attempted-index gaps. Plotting makes zero thermodynamic, TOV, tidal, or
-maximum-mass solver calls and never changes authoritative packets. Existing
-destinations are rejected rather than overwritten.
+The general CFL notebook's C labels are local presentation labels. The focused
+CFL dataset route instead uses deterministic run-local `cfl_0`, `cfl_1`, ...
+labels in its two export tables. Neither scheme replaces canonical experiment,
+geometry, and case identities.
 
-Publication of the completed view remains an atomic same-volume directory
-rename with no overwrite. On Windows, bounded retries handle transient sharing
-violations from an editor or scanner; every retry rechecks that the destination
-has not appeared, and a persistent failure removes the unpublished staging
-directory without changing the sealed packet.
+## Reproduction and archival
 
-For the exact geometry and case ordering, complete primary-column meanings,
-analysis examples, and leakage-safe machine-learning preparation, read the
-dedicated [`csv-data-guide.md`](csv-data-guide.md).
+Each completed experiment saves portable two-step reproduction commands:
 
-## From an experiment to one CSV row
+1. create and inspect a fresh passive plan from the saved configuration; and
+2. copy that fresh plan's hash into the saved `run --plan-hash ... --execute`
+   command.
 
-### Persistent friendly EoS labels
+The hash binds authorization to settings, source/runtime identity, and
+destination. Do not edit a packet to make source hashes agree, reuse a stale
+hash, or overwrite the original. Reproduction creates a new packet below
+`runs/reproductions/`.
 
-This shared-registry section applies to the standard notebook views and the
-BSk24 dataset route. The focused CFL dataset route instead uses run-local
-`cfl_0`, `cfl_1`, ... labels in its two `CFL_DATASET/` tables and creates no
-catalogue registry or alias CSV.
+In release 1.2.0, the legacy `notebook` field in each child
+`reproduction.json` names `notebooks/bsk24_experiment.ipynb` for both matter
+models. That compatibility field does not select the workflow. Use the saved
+model, configuration, and reproduction commands—and choose the model-specific
+notebook listed above—when reproducing a CFL result.
 
-After validation, the notebook publishes a new flat `EOS_DATA/` directory
-beside `STUDENT_VIEW/`, `plots/`, and the authoritative experiment. It contains:
-
-- `eos_catalogue.csv`: one row per accepted physical model in this experiment,
-  including the baseline; source/status columns describe its first listed
-  evaluation, not an aggregate over every evaluation;
-- `case_aliases.csv`: every source case/geometry, its original ID, friendly
-  `eos_id`, coordinates, precision, provenance and availability statuses;
-- labelled copies of the five applicable primary CSVs, preserving every source
-  value, row order, numerical stage, failure and missing entry;
-- `README.md`, `provenance.json`, and an exact `SHA256SUMS.txt` manifest.
-
-`H000000` is the first registered BSk24 baseline and `C000000` is the first
-registered CFL baseline. Subsequent model-specific labels are allocated once
-from the shared `runs/eos_catalogue/` registry. Positive/negative batches
-do not restart numbering. A validated A=0 identity control shares the baseline
-label regardless of geometry. Rejected proposals have blank `eos_id`; an
-accepted EoS with unavailable maximum mass still receives a label.
-
-The model key uses exact saved deformation coordinates and the saved
-model-specific EoS/config source signature, not approximate similarity of curves.
-QUICK/STRICT, fixed-mass requests and stellar-solver/reporting changes do not
-change that physical key. Changes to EoS/config source conservatively create a
-new key, even for a new baseline version; this is not an automatic scientific
-equivalence judgement. Keep `precision`, experiment/packet identity, `case_id`
-and `stage` when comparing evaluations. The `matter_model` column and `H`/`C`
-prefix distinguish BSk24 and CFL; neither prefix is a microscopic-composition
-certificate or observational selection.
-
-Registry registrations are checksum-chained, append-only files, serialized by
-an OS lock. IDs reserved before a presentation-publication failure stay reserved
-and are reused on retry. Existing packets, presentations and registrations are
-never overwritten. The catalogue has a unique `catalogue_id`: archive the
-entire `runs/eos_catalogue/` directory with your data and never reset, edit or
-renumber it. Independent checkouts/catalogues must not be joined on H/C labels
-alone. Preview and read-only validation do not register or write labels.
-
-The `plots/accepted_case_index.csv` and `plots/case_aliases.csv` carry the same
-labels. Small EoS families use short legend labels; dense plots retain colour
-bars rather than thousands of overlapping labels. These additions do not
-change the current-experiment-only plot scope.
-
-### Authoritative table hierarchy
-
-The result hierarchy is:
-
-```text
-experiment -> geometry_NNN -> case_id -> sampled row
-```
-
-The experiment is one canonical settings hash. A `geometry_NNN` child is one
-deterministically expanded combination of matching anchor, Gaussian center,
-Gaussian width, and activation-ramp width. Inside it, a `case_id` identifies
-one baseline or one deformation proposal. The rows for that case are samples
-of that EoS or stellar sequence; each row is not a new deformation.
-
-`case_id = direct` is the undeformed analytical BSk24 baseline saved for
-comparison. The amplitude-zero case has its own deterministic case ID because
-it passes through the same proposal and reconstruction route as the nonzero
-cases. It is the governed identity control and is expected to reproduce the
-direct baseline under the saved identity policy. Every accepted nonzero
-amplitude case is a distinct deformed EoS.
-
-A readable case ID can resemble `dp20_am0p2_<digest>`: the readable prefixes
-encode ramp width and amplitude, while the final hexadecimal suffix is a
-collision-resistant digest of the complete deformation coordinates. Do not
-decode a case ID as a substitute for the ledger. `case_ledger.csv` is the
-saved mapping from `case_id` to amplitude, geometry, anchor, and lifecycle
-status. It also records the case-specific retained energy-density and pressure
-endpoints and their reason, final-stage requested-fixed-mass status,
-maximum-mass availability, and student-view eligibility. These statuses are
-separate: all requested fixed masses can succeed, and the case can remain
-student-view eligible, while maximum mass is unavailable.
-
-Case IDs are useful grouping keys inside an experiment, but they are not
-complete provenance identities. When combining separate experiments, retain
-the canonical configuration hash and authoritative packet location as well.
-
-## What one row means in each primary table
-
-| File | Row meaning | Main grouping or coordinate |
-|---|---|---|
-| `case_ledger.csv` | One declared deformation proposal with lifecycle, retained-endpoint, and final availability statuses | `case_id` |
-| `thermodynamic_profiles.csv` | One sampled total-energy-density point for the direct baseline or one reconstructed case | `case_id`, `epsilon_mev_fm3` |
-| `stellar_sequences.csv` | One stellar-model attempt at a saved central coordinate | `case_id`, stage, central pressure/energy density, calculation status |
-| `fixed_mass_observables.csv` | One requested fixed-mass outcome, either solved from a true stable-branch bracket or explicitly unavailable | `case_id`, stage, `target_mass_msun`, status |
-| `maximum_mass_screening.csv` | One maximum-mass/turning-point assessment | `case_id`, stage, saved resolution status |
-
-The physical row coordinate matters. Do not compare “row 100” between two
-cases merely because the spreadsheet positions match. Filter or group by
-`case_id`, then use the saved energy density, central pressure, target mass,
-stage, and status columns appropriate to that table. Empty or unavailable
-values are not zero.
-
-A rejected proposal remains in `case_ledger.csv` with its exact reason but
-has no reconstructed profile or stellar sequence. That downstream absence is
-intentional.
-
-## Which CSV files a student should copy
-
-For EoS work, keep these two files from the same geometry directory together:
-
-- `case_ledger.csv` supplies deformation coordinates and lifecycle status;
-- `thermodynamic_profiles.csv` supplies the sampled EoS quantities.
-
-For stellar work, keep that ledger together with whichever of
-`stellar_sequences.csv`, `fixed_mass_observables.csv`, and
-`maximum_mass_screening.csv` applies to the run. A thermodynamics-only run
-correctly has no stellar tables.
-
-If several `geometry_NNN` directories are combined, add the geometry folder
-name as a column in the user's analysis table. Do not concatenate rows and
-discard their original geometry or experiment identity.
-
-### Excel or LibreOffice
-
-Open `case_ledger.csv` first, choose an accepted `case_id`, then filter the
-same column in `thermodynamic_profiles.csv`. For a conventional EoS curve,
-make an XY plot with `epsilon_mev_fm3` on the horizontal axis and
-`pressure_mev_fm3` or `cs2` on the vertical axis. Use `direct` as the baseline
-series.
-
-### pandas
-
-Run this from the `STUDENT_VIEW` directory, changing the geometry directory
-when required:
-
-```python
-from pathlib import Path
-
-import pandas as pd
-
-data = Path("03_PRIMARY_DATA/geometry_001")
-ledger = pd.read_csv(data / "case_ledger.csv")
-profiles = pd.read_csv(data / "thermodynamic_profiles.csv")
-
-accepted = ledger.loc[ledger["status"] == "accepted", "case_id"]
-case_id = accepted.iloc[0]
-eos = (
-    profiles.loc[profiles["case_id"] == case_id]
-    .sort_values("epsilon_mev_fm3")
-)
-baseline = (
-    profiles.loc[profiles["case_id"] == "direct"]
-    .sort_values("epsilon_mev_fm3")
-)
-```
-
-Plot `eos` and `baseline` as separate series against their saved
-`epsilon_mev_fm3` coordinates. The same standard CSV files can be used in R,
-Julia, MATLAB, Mathematica, or any other CSV-capable tool.
-
-The frozen CFL equations and stability boundary are documented in
-[`cfl.md`](cfl.md). A valid packet is evidence that the requested governed
-software checks passed, not by itself an independent published CFL stellar
-benchmark. Publication-level interpretation requires the strict convergence
-and independent-solver work listed there.
+Archive an important result as a complete experiment tree with all child
+packets and manifests. Derived views are useful but do not replace that
+authoritative evidence.
