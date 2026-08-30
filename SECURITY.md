@@ -6,8 +6,8 @@ Only the current minor release line receives security fixes.
 
 | Version | Security support |
 |---|---|
-| `1.1.x` | Supported |
-| `1.0.x` and earlier | Not supported |
+| `1.2.x` | Supported |
+| `1.1.x` and earlier | Not supported |
 
 ## Report a vulnerability
 

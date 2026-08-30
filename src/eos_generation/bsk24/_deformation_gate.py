@@ -20,6 +20,7 @@ from eos_generation.bsk24._deformation_bounds import (
 from eos_generation.bsk24._deformation_core import (
     WINDOWED_GAUSSIAN_GENERATOR_ID,
     _windowed_cs2,
+    _windowed_pressure,
     windowed_gaussian_delta_cs2,
     windowed_gaussian_pressure_primitive,
 )
@@ -38,12 +39,18 @@ if TYPE_CHECKING:
 def _dense_gate_grid(
     baseline: BSk24ConsistentBaseline,
     *,
+    epsilon_max_mev_fm3: float | None = None,
     lower_points: int = 16385,
     upper_points: int = 65537,
 ) -> np.ndarray:
     anchor = baseline.anchor.energy_density_mev_fm3
+    upper_endpoint = (
+        float(baseline.epsilon[-1])
+        if epsilon_max_mev_fm3 is None
+        else float(epsilon_max_mev_fm3)
+    )
     lower = np.geomspace(baseline.epsilon[0], anchor, lower_points)
-    upper = np.linspace(anchor, baseline.epsilon[-1], upper_points)
+    upper = np.linspace(anchor, upper_endpoint, upper_points)
     return np.concatenate((lower[:-1], upper))
 
 
@@ -57,6 +64,7 @@ _RAW_GATE_BASELINE_CACHE: tuple[
     BSk24ConsistentBaseline,
     int,
     int,
+    float,
     np.ndarray,
     np.ndarray,
     np.ndarray,
@@ -68,6 +76,7 @@ def _cached_raw_gate_baseline_arrays(
     *,
     lower_points: int,
     upper_points: int,
+    epsilon_max_mev_fm3: float,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     global _RAW_GATE_BASELINE_CACHE
     cached = _RAW_GATE_BASELINE_CACHE
@@ -76,24 +85,30 @@ def _cached_raw_gate_baseline_arrays(
         and cached[0] is baseline
         and cached[1] == lower_points
         and cached[2] == upper_points
+        and cached[3] == epsilon_max_mev_fm3
     ):
-        return cached[3].copy(), cached[4].copy(), cached[5].copy()
+        return cached[4].copy(), cached[5].copy(), cached[6].copy()
     epsilon = _dense_gate_grid(
         baseline,
         lower_points=lower_points,
         upper_points=upper_points,
+        epsilon_max_mev_fm3=epsilon_max_mev_fm3,
     )
-    rho = _mass_density_from_energy_density(epsilon)
     baseline_cs2 = np.asarray(
-        baseline.eos.sound_speed_squared_from_mass_density(rho), dtype=float
+        baseline.eos.published_fit_sound_speed_squared_from_mass_density(
+            _mass_density_from_energy_density(epsilon)
+        ),
+        dtype=float,
     )
     baseline_pressure = np.asarray(
-        baseline.eos.pressure_from_mass_density(rho), dtype=float
+        baseline.eos.published_fit_pressure_from_energy_density(epsilon),
+        dtype=float,
     )
     _RAW_GATE_BASELINE_CACHE = (
         baseline,
         lower_points,
         upper_points,
+        epsilon_max_mev_fm3,
         epsilon.copy(),
         baseline_cs2.copy(),
         baseline_pressure.copy(),
@@ -166,6 +181,7 @@ def _first_causal_crossing(
     extrema_locations: tuple[float, ...],
     xtol: float,
     rtol: float,
+    sampled_values: np.ndarray | None = None,
 ) -> dict[str, Any] | None:
     """Locate the first continuous contact with ``c_s^2 = 1``.
 
@@ -177,25 +193,46 @@ def _first_causal_crossing(
     scan = np.unique(
         np.concatenate((grid, np.asarray(extrema_locations, dtype=float)))
     )
-    values = np.asarray([float(function(value)) for value in scan], dtype=float)
+    if sampled_values is None:
+        values = np.asarray([float(function(value)) for value in scan], dtype=float)
+    else:
+        sampled = np.asarray(sampled_values, dtype=float)
+        if sampled.shape != grid.shape:
+            raise ValueError("sampled causal-scan values must match the grid")
+        values = np.empty(scan.shape, dtype=float)
+        grid_positions = np.searchsorted(scan, grid)
+        if (
+            np.any(grid_positions >= len(scan))
+            or not np.array_equal(scan[grid_positions], grid)
+        ):
+            raise ValueError("causal-scan grid was not preserved exactly")
+        values[grid_positions] = sampled
+        supplied = np.zeros(scan.shape, dtype=bool)
+        supplied[grid_positions] = True
+        missing = np.flatnonzero(~supplied)
+        if len(missing):
+            values[missing] = np.asarray(
+                [float(function(scan[index])) for index in missing], dtype=float
+            )
     contacts = np.flatnonzero(values >= 1.0)
-    if not len(contacts):
-        # A near-one refined maximum below one is not proof of an exact
-        # tangential contact.  Preserve the ambiguity explicitly instead of
-        # manufacturing a crossing or silently accepting the full domain.
-        contact_allowance = 512.0 * np.finfo(float).eps
-        near_contacts = sorted(
-            (
-                (float(location), float(function(location)))
-                for location in extrema_locations
-                if 1.0 - contact_allowance
-                <= float(function(location))
-                < 1.0
-            ),
-            key=lambda item: item[0],
-        )
-        if not near_contacts:
-            return None
+    # A near-one refined maximum below one is not proof that an earlier
+    # tangential contact is absent.  This ambiguity remains authoritative
+    # even when a definite crossing exists later in an extended fit domain.
+    contact_allowance = 512.0 * np.finfo(float).eps
+    near_contacts = sorted(
+        (
+            (float(location), float(function(location)))
+            for location in extrema_locations
+            if 1.0 - contact_allowance
+            <= float(function(location))
+            < 1.0
+        ),
+        key=lambda item: item[0],
+    )
+    first_definite_contact = (
+        float(scan[int(contacts[0])]) if len(contacts) else math.inf
+    )
+    if near_contacts and near_contacts[0][0] < first_definite_contact:
         candidate, candidate_value = near_contacts[0]
         return {
             "status": "unresolved_near_tangential_causal_contact",
@@ -212,6 +249,8 @@ def _first_causal_crossing(
             "root_xtol_mev_fm3": xtol,
             "root_rtol": rtol,
         }
+    if not len(contacts):
+        return None
     index = int(contacts[0])
     upper = float(scan[index])
     upper_value = float(values[index])
@@ -366,10 +405,16 @@ def raw_local_physics_gate(
     valid case-specific endpoint rather than a reason to reject the proposal.
     No later return below one can extend the retained branch.
     """
+    proposed_upper = (
+        float(baseline.epsilon[-1])
+        if deformation.amplitude == 0.0
+        else float(baseline.eos.energy_density_max_published_fit_mev_fm3)
+    )
     base_epsilon, _base_cs2, _base_pressure = _cached_raw_gate_baseline_arrays(
         baseline,
         lower_points=dense_lower_points,
         upper_points=dense_upper_points,
+        epsilon_max_mev_fm3=proposed_upper,
     )
     epsilon_t = float(baseline.anchor.energy_density_mev_fm3)
     epsilon_max = float(base_epsilon[-1])
@@ -402,39 +447,22 @@ def raw_local_physics_gate(
             "resolved_exact_zero_amplitude_identity_sampling",
         }
     )
-    rho = _mass_density_from_energy_density(epsilon)
     raw = np.asarray(
-        baseline.eos.sound_speed_squared_from_mass_density(rho), dtype=float
+        _windowed_cs2(epsilon, baseline, deformation), dtype=float
     )
     raw_pressure = np.asarray(
-        baseline.eos.pressure_from_mass_density(rho), dtype=float
+        _windowed_pressure(epsilon, baseline, deformation), dtype=float
     )
-    if deformation.amplitude != 0.0:
-        raw += np.asarray(
-            windowed_gaussian_delta_cs2(
-                epsilon,
-                deformation,
-                epsilon_t_mev_fm3=(
-                    baseline.anchor.energy_density_mev_fm3
-                ),
-            ),
+
+    def raw_values(value: Any) -> float | np.ndarray:
+        result = np.asarray(
+            _windowed_cs2(np.asarray(value), baseline, deformation),
             dtype=float,
         )
-        raw_pressure += np.asarray(
-            windowed_gaussian_pressure_primitive(
-                epsilon,
-                deformation,
-                epsilon_t_mev_fm3=(
-                    baseline.anchor.energy_density_mev_fm3
-                ),
-            ),
-            dtype=float,
-        )
+        return float(result) if result.ndim == 0 else result
 
     def raw_scalar(value: float) -> float:
-        return float(
-            _windowed_cs2(np.asarray(value), baseline, deformation)
-        )
+        return float(raw_values(value))
 
     raw_analytical_resolution = (
         {
@@ -448,7 +476,7 @@ def raw_local_physics_gate(
         else _analytical_pressure_derivative_certificate(
             epsilon,
             raw_pressure,
-            raw_scalar,
+            raw_values,
             resolution,
             # Use the retained-table rule on the more finely sampled raw
             # geometry grid.  This tests the production accuracy contract
@@ -556,6 +584,7 @@ def raw_local_physics_gate(
             extrema_locations=tuple(item[1] for item in maxima),
             xtol=baseline.settings.causal_root_xtol_mev_fm3,
             rtol=baseline.settings.causal_root_rtol,
+            sampled_values=raw,
         )
         if (
             crossing is not None
@@ -597,11 +626,8 @@ def raw_local_physics_gate(
     )
     retained_endpoint_pressure = (
         float(
-            baseline.eos.pressure_from_energy_density(retained_endpoint)
-            + windowed_gaussian_pressure_primitive(
-                retained_endpoint,
-                deformation,
-                epsilon_t_mev_fm3=epsilon_t,
+            _windowed_pressure(
+                np.asarray(retained_endpoint), baseline, deformation
             )
         )
         if finite and causal_endpoint_available
@@ -659,18 +685,11 @@ def raw_local_physics_gate(
             "resolved_exact_baseline_identity_grid",
         }:
             retained_pressure = np.asarray(
-                baseline.eos.pressure_from_energy_density(retained_grid),
+                _windowed_pressure(
+                    retained_grid, baseline, deformation
+                ),
                 dtype=float,
             )
-            if deformation.amplitude != 0.0:
-                retained_pressure += np.asarray(
-                    windowed_gaussian_pressure_primitive(
-                        retained_grid,
-                        deformation,
-                        epsilon_t_mev_fm3=epsilon_t,
-                    ),
-                    dtype=float,
-                )
             retained_cs2 = np.asarray(
                 _windowed_cs2(retained_grid, baseline, deformation),
                 dtype=float,
@@ -705,7 +724,7 @@ def raw_local_physics_gate(
                 else _analytical_pressure_derivative_certificate(
                     retained_grid,
                     retained_pressure,
-                    raw_scalar,
+                    raw_values,
                     retained_tabulation_resolution,
                     intervals_per_scale=RETAINED_INTERVALS_PER_SCALE,
                 )
@@ -1057,13 +1076,25 @@ def raw_local_physics_gate(
         "complete_raw_proposal_causal_through_direct_endpoint": (
             full_domain_causal
         ),
+        "complete_raw_proposal_causal_through_declared_assessment_endpoint": (
+            full_domain_causal
+        ),
+        "declared_assessment_endpoint": (
+            "direct_bsk24_causal_endpoint"
+            if deformation.amplitude == 0.0
+            else "published_bsk24_fit_endpoint"
+        ),
         "retained_domain": {
             "policy": "prefix_through_first_continuous_cs2_equals_one",
             "endpoint_reason": (
                 "first_continuous_causal_crossing"
                 if crossing_resolved
                 else (
-                    "direct_bsk24_causal_endpoint"
+                    (
+                        "direct_bsk24_causal_endpoint"
+                        if deformation.amplitude == 0.0
+                        else "published_bsk24_fit_endpoint"
+                    )
                     if causal_endpoint_available
                     else "unavailable_unresolved_continuous_assessment"
                 )

@@ -1,4 +1,4 @@
-"""Controlled analytical BSk24 equation-of-state experiments."""
+"""Controlled BSk24 and self-bound CFL equation-of-state experiments."""
 
 from .experiment import (
     Experiment,
@@ -11,7 +11,7 @@ from .experiment import (
     validate_experiment,
 )
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 __all__ = [
     "Experiment",

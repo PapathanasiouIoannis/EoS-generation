@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pandas as pd
@@ -9,10 +10,40 @@ import pandas as pd
 from eos_generation.stellar.tov import TOV_SEQUENCE_FIELDS, TovSequenceEvidence
 
 
+def _tidal_jump_evidence_columns(diagnostic: Any) -> dict[str, Any]:
+    """Return strict, table-safe discontinuity evidence for one tidal solve."""
+
+    surface_jumps = tuple(
+        item for item in diagnostic.applied_jumps if item.kind == "surface"
+    )
+    surface = surface_jumps[0] if len(surface_jumps) == 1 else None
+    payload = diagnostic.to_dict()
+    return {
+        "tidal_expected_jump_count": diagnostic.expected_jump_count,
+        "tidal_applied_jump_count": diagnostic.applied_jump_count,
+        "tidal_surface_jump_count": len(surface_jumps),
+        "tidal_surface_delta_y": None if surface is None else surface.delta_y,
+        "tidal_surface_y_before": None if surface is None else surface.y_before,
+        "tidal_surface_y_after": None if surface is None else surface.y_after,
+        "tidal_surface_event_pressure_mev_fm3": (
+            diagnostic.surface_event_pressure
+        ),
+        "tidal_jump_evidence_json": json.dumps(
+            payload,
+            allow_nan=False,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        ),
+    }
+
+
 def _sequence_frame(
     case_id: str,
     stage: str,
     evidence: TovSequenceEvidence,
+    *,
+    retain_jump_evidence: bool = False,
 ) -> pd.DataFrame:
     success = list(evidence.full_sequence)
     diagnostics = list(evidence.full_lambda_diagnostics or ())
@@ -75,8 +106,10 @@ def _sequence_frame(
                     "tidal_failure_reason": diagnostic.failure_reason,
                 }
             )
+            if retain_jump_evidence:
+                record.update(_tidal_jump_evidence_columns(diagnostic))
         rows.append(record)
     return pd.DataFrame(rows)
 
 
-__all__ = ["_sequence_frame"]
+__all__ = ["_sequence_frame", "_tidal_jump_evidence_columns"]

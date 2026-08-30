@@ -1,0 +1,104 @@
+{
+  "schema_version": "cfl_source_manifest_v1",
+  "model_identifier": "cfl_bag_full_ms_delta2_v1",
+  "frozen_parameter_set_id": "cfl_full_finite_ms_bag_delta2_b57p5_ms100_delta100_v1",
+  "frozen_parameter_set_sha256": "3991cb8615d2d29617ccb90c6dc54b23aae64bcc752856d07f17f99abc048307",
+  "retrieval_date": "2026-08-27",
+  "production_equation_authority": {
+    "publication": "G. Lugones and J. E. Horvath, Color-flavor locked strange matter, Physical Review D 66, 074017 (2002)",
+    "doi_url": "https://doi.org/10.1103/PhysRevD.66.074017",
+    "arxiv_url": "https://arxiv.org/abs/hep-ph/0211070",
+    "role": "full finite-strange-mass common-Fermi-momentum thermodynamic potential and separately identified lowest-order approximation",
+    "implemented_branch": "full finite-ms free integrals plus leading minus_3_Delta_squared_mu_squared_over_pi_squared condensation term and bag term",
+    "implemented_approximation_status": "not_the_truncated_lowest_order_ms_expansion"
+  },
+  "frozen_parameter_support": {
+    "publication": "G. Lugones and J. E. Horvath, High-density QCD pairing in compact star structure, Astronomy and Astrophysics 403, 173-178 (2003)",
+    "doi_url": "https://doi.org/10.1051/0004-6361:20030374",
+    "arxiv_url": "https://arxiv.org/abs/astro-ph/0211638",
+    "reported_parameter_family": {
+      "bag_constant_low_stability_edge_mev_fm3": 57.0,
+      "bag_constant_plotted_range_starts_near_mev_fm3": 60.0,
+      "strange_quark_mass_family_includes_mev": 100.0,
+      "pairing_gap_family_includes_mev": 100.0,
+      "reported_high_mass_scope": "small_B_high_Delta pure bare self_bound CFL sequences approaching 2.4 solar masses"
+    },
+    "project_exact_conversion": {
+      "hbar_c_mev_fm": 197.3269804,
+      "authoritative_bag_constant_mev_fm3": 57.5,
+      "bag_constant_natural_mev4": 441801570.2435963,
+      "derived_bag_constant_fourth_root_mev": 144.97957215191494
+    },
+    "convention_warning": "B=57.5 MeV fm^-3 is the authoritative input; it is not B^(1/4)=57.5 MeV. Its derived fourth root is 144.97957215191494 MeV."
+  },
+  "pure_self_bound_star_benchmark_authority": {
+    "publication": "G. Lugones and J. E. Horvath, High-density QCD pairing in compact star structure, Astronomy and Astrophysics 403, 173-178 (2003)",
+    "doi_url": "https://doi.org/10.1051/0004-6361:20030374",
+    "article_url": "https://www.aanda.org/articles/aa/full/2003/19/aa3362/aa3362.html",
+    "scope": "pure self-bound CFL strange-star sequences and sensitivity to B, m_s, and Delta",
+    "parameter_convention_note": "the article varies B directly in MeV fm^-3, includes m_s=100 MeV and Delta=100 MeV in the plotted parameter families, and identifies small B with high Delta as the high-mass direction"
+  },
+  "stability_authorities": {
+    "strange_matter_and_two_flavor_window": {
+      "publication": "E. Farhi and R. L. Jaffe, Strange matter, Physical Review D 30, 2379 (1984)",
+      "doi_url": "https://doi.org/10.1103/PhysRevD.30.2379",
+      "project_use": "absolute three-flavor stability and separate ordinary-nuclei/two-flavor safety logic"
+    },
+    "CFL_pairing_stress": {
+      "publication": "M. Alford, C. Kouvaris, and K. Rajagopal, Gapless color-flavor-locked quark matter, Physical Review Letters 92, 222001 (2004)",
+      "doi_url": "https://doi.org/10.1103/PhysRevLett.92.222001",
+      "arxiv_url": "https://arxiv.org/abs/hep-ph/0311286",
+      "project_condition": "m_s_squared_over_mu < 2_Delta throughout the governed domain"
+    }
+  },
+  "neutrality_authority": {
+    "publication": "M. Alford, K. Rajagopal, S. Reddy, and F. Wilczek, The minimal CFL-nuclear interface, Physical Review D 64, 074017 (2001)",
+    "doi_url": "https://doi.org/10.1103/PhysRevD.64.074017",
+    "arxiv_url": "https://arxiv.org/abs/hep-ph/0105009",
+    "project_use": "locally neutral ideal CFL bulk has mu_e=0 and no electron pressure contribution"
+  },
+  "binary64_identity_policy": {
+    "authority": "formula-derived values from the frozen constants, never rounded endpoint replacement",
+    "surface_pressure_policy": "subtract the one globally constant binary64 residual at approved mu_surface so P_surface is exactly zero and all derivatives are unchanged",
+    "raw_pressure_at_surface_before_normalization_mev_fm3": 2.3272441558063732e-14,
+    "authoritative_energy_density_domain_mev_fm3": [
+      190.2181760065314,
+      4008.81724402691
+    ],
+    "phase1_rounded_display_reference_only_mev_fm3": [
+      190.218176006531,
+      4008.8172440269
+    ],
+    "rounded_display_values_participate_in_identity_or_hash": false
+  },
+  "numerical_reconstruction_policy": {
+    "pressure_primitive": "normalized_segmented_gauss_legendre_64_with_stable_normal_tail_v1",
+    "reason": "avoid cancellation in narrow-ramp Gaussian moments while preserving the exact surface and A=0 identity",
+    "verification": "multi-scale independent quadrature and finite-difference derivative tests"
+  },
+  "stellar_sequence_policy": {
+    "identifier": "bare_self_bound_positive_mass_radius_v1",
+    "scope": "explicitly declared bare CFL surface only; no inherited hadronic minimum mass or minimum radius cuts",
+    "primary_source": "https://arxiv.org/abs/1004.5098",
+    "source_locations": "Postnikov-Prakash-Lattimer 2010, Eqs. 8-11 and Sections IV and VI.B",
+    "derivation": "P_c/epsilon_surface tending to zero gives epsilon approximately epsilon_surface, M approximately G_CONV*epsilon_surface*R^3/3 and k2 tending to 3/4; no hadronic minimum mass or radius follows",
+    "retained_checks": "positive finite mass and radius, valid domain, successful surface event, compactness bound, and exact tidal status; existing hadronic policy unchanged"
+  },
+  "stellar_local_refinement_policy": {
+    "identifier": "seed_preserving_split_log_pressure_v1",
+    "definition": "subdivide each side of the sampled three-point turning bracket in log pressure, retaining all three original pressure nodes exactly",
+    "reason": "avoid a second floating-point representation of the original midpoint creating a spurious mass secant",
+    "retained_checks": "one positive-to-negative turning point, bounded background refinement, original tolerances and fail-closed sign checks; legacy BSk24 grid unchanged",
+    "verification": "analytic log-pressure parabola, exact seed-reuse regression, and independent enthalpy stellar solver"
+  },
+  "external_assumptions": {
+    "ordinary_nuclei_two_flavor_safety": "not demonstrable from a CFL-only phase; requires an independently defined two-flavor model with energy per baryon at zero pressure at least 934 MeV. The selected B=57.5 MeV fm^-3 lies at the approximate lower stability edge quoted in the source and must not be described as an independently checked two-flavor pass.",
+    "crust_or_hadronic_envelope": "absent by project scope",
+    "renormalization_scale": "not applicable because no perturbative correction is included"
+  },
+  "source_storage_policy": {
+    "raw_third_party_artifacts_committed": false,
+    "runtime_external_source_lookup": false,
+    "reason": "The package records direct primary-source links and frozen conventions; external papers are not vendored."
+  }
+}

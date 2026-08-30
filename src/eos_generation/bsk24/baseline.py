@@ -24,7 +24,7 @@ VALIDATION_SCOPE = {
         "declared_Pearson_Equation_C4_pressure_and_analytical_derivative_representation",
         "declared_Pearson_Equation_C1_anchor_use",
         "effective_first_law_thermodynamic_reconstruction",
-        "stated_units_and_published_fit_plus_retained_causal_domain",
+        "stated_units_published_fit_and_governed_case_specific_causal_domains",
     ),
     "status_does_not_imply_validation_of": (
         "perturbed_microscopic_composition",
@@ -234,6 +234,72 @@ class BSk24AnalyticEos:
     def energy_density_max_causal_mev_fm3(self) -> float:
         return CAUSAL_MASS_DENSITY_MAX_G_CM3 / MEV_FM3_TO_MASS_DENSITY_G_CM3
 
+    @property
+    def energy_density_max_published_fit_mev_fm3(self) -> float:
+        """Upper total-energy-density bound of the published analytical fit."""
+
+        return FIT_MASS_DENSITY_MAX_G_CM3 / MEV_FM3_TO_MASS_DENSITY_G_CM3
+
+    def published_fit_pressure_from_mass_density(
+        self,
+        mass_density_g_cm3: Any,
+    ) -> float | np.ndarray:
+        """Evaluate Appendix-C equation (C4) on its published fit domain.
+
+        This wider evaluator is not a causal repair and is not used by the
+        direct BSk24 production barotrope.  It is available to governed
+        deformed proposals whose *combined* sound speed remains causal above
+        the direct-BSk24 endpoint.
+        """
+
+        rho = self._require_range(
+            mass_density_g_cm3,
+            name="published_fit_mass_density_g_cm3",
+            lower=FIT_MASS_DENSITY_MIN_G_CM3,
+            upper=FIT_MASS_DENSITY_MAX_G_CM3,
+        )
+        pressure = 10.0 ** _log10_pressure_from_xi(
+            np.log10(rho),
+            offset=PRESSURE_LOG10_OFFSET_MEV_FM3,
+        )
+        return _scalar_or_array(pressure)
+
+    def published_fit_pressure_from_energy_density(
+        self,
+        energy_density_mev_fm3: Any,
+    ) -> float | np.ndarray:
+        epsilon = self._require_range(
+            energy_density_mev_fm3,
+            name="published_fit_total_energy_density_mev_fm3",
+            lower=self.energy_density_min_mev_fm3,
+            upper=self.energy_density_max_published_fit_mev_fm3,
+        )
+        rho = epsilon * MEV_FM3_TO_MASS_DENSITY_G_CM3
+        pressure = 10.0 ** _log10_pressure_from_xi(
+            np.log10(rho),
+            offset=PRESSURE_LOG10_OFFSET_MEV_FM3,
+        )
+        return _scalar_or_array(pressure)
+
+    def published_fit_sound_speed_squared_from_mass_density(
+        self,
+        mass_density_g_cm3: Any,
+    ) -> float | np.ndarray:
+        """Return the unmodified C4 derivative on the published fit domain."""
+
+        rho = self._require_range(
+            mass_density_g_cm3,
+            name="published_fit_mass_density_g_cm3",
+            lower=FIT_MASS_DENSITY_MIN_G_CM3,
+            upper=FIT_MASS_DENSITY_MAX_G_CM3,
+        )
+        pressure = np.asarray(
+            self.published_fit_pressure_from_mass_density(rho), dtype=float
+        )
+        epsilon = rho / MEV_FM3_TO_MASS_DENSITY_G_CM3
+        result = pressure * _dlog10_pressure_dxi(np.log10(rho)) / epsilon
+        return _scalar_or_array(result)
+
     def pressure_from_mass_density(self, mass_density_g_cm3: Any) -> float | np.ndarray:
         rho = self._require_range(
             mass_density_g_cm3,
@@ -252,17 +318,9 @@ class BSk24AnalyticEos:
         mass_density_g_cm3: Any,
     ) -> float | np.ndarray:
         """Evaluate the published fit above causality only for explicit diagnostics."""
-        rho = self._require_range(
-            mass_density_g_cm3,
-            name="diagnostic_mass_density_g_cm3",
-            lower=FIT_MASS_DENSITY_MIN_G_CM3,
-            upper=FIT_MASS_DENSITY_MAX_G_CM3,
+        return self.published_fit_pressure_from_mass_density(
+            mass_density_g_cm3
         )
-        pressure = 10.0 ** _log10_pressure_from_xi(
-            np.log10(rho),
-            offset=PRESSURE_LOG10_OFFSET_MEV_FM3,
-        )
-        return _scalar_or_array(pressure)
 
     def diagnostic_pressure_dyn_cm2_from_mass_density(
         self,
@@ -482,6 +540,10 @@ class BSk24AnalyticEos:
                     FIT_MASS_DENSITY_MIN_G_CM3,
                     CAUSAL_MASS_DENSITY_MAX_G_CM3,
                 ],
+                "governed_deformation_assessment_mass_density_g_cm3": [
+                    FIT_MASS_DENSITY_MIN_G_CM3,
+                    FIT_MASS_DENSITY_MAX_G_CM3,
+                ],
                 "production_retained_pressure_mev_fm3": [
                     self.pressure_min_mev_fm3,
                     self.pressure_max_causal_mev_fm3,
@@ -490,7 +552,10 @@ class BSk24AnalyticEos:
             "causal_domain_policy": {
                 "retained_endpoint_mass_density_g_cm3": CAUSAL_MASS_DENSITY_MAX_G_CM3,
                 "source_endpoint_baryon_density_fm3": CAUSAL_BARYON_DENSITY_MAX_FM3,
-                "above_endpoint": "explicit_diagnostic_fit_evaluation_only_not_solver_use",
+                "above_direct_endpoint": (
+                    "direct_BSk24_solver_use_forbidden; governed_nonzero_deformations_may_use_"
+                    "the_published_fit_until_the_combined_first_causal_crossing"
+                ),
                 "repair_or_clipping": "none",
             },
             "interpolation_method": "none_direct_Appendix_C_equations",

@@ -83,10 +83,22 @@ def _analytical_pressure_derivative_certificate(
             ).derivative()(selected),
             dtype=float,
         )
-        analytical = np.asarray(
-            [float(analytical_cs2(value)) for value in selected],
-            dtype=float,
-        )
+        # Production analytical sound-speed callables accept ndarrays.  Use
+        # that vectorized path for the thousands of independent midpoint
+        # probes, while retaining the scalar fallback for tests and third-
+        # party callables that implement only the historical scalar contract.
+        try:
+            analytical = np.asarray(analytical_cs2(selected), dtype=float)
+        except (TypeError, ValueError, ArithmeticError):
+            analytical = np.asarray(
+                [float(analytical_cs2(value)) for value in selected],
+                dtype=float,
+            )
+        if analytical.shape != selected.shape:
+            analytical = np.asarray(
+                [float(analytical_cs2(value)) for value in selected],
+                dtype=float,
+            )
     except (TypeError, ValueError, ArithmeticError) as exc:
         return {
             "status": "unresolved_analytical_tabulation",
@@ -176,7 +188,24 @@ def _retained_geometry_grid(
         }
 
     prefix = base[base < endpoint]
-    candidate = np.concatenate((prefix, np.asarray((endpoint,), dtype=float)))
+    if endpoint > float(base[-1]):
+        terminal_spacing = float(base[-1] - base[-2])
+        if not math.isfinite(terminal_spacing) or terminal_spacing <= 0.0:
+            return base.copy(), {
+                "status": "unresolved_tabulation_resolution",
+                "failure_reason": "invalid_base_terminal_spacing",
+            }
+        extension_intervals = int(
+            math.ceil((endpoint - float(base[-1])) / terminal_spacing)
+        )
+        extension = np.linspace(
+            float(base[-1]), endpoint, extension_intervals + 1, dtype=float
+        )[1:]
+        candidate = np.concatenate((base, extension))
+    else:
+        candidate = np.concatenate(
+            (prefix, np.asarray((endpoint,), dtype=float))
+        )
     grid, certificate = _geometry_aware_grid(
         candidate,
         epsilon0_mev_fm3=epsilon0_mev_fm3,

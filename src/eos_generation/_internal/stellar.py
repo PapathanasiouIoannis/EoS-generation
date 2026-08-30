@@ -40,11 +40,12 @@ from eos_generation._internal.saved_tables import (
 from eos_generation.bsk24.reconstruction import BSk24ConsistentBaseline
 from eos_generation._internal.sequence_tables import (
     _sequence_frame,
+    _tidal_jump_evidence_columns,
 )
 from eos_generation.bsk24.deformation import BSk24WindowedEos
 
 
-_MAXIMUM_AUTOMATIC_STELLAR_WORKERS = 4
+_MAXIMUM_AUTOMATIC_STELLAR_WORKERS = 6
 _OUTER_NOTEBOOK_WORKER_ENV = "BSK24_NOTEBOOK_OUTER_WORKER"
 _PRODUCTION_REFINE_MAXIMUM_FROM_SEQUENCE = refine_maximum_mass_from_sequence
 _PRODUCTION_SOLVE_SEQUENCE = solve_sequence
@@ -194,7 +195,7 @@ def _fixed_mass_result(
         retain_profile=True,
     )
     tidal = star.lambda_diagnostic
-    return {
+    result = {
         "status": "bracketed_and_solved",
         "target_mass_msun": target_mass,
         "mass_msun": float(star.mass),
@@ -212,7 +213,10 @@ def _fixed_mass_result(
         "bracket_pressure_mev_fm3": [lower, upper],
         "root_xtol_mev_fm3": config.fixed_mass_root_xtol_mev_fm3,
         "root_evaluation_count": len(background_cache) + 1,
-    }, star
+    }
+    if bool(getattr(eos, "requires_discontinuity_metadata", False)):
+        result.update(_tidal_jump_evidence_columns(tidal))
+    return result, star
 
 
 _PRODUCTION_FIXED_MASS_RESULT = _fixed_mass_result
@@ -473,7 +477,11 @@ def _stellar_convergence_from_saved_tables(
     incomplete_sampled_peak = False
     for case_id in case_ids:
         case_report: dict[str, Any] = {"fixed_masses": {}, "sampled_peak": {}}
-        for target_mass in config.fixed_masses_msun:
+        for target_mass in (
+            config.fixed_masses_msun
+            if config.fixed_mass_background_requested
+            else ()
+        ):
             rows = fixed.loc[
                 fixed["case_id"].astype(str).eq(str(case_id))
                 & np.isclose(
@@ -575,6 +583,9 @@ def _run_case_job(
             settings=settings,
             return_tidal_diagnostics=True,
             return_sequence_evidence=True,
+            retain_profiles=bool(
+                getattr(config, "retained_stellar_profiles_requested", True)
+            ),
         )
         if not isinstance(evidence, TovSequenceEvidence):
             raise TypeError(
@@ -596,70 +607,86 @@ def _run_case_job(
                 "stellar sequence contains a central pressure outside the "
                 "retained EoS domain"
             )
-        maximum = refine_maximum_mass_from_sequence(
-            eos,
-            evidence,
-            maximum_mass_threshold_msun=config.maximum_mass_threshold_msun,
-            local_points=config.maximum_mass_initial_points,
-            rtol=stage.rtol,
-            atol=stage.atol,
-            settings=settings,
-        )
-        if (
-            maximum.central_pressure_mev_fm3 is not None
-            and float(maximum.central_pressure_mev_fm3) > retained_endpoint
+        maximum_row: dict[str, Any] | None = None
+        maximum_report: dict[str, Any] | None = None
+        if getattr(
+            config,
+            "maximum_mass_requested",
+            config.background_tov_requested,
         ):
-            raise ValueError(
-                "maximum-mass refinement exceeded the retained EoS endpoint"
+            maximum = refine_maximum_mass_from_sequence(
+                eos,
+                evidence,
+                maximum_mass_threshold_msun=config.maximum_mass_threshold_msun,
+                local_points=config.maximum_mass_initial_points,
+                rtol=stage.rtol,
+                atol=stage.atol,
+                settings=settings,
             )
-        maximum_row = {
-            "case_id": case_id,
-            "stage": stage.name,
-            "status": maximum.status,
-            "maximum_mass_resolved": maximum.maximum_mass_resolved,
-            "maximum_mass_availability_status": (
-                "resolved_bracketed_and_refined"
-                if maximum.maximum_mass_resolved
-                else f"unavailable_{maximum.status}"
+            if (
+                maximum.central_pressure_mev_fm3 is not None
+                and float(maximum.central_pressure_mev_fm3) > retained_endpoint
+            ):
+                raise ValueError(
+                    "maximum-mass refinement exceeded the retained EoS endpoint"
+                )
+            maximum_row = {
+                "case_id": case_id,
+                "stage": stage.name,
+                "status": maximum.status,
+                "maximum_mass_resolved": maximum.maximum_mass_resolved,
+                "maximum_mass_availability_status": (
+                    "resolved_bracketed_and_refined"
+                    if maximum.maximum_mass_resolved
+                    else f"unavailable_{maximum.status}"
+                ),
+                "maximum_mass_msun": maximum.maximum_mass_msun,
+                "maximum_mass_threshold_msun": (
+                    maximum.maximum_mass_threshold_msun
+                ),
+                "passes_maximum_mass_threshold": (
+                    maximum.passes_maximum_mass_threshold
+                ),
+                "central_pressure_mev_fm3": (
+                    maximum.central_pressure_mev_fm3
+                ),
+                "central_energy_density_mev_fm3": (
+                    maximum.central_energy_density_mev_fm3
+                ),
+                "central_sound_speed_squared": (
+                    maximum.central_sound_speed_squared
+                ),
+                "radius_km": maximum.radius_km,
+                "turning_point_count": len(maximum.turning_point_brackets),
+                "positive_left_secant": maximum.positive_left_secant,
+                "negative_right_secant": maximum.negative_right_secant,
+                "eos_endpoint_pressure_mev_fm3": (
+                    maximum.eos_endpoint_pressure_mev_fm3
+                ),
+                "endpoint_limitation": maximum.endpoint_limitation,
+                "refinement_status": maximum.refinement_status,
+                "sampled_sequence_model_count": len(evidence.full_sequence),
+                "local_background_solver_call_count": maximum.solver_call_count,
+                "tidal_solver_calls_for_maximum_mass": 0,
+            }
+            maximum_report = maximum.to_dict()
+        frame = _sequence_frame(
+            case_id,
+            stage.name,
+            evidence,
+            retain_jump_evidence=bool(
+                getattr(eos, "requires_discontinuity_metadata", False)
             ),
-            "maximum_mass_msun": maximum.maximum_mass_msun,
-            "maximum_mass_threshold_msun": (
-                maximum.maximum_mass_threshold_msun
-            ),
-            "passes_maximum_mass_threshold": (
-                maximum.passes_maximum_mass_threshold
-            ),
-            "central_pressure_mev_fm3": (
-                maximum.central_pressure_mev_fm3
-            ),
-            "central_energy_density_mev_fm3": (
-                maximum.central_energy_density_mev_fm3
-            ),
-            "central_sound_speed_squared": (
-                maximum.central_sound_speed_squared
-            ),
-            "radius_km": maximum.radius_km,
-            "turning_point_count": len(maximum.turning_point_brackets),
-            "positive_left_secant": maximum.positive_left_secant,
-            "negative_right_secant": maximum.negative_right_secant,
-            "eos_endpoint_pressure_mev_fm3": (
-                maximum.eos_endpoint_pressure_mev_fm3
-            ),
-            "endpoint_limitation": maximum.endpoint_limitation,
-            "refinement_status": maximum.refinement_status,
-            "sampled_sequence_model_count": len(evidence.full_sequence),
-            "local_background_solver_call_count": maximum.solver_call_count,
-            "tidal_solver_calls_for_maximum_mass": 0,
-        }
-        frame = _sequence_frame(case_id, stage.name, evidence)
+        )
         if case_id == "direct":
             amplitude = None
             delta = None
         else:
             amplitude = eos.deformation.amplitude
             delta = eos.deformation.delta_mev_fm3
-        maximum_row["amplitude"] = amplitude
-        maximum_row["delta_mev_fm3"] = delta
+        if maximum_row is not None:
+            maximum_row["amplitude"] = amplitude
+            maximum_row["delta_mev_fm3"] = delta
         # Keep nullable numerical sequence coordinates explicitly float-typed.
         # Assigning ``None`` to the direct frame makes these columns object
         # dtype and triggers pandas' deprecated all-NA concat inference when
@@ -671,7 +698,11 @@ def _run_case_job(
         frame["sequence_points_requested"] = stage.sequence_points
         fixed_rows: list[dict[str, Any]] = []
         stars: dict[tuple[str, str, float], Any] = {}
-        for target_mass in config.fixed_masses_msun:
+        for target_mass in (
+            config.fixed_masses_msun
+            if config.fixed_mass_background_requested
+            else ()
+        ):
             result, star = _fixed_mass_result(
                 eos, evidence, target_mass, config, stage
             )
@@ -691,7 +722,7 @@ def _run_case_job(
             "fixed_rows": fixed_rows,
             "stars": stars,
             "maximum_row": maximum_row,
-            "maximum_report": maximum.to_dict(),
+            "maximum_report": maximum_report,
         }
     return {
         "case_id": case_id,
@@ -706,7 +737,13 @@ def _run_stellar(
     baseline: BSk24ConsistentBaseline,
     generated: Mapping[str, BSk24WindowedEos],
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any], dict[tuple[str, str, float], Any]]:
-    eos_map: dict[str, Any] = {"direct": baseline.eos, **generated}
+    direct_eos = getattr(baseline, "eos", baseline)
+    owner = getattr(config, "zero_amplitude_control_owner", None)
+    include_direct = not (isinstance(owner, bool) and owner is False)
+    eos_map: dict[str, Any] = {
+        **({"direct": direct_eos} if include_direct else {}),
+        **generated,
+    }
     sequence_frames: list[pd.DataFrame] = []
     fixed_rows: list[dict[str, Any]] = []
     stars: dict[tuple[str, str, float], Any] = {}
@@ -729,6 +766,7 @@ def _run_stellar(
                 for case_id, eos in eos_map.items()
             }
             try:
+                completed = 0
                 for future in as_completed(futures):
                     case_id = futures[future]
                     result = dict(future.result())
@@ -737,6 +775,14 @@ def _run_stellar(
                             "stellar worker returned a mismatched case ID"
                         )
                     case_results[case_id] = result
+                    completed += 1
+                    if os.environ.get("EOS_GENERATION_PROGRESS") == "1":
+                        print(
+                            f"[{getattr(config, 'matter_model', 'bsk24').upper()}] "
+                            f"stellar case {completed}/{len(futures)}: {case_id} "
+                            f"({float(result['worker_wall_seconds']):.1f} s worker)",
+                            flush=True,
+                        )
             except Exception:
                 for future in futures:
                     future.cancel()
@@ -747,6 +793,13 @@ def _run_stellar(
             case_results[case_id] = _run_case_job(
                 config, case_id, eos
             )
+            if os.environ.get("EOS_GENERATION_PROGRESS") == "1":
+                print(
+                    f"[{getattr(config, 'matter_model', 'bsk24').upper()}] "
+                    f"stellar case {len(case_results)}/{len(eos_map)}: {case_id} "
+                    f"({float(case_results[case_id]['worker_wall_seconds']):.1f} s worker)",
+                    flush=True,
+                )
 
     for stage in config.tov_stages:
         for case_id in eos_map:
@@ -754,10 +807,12 @@ def _run_stellar(
             sequence_frames.append(stage_result["sequence_frame"])
             fixed_rows.extend(stage_result["fixed_rows"])
             stars.update(stage_result["stars"])
-            maximum_rows.append(stage_result["maximum_row"])
-            maximum_reports[f"{case_id}:{stage.name}"] = stage_result[
-                "maximum_report"
-            ]
+            if stage_result["maximum_row"] is not None:
+                maximum_rows.append(stage_result["maximum_row"])
+            if stage_result["maximum_report"] is not None:
+                maximum_reports[f"{case_id}:{stage.name}"] = stage_result[
+                    "maximum_report"
+                ]
     sequences = (
         pd.concat(sequence_frames, ignore_index=True)
         if sequence_frames
@@ -776,7 +831,13 @@ def _run_stellar(
     convergence.update(
         {
             "maximum_mass_policy": (
-                "M_max requires one sampled positive-to-negative dM/dP_c "
+                "not_requested_curve_only"
+                if not getattr(
+                    config,
+                    "maximum_mass_requested",
+                    config.background_tov_requested,
+                )
+                else "M_max requires one sampled positive-to-negative dM/dP_c "
                 "bracket followed by local background-only refinement"
             ),
             "maximum_mass_case_stage_count": len(maximum_rows),
@@ -807,7 +868,8 @@ def _run_stellar(
         },
         "deterministic_parent_merge_order": "stage_major_case_major",
         "nested_process_pool_disabled": bool(
-            os.environ.get(_OUTER_NOTEBOOK_WORKER_ENV) == "1"
+            use_processes
+            or os.environ.get(_OUTER_NOTEBOOK_WORKER_ENV) == "1"
         ),
     }
     return sequences, fixed, convergence, stars

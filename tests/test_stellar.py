@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import math
 from dataclasses import replace
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 from eos_generation._internal.config import DEFAULT_CONFIG
 from eos_generation.stellar.discontinuities import (
@@ -11,6 +13,7 @@ from eos_generation.stellar.discontinuities import (
 )
 from eos_generation.stellar.tov import (
     love_number_k2,
+    solve_sequence,
     solve_star,
     tidal_jump_delta_y,
 )
@@ -25,6 +28,50 @@ continuous_eos.eps_surf = 0.0
 
 
 class StellarContracts(unittest.TestCase):
+    def test_sequence_can_discard_radial_profiles_after_curve_observables(self) -> None:
+        observed_retain_flags = []
+
+        def fake_star(_eos, pressure, **kwargs):
+            observed_retain_flags.append(kwargs.get("retain_profile", True))
+            return SimpleNamespace(
+                mass=1.0 + 0.01 * float(pressure),
+                radius=12.0,
+                curve_row=(
+                    1.0 + 0.01 * float(pressure),
+                    12.0,
+                    100.0,
+                    float(pressure),
+                    2.0 * float(pressure),
+                    0.5,
+                    0.0,
+                ),
+                radius_profile=(1.0, 2.0, 3.0),
+                mass_profile=(0.1, 0.5, 1.0),
+            )
+
+        settings = replace(
+            DEFAULT_CONFIG.tov,
+            sequence_points=5,
+            grid_pressure_min_log=1.0,
+        )
+        with patch(
+            "eos_generation.stellar._tov_sequence.solve_star",
+            side_effect=fake_star,
+        ):
+            evidence = solve_sequence(
+                continuous_eos,
+                p_max_causal=10.0,
+                settings=settings,
+                calculate_tidal=False,
+                return_sequence_evidence=True,
+                retain_profiles=False,
+            )
+        self.assertEqual([False] * 5, observed_retain_flags)
+        self.assertEqual(5, len(evidence.full_sequence))
+        self.assertTrue(
+            all(radius == () and mass == () for radius, mass in evidence.full_dense_profiles)
+        )
+
     def test_newtonian_n1_polytrope_weak_field_limit(self) -> None:
         k_value = 1.0e-3
         b_value = 1.0e-3

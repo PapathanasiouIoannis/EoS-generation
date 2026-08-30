@@ -12,7 +12,8 @@ from typing import Any, Callable
 import numpy as np
 
 from eos_generation._internal.config import TovConfig
-from eos_generation.stellar._tov_integration import solve_star
+from eos_generation.stellar._tov_integration import solve_star, _resolved_discontinuities
+from eos_generation.stellar.discontinuities import BARE_SELF_BOUND_SEQUENCE_POLICY
 from eos_generation.stellar._tov_types import (
     TOV_SEQUENCE_FIELDS,
     TOV_TIDAL_DIAGNOSTIC_FIELDS,
@@ -43,6 +44,7 @@ _SEQUENCE_WORKER_STATE: tuple[
     float | None,
     TovConfig,
     bool,
+    bool,
 ] | None = None
 
 
@@ -52,6 +54,7 @@ def _initialize_sequence_worker(
     atol: float | None,
     settings: TovConfig,
     calculate_tidal: bool,
+    retain_profiles: bool,
 ) -> None:
     global _SEQUENCE_WORKER_STATE
     os.environ[_OUTER_PARALLEL_WORKER_ENV] = "1"
@@ -61,6 +64,7 @@ def _initialize_sequence_worker(
         atol,
         settings,
         calculate_tidal,
+        retain_profiles,
     )
 
 
@@ -70,18 +74,19 @@ def _solve_sequence_pressure_worker(
 ) -> tuple[int, TovStarResult | None, str | None]:
     if _SEQUENCE_WORKER_STATE is None:
         raise RuntimeError("TOV sequence worker was not initialized")
-    eos_callable, rtol, atol, settings, calculate_tidal = (
+    eos_callable, rtol, atol, settings, calculate_tidal, retain_profiles = (
         _SEQUENCE_WORKER_STATE
     )
     try:
-        star = solve_star(
-            eos_callable,
-            central_pressure,
-            rtol=rtol,
-            atol=atol,
-            settings=settings,
-            calculate_tidal=calculate_tidal,
-        )
+        kwargs = {
+            "rtol": rtol,
+            "atol": atol,
+            "settings": settings,
+            "calculate_tidal": calculate_tidal,
+        }
+        if not retain_profiles:
+            kwargs["retain_profile"] = False
+        star = solve_star(eos_callable, central_pressure, **kwargs)
         return index, star, None
     except (ValueError, RuntimeError, ArithmeticError) as exc:
         return index, None, str(exc)
@@ -106,6 +111,7 @@ def _sequence_process_worker_is_safe(
     rtol: float | None,
     atol: float | None,
     calculate_tidal: bool,
+    retain_profiles: bool = True,
 ) -> bool:
     if solve_star is not _PRODUCTION_SOLVE_STAR:
         return False
@@ -122,7 +128,7 @@ def _sequence_process_worker_is_safe(
         return False
     try:
         pickle.dumps(
-            (eos_callable, settings, rtol, atol, calculate_tidal)
+            (eos_callable, settings, rtol, atol, calculate_tidal, retain_profiles)
         )
     except Exception:
         return False
@@ -253,11 +259,14 @@ def solve_sequence(
     settings: TovConfig | None = None,
     return_sequence_evidence: bool = False,
     calculate_tidal: bool = True,
+    retain_profiles: bool = True,
 ) -> tuple | TovSequenceEvidence:
     """Integrate a sequence, preserving the historical tuple unless evidence is requested."""
     resolved = _DEFAULT_TOV if settings is None else settings
     if not isinstance(calculate_tidal, bool):
         raise ValueError("calculate_tidal must be boolean")
+    if not isinstance(retain_profiles, bool):
+        raise ValueError("retain_profiles must be boolean")
     p_max = p_max_causal if p_max_causal is not None else _ABSOLUTE_P_MAX_FALLBACK
     try:
         p_max = float(p_max)
@@ -320,6 +329,14 @@ def solve_sequence(
     attempted_pressures = []
     failure_details = []
     eps_surf = getattr(eos_callable, "eps_surf", 0.0)
+    sequence_policy = getattr(eos_callable, "stellar_sequence_policy", None)
+    if sequence_policy not in (None, BARE_SELF_BOUND_SEQUENCE_POLICY):
+        raise ValueError(f"unsupported stellar sequence policy: {sequence_policy!r}")
+    bare_self_bound = sequence_policy == BARE_SELF_BOUND_SEQUENCE_POLICY
+    if bare_self_bound:
+        joins = _resolved_discontinuities(eos_callable)
+        if len(joins) != 1 or joins[0].kind != "surface" or float(eps_surf) <= 0.0:
+            raise ValueError("bare self-bound sequence policy requires one finite-density vacuum surface")
 
     def record_failure(
         central_pressure: float,
@@ -348,6 +365,7 @@ def solve_sequence(
         rtol,
         atol,
         calculate_tidal,
+        retain_profiles,
     ):
         parallel_outcomes = {}
         context = multiprocessing.get_context("spawn")
@@ -361,6 +379,7 @@ def solve_sequence(
                 atol,
                 resolved,
                 calculate_tidal,
+                retain_profiles,
             ),
         ) as pool:
             futures = {
@@ -390,14 +409,15 @@ def solve_sequence(
             attempted_pressures.append(float(pc))
         try:
             if parallel_outcomes is None:
-                star = solve_star(
-                    eos_callable,
-                    float(pc),
-                    rtol=rtol,
-                    atol=atol,
-                    settings=resolved,
-                    calculate_tidal=calculate_tidal,
-                )
+                kwargs = {
+                    "rtol": rtol,
+                    "atol": atol,
+                    "settings": resolved,
+                    "calculate_tidal": calculate_tidal,
+                }
+                if not retain_profiles:
+                    kwargs["retain_profile"] = False
+                star = solve_star(eos_callable, float(pc), **kwargs)
             else:
                 star, failure = parallel_outcomes[attempted_index]
                 if failure is not None or star is None:
@@ -408,7 +428,16 @@ def solve_sequence(
                         failure,
                     )
                     continue
-            if star.radius < _MIN_RADIUS_CUTOFF or star.mass < _MIN_MASS_CUTOFF:
+            if bare_self_bound and (
+                not np.isfinite(star.radius) or not np.isfinite(star.mass)
+                or star.radius <= 0.0 or star.mass <= 0.0
+            ):
+                record_failure(pc, "invalid_self_bound_mass_or_radius", f"surface mass={star.mass!r}, radius={star.radius!r}")
+                continue
+            # Bare self-bound matter has a physical low-mass M~R^3 branch;
+            # legacy hadronic display cutoffs are not a validity condition.
+            # The explicit policy changes no legacy BSk24 behavior.
+            if not bare_self_bound and (star.radius < _MIN_RADIUS_CUTOFF or star.mass < _MIN_MASS_CUTOFF):
                 record_failure(
                     pc,
                     "minimum_mass_or_radius_cutoff",
@@ -429,6 +458,8 @@ def solve_sequence(
                     np.asarray(star.radius_profile, dtype=float),
                     np.asarray(star.mass_profile, dtype=float),
                 )
+                if retain_profiles
+                else ((), ())
             )
             if return_tidal_diagnostics:
                 diagnostic = star.lambda_diagnostic.to_dict()
