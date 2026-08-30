@@ -158,6 +158,8 @@ Validate the JSON syntax, then compare the fields with
   configuration using the CFL-only surface spelling;
 - a nonpositive width or ramp width;
 - a nonpositive center;
+- duplicate values within amplitudes, centers, widths, ramp widths, or fixed
+  masses;
 - a center/width pair whose nominal four-sigma support has no nonzero overlap
   with the deformable domain above the selected anchor;
 - diagnostics `on` with a thermodynamics-only calculation;
@@ -274,7 +276,7 @@ Explorer windows holding the result directory and retry only the student-view
 creation from that validated packet. Do not delete or edit the authoritative
 packet, and do not reuse an existing `STUDENT_VIEW/` destination.
 
-## Friendly EoS labels or EOS_DATA publication failed
+## General BSk24 labels or `EOS_DATA/` publication failed
 
 The scientific experiment is already complete and validated before this
 presentation step. Preserve it; do not execute the scientific settings again
@@ -286,20 +288,21 @@ python notebooks/eos_catalogue.py --repository-root . --experiment runs/PATH_TO_
 python notebooks/build_experiment_plots.py --repository-root . --experiment runs/PATH_TO_COMPLETED_EXPERIMENT --destination runs/PATH_TO_RUN/plots_retry --eos-data runs/PATH_TO_RUN/EOS_DATA_retry
 ```
 
-For either focused dataset notebook, use the five-figure dataset adapter for
-the second command instead:
+The focused BSk24 dataset notebook does not create `EOS_DATA/` or persistent
+H labels. If only its five-figure view failed, rebuild that view directly to a
+new destination:
 
 ```powershell
-python notebooks/build_dataset_plots.py --repository-root . --experiment runs/PATH_TO_COMPLETED_EXPERIMENT --destination runs/PATH_TO_RUN/plots_retry --eos-data runs/PATH_TO_RUN/EOS_DATA_retry
+python notebooks/build_dataset_plots.py --repository-root . --experiment runs/PATH_TO_COMPLETED_EXPERIMENT --destination runs/PATH_TO_RUN/plots_retry
 ```
 
-Replace the paths with actual locations; neither command calls solvers. They
-never overwrite an existing destination. A busy registry fails after a bounded
-wait, and the OS releases its lock when a process exits. Retry only the reporting
-operation after the competing writer finishes. A checksum/identity failure is
-not transient: stop and investigate it. Never edit registrations, delete the
-registry to reset numbering, or reassign an existing label. IDs allocated before
-an interrupted presentation export are intentionally retained for reuse.
+Replace the paths with actual locations; these adapters do not call solvers and
+never overwrite an existing destination. A busy BSk24 registry fails after a
+bounded wait, and the OS releases its lock when a process exits. Retry only the
+reporting operation after the competing writer finishes. A checksum or identity
+failure is not transient: stop and investigate it. Never edit registrations,
+delete the registry to reset numbering, or reassign a label. IDs allocated
+before an interrupted presentation export remain reserved for retry.
 
 For `cfl_dataset.ipynb`, the science result is stored in memory before the
 minimal presentation begins. Rerun only the execution/reporting cell in the
@@ -309,6 +312,20 @@ After a kernel restart, load the completed experiment and call
 `eos_generation.reporting.cfl_dataset.build_cfl_dataset_output` with a new
 unoccupied destination. The adapter publishes atomically, so a failed build
 leaves no partial final directory.
+
+## `status` cannot load an experiment
+
+`status` strictly loads a completed experiment whose aggregate and child
+packets pass the current integrity/source/scientific hard gates. Diagnose an
+incomplete, moved, damaged, or source-drifted packet with the read-only
+validator instead:
+
+```powershell
+bsk24-trial validate runs/PATH_TO_EXPERIMENT --json
+```
+
+Preserve the packet and inspect the first aggregate or child failure. Do not
+edit saved JSON, CSV, hashes, or manifests to make loading succeed.
 
 ## Validation reports source drift
 

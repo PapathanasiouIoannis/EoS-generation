@@ -1,7 +1,7 @@
 # Frozen CFL scientific contract
 
 This page defines the color-flavor-locked (CFL) matter model supported by
-EoS Generation 1.2. It is a separate baseline behind the public
+EoS Generation 1.2.0. It is a separate baseline behind the public
 `matter_model` discriminator. Nothing on this page changes the legacy BSk24
 definition, serialization, settings hash, or case identities.
 
@@ -295,7 +295,7 @@ Background TOV sequences, fixed-gravitational-mass bracketing, successful
 stable-prefix handling, and bracketed turning-point maximum-mass refinement
 are supported under the same fail-closed rules as BSk24. CFL extended radial
 diagnostics have not been audited for bare self-bound support and are not a
-supported capability in 1.2; `diagnostics = "on"` is rejected for CFL.
+supported capability in 1.2.0; `diagnostics = "on"` is rejected for CFL.
 
 The CFL-only stellar-selection policy is
 `bare_self_bound_positive_mass_radius_v1`, retained in the expanded settings
@@ -347,8 +347,9 @@ For large data collection, open
 [`../notebooks/cfl_dataset.ipynb`](../notebooks/cfl_dataset.ipynb). It fixes
 the explicitly experimental `dataset_40` profile: one 40-pressure sequence
 at `rtol=1e-10`, `atol=1e-12`, with 1201 radial samples and tides at every
-sampled star. It retains all STRICT thermodynamic/raw-domain stages,
+sampled star. It retains the strict-family thermodynamic/raw-domain stages,
 fixed-mass roots, maximum-mass refinement, and the bare CFL surface jump.
+It remains an experimental dataset profile, not a STRICT certificate.
 Scientific packet plot groups are `none`; after validation, reporting reads
 the required sealed tables once to create the seven-file `CFL_DATASET/` view:
 two CSVs labelled `cfl_0`, `cfl_1`, ... and exactly five combined plots. It
@@ -370,10 +371,11 @@ flags. Convention-isolated massless and
 zero-gap limits remain useful additional semi-analytic benchmarks when they
 are added without changing the frozen production profile.
 
-Before publication-level CFL mass-radius, maximum-mass, or tidal claims, a
-reviewed strict run must demonstrate grid and solver convergence, an
-independent solver comparison for TOV/tidal structure, and agreement with a
-published pure self-bound CFL sequence using exactly matching conventions.
+Before publication-level CFL mass-radius, maximum-mass, or tidal claims for a
+deformed domain, a reviewed strict run must demonstrate grid and solver
+convergence, an independent solver comparison covering the claimed
+deformations, and agreement with a published pure self-bound CFL sequence
+using exactly matching conventions.
 Lugones and Horvath,
 [Astronomy & Astrophysics 403, 173 (2003)](https://doi.org/10.1051/0004-6361:20030374),
 is the designated published sequence authority for that future benchmark.

@@ -72,19 +72,22 @@ Keep these layers explicit:
 2. baseline and raw windowed proposal construction;
 3. complete raw-evidence assessment, continuous-extremum search, and
    resolution certification;
-4. first-causal-crossing selection and effective thermodynamic reconstruction
-   on the accepted retained branch;
+4. model-specific domain selection—a certified first-crossing prefix for
+   BSk24 or the complete governed domain for CFL—and effective thermodynamic
+   reconstruction;
 5. optional stellar and tidal work;
 6. deterministic serialization and manifest sealing;
 7. read-only loading, validation, status, and saved-table plotting.
 
 A rejected raw proposal must not leak into downstream layers. Debug-only
 transformations must retain the original arrays and cannot change acceptance.
-Do not infer the causal endpoint from an ordinary output-grid sample: locate
-and refine the first continuous `c_s^2 = 1` crossing, include it in the
-retained table, and treat all later values as raw evidence outside the usable
-branch. Geometry-aware discovery must cover every relevant extremum basin and
-must fail closed when the analytical deformation cannot be resolved.
+For BSk24, do not infer a causal endpoint from an ordinary output-grid sample:
+locate and refine the first continuous `c_s^2 = 1` crossing, include it in the
+retained table, and treat later values as raw evidence outside the usable
+branch. For CFL, require a causal pass across the complete frozen domain and
+reject a crossing rather than shortening the EoS. Geometry-aware discovery
+must cover every relevant extremum basin and fail closed when the analytical
+deformation cannot be resolved.
 
 Do not split tightly coupled TOV/tidal equations merely for cosmetic file
 size. Refactor only across boundaries that preserve units, interpolation and
@@ -101,7 +104,8 @@ values are documentation aids only and must never enter comparison, hashing,
 or serialization.
 
 The CFL raw gate covers that complete domain and reconstruction is anchored at
-the undeformed finite-density surface. No below-surface EoS, crust, or
+the undeformed finite-density surface. A mechanical or causal failure anywhere
+rejects the proposal; no below-surface EoS, retained causal prefix, crust, or
 hadronic matching is permitted. For every public BSk24 or CFL Cartesian
 sweep, exactly one lexicographically first geometry owns the physical
 `A = 0` baseline; non-owner logical controls must be stable nonexecuting
@@ -115,7 +119,7 @@ The bare-CFL tidal surface jump has a negative outward sign and must be
 applied exactly once before `k2`. Preserve its recorded count and before/after
 evidence through execution, serialization, loading, and validation. CFL
 extended radial diagnostics remain a fail-closed unsupported capability in
-1.2.
+1.2.0.
 
 ## Numerical profiles
 
@@ -134,8 +138,8 @@ settings live in one internal authority. They must be:
 Changing either profile is a scientific change. Do not add source-level or
 environment-variable overrides that bypass the public settings contract.
 
-The separately named experimental `dataset` profile is documented in
-`docs/dataset.md`. Never change QUICK/STRICT to implement its optimization.
+The separately named experimental dataset-profile family is documented in
+`docs/dataset.md`. Never change QUICK/STRICT to implement its optimizations.
 Protect the retained thermodynamic settings/tolerances and historical STRICT
 configuration hash with regression tests. The focused notebook must remain
 passive by default and its five-figure adapter must consume validated saved
@@ -233,7 +237,7 @@ suite:
 ```powershell
 conda env create -f environment.yml
 conda activate eos-generation
-python -m pip install -e ".[notebook]"
+python -m pip install -e ".[notebook]" pytest jsonschema
 python -m pytest -q
 ```
 

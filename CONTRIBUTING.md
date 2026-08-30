@@ -10,7 +10,7 @@ public issue.
 
 ## Before changing code
 
-1. Read the [scientific boundary](README.md#scientific-boundary) and the
+1. Read the [supported scientific scope](README.md#supported-scientific-scope) and the
    relevant guide under [`docs/`](docs/).
 2. Trace the public entry point, private implementation, configuration
    expansion, and focused tests involved in the change.
@@ -55,7 +55,7 @@ Install the development checkout and notebook tools:
 ```powershell
 conda env create -f environment.yml
 conda activate eos-generation
-python -m pip install -e ".[notebook]"
+python -m pip install -e ".[notebook]" pytest jsonschema
 python -m pytest -q
 ```
 

@@ -2,6 +2,19 @@
 
 All notable changes to the supported package are recorded here.
 
+## Unreleased
+
+### Documentation
+
+- Reconciled the landing page, quickstart, parameters, method, result/CSV,
+  dataset, CFL status, troubleshooting, developer, and notebook guidance with
+  the repository restored by pull request #18 and release 1.2.0.
+- Corrected the model boundary: BSk24 can retain a certified prefix through
+  its first continuous causal crossing, while CFL requires the complete
+  formula-derived domain to pass.
+- Corrected current notebook defaults and derived-output descriptions without
+  changing code cells, scientific settings, result schemas, or calculations.
+
 ## 1.2.0 - 2026-08-30
 
 ### Added
@@ -79,21 +92,18 @@ All notable changes to the supported package are recorded here.
   tidal-completeness metadata. Disabling rendering does not disable evidence;
   the scientific validator is unchanged and still rejects omitted metadata.
 
-- Future notebook runs publish persistent friendly EoS aliases and labelled
-  primary-table copies in `EOS_DATA/`. An append-only catalogue shares IDs
-  across sign batches and matching QUICK/STRICT physical definitions while
-  retaining evaluation provenance, rejected cases, and missing observables.
-  Canonical IDs, scientific settings, solvers, tolerances, existing packets,
-  and byte-for-byte student-view copies are unchanged. Small combined plot
-  families use the aliases; dense families retain colour bars and ID mappings.
-- The append-only EoS catalogue now assigns independent `H` (BSk24) and `C`
-  (CFL) namespaces in one checksum chain, retains a `matter_model` column, and
-  reads the prior BSk24-only transaction schema without renumbering old IDs.
-
-- Notebook runs now publish one flat, checksum-manifested `plots/` folder for
-  the current experiment. Every applicable plot combines accepted EoSs across
-  the sweep; rejected cases and historical experiments are excluded, and the
-  saved-table plotting step makes zero solver calls.
+- General BSk24 notebook runs publish persistent friendly `H` aliases and
+  labelled primary-table copies in `EOS_DATA/`. An append-only catalogue
+  shares BSk24 IDs across sign batches and matching QUICK/STRICT physical
+  definitions while retaining evaluation provenance, rejected cases, and
+  missing observables. General CFL presentation labels are run-local `C`
+  labels rather than catalogue registrations.
+- Derived notebook views remain separate from sealed packets. The focused
+  BSk24 route publishes only its five checksum-manifested figures; the
+  focused CFL route publishes `CFL_DATASET/` with two labelled CSVs and five
+  figures. General notebook presentation routes create their documented
+  saved-table views. Every route excludes rejected cases from accepted-EoS
+  plots and makes zero solver calls while presenting saved results.
 
 ## 1.1.0 - 2026-08-25
 
