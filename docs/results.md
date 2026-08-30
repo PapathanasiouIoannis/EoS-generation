@@ -243,11 +243,14 @@ destination. Do not edit a packet to make source hashes agree, reuse a stale
 hash, or overwrite the original. Reproduction creates a new packet below
 `runs/reproductions/`.
 
-In release 1.2.0, the legacy `notebook` field in each child
-`reproduction.json` names `notebooks/bsk24_experiment.ipynb` for both matter
-models. That compatibility field does not select the workflow. Use the saved
-model, configuration, and reproduction commands—and choose the model-specific
-notebook listed above—when reproducing a CFL result.
+Newly generated child packets record the general notebook appropriate to their
+matter model in the legacy `notebook` compatibility field:
+`notebooks/bsk24_experiment.ipynb` or `notebooks/cfl_experiment.ipynb`. CFL
+packets already sealed by release 1.2.0 may still name
+`notebooks/bsk24_experiment.ipynb`; do not edit or reseal them. For every
+packet, the saved matter model, configuration, and two hash-bound reproduction
+commands are authoritative; use the focused dataset notebook when reproducing
+that presentation route.
 
 Archive an important result as a complete experiment tree with all child
 packets and manifests. Derived views are useful but do not replace that

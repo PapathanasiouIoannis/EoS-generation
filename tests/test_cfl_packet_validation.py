@@ -24,6 +24,7 @@ from eos_generation.reporting._validation_integrity import (
     _validate_cfl_identity_metadata,
     _validate_cfl_plan_aliases,
     _validate_packet_schema_and_summary,
+    _validate_reproduction_notebook,
 )
 from eos_generation.reporting._validation_cases import (
     _validate_cfl_raw_gate_profiles,
@@ -216,6 +217,66 @@ def _jump_row(surface_energy_density: float) -> dict[str, object]:
 
 
 class CFLPacketValidationTests(unittest.TestCase):
+    def test_reproduction_notebook_is_model_specific_with_v1_2_compatibility(
+        self,
+    ) -> None:
+        for matter_model, notebook in (
+            ("bsk24", "notebooks/bsk24_experiment.ipynb"),
+            ("cfl", "notebooks/cfl_experiment.ipynb"),
+        ):
+            with self.subTest(matter_model=matter_model):
+                layer = _Layer()
+                _validate_reproduction_notebook(
+                    notebook,
+                    matter_model=matter_model,
+                    layer=layer,
+                )
+                self.assertEqual([], layer.failures)
+                self.assertEqual([], layer.warnings)
+                self.assertEqual(
+                    "model_specific",
+                    layer.checks["reproduction_notebook_status"],
+                )
+
+        legacy = _Layer()
+        _validate_reproduction_notebook(
+            "notebooks/bsk24_experiment.ipynb",
+            matter_model="cfl",
+            layer=legacy,
+        )
+        self.assertEqual([], legacy.failures)
+        self.assertEqual(
+            ["reproduction:notebook_legacy_v1_2_cfl_bsk24_path"],
+            legacy.warnings,
+        )
+        self.assertEqual(
+            "legacy_v1_2_cfl_bsk24_path",
+            legacy.checks["reproduction_notebook_status"],
+        )
+
+        for matter_model, notebook in (
+            ("bsk24", "notebooks/cfl_experiment.ipynb"),
+            ("cfl", "notebooks/unrelated.ipynb"),
+        ):
+            with self.subTest(
+                matter_model=matter_model,
+                mismatched_notebook=notebook,
+            ):
+                layer = _Layer()
+                _validate_reproduction_notebook(
+                    notebook,
+                    matter_model=matter_model,
+                    layer=layer,
+                )
+                self.assertEqual(
+                    ["reproduction:notebook_mismatch"],
+                    layer.failures,
+                )
+                self.assertEqual(
+                    "mismatch",
+                    layer.checks["reproduction_notebook_status"],
+                )
+
     def test_bsk24_a0_owner_and_nonowner_identity_contracts(self) -> None:
         owner_configuration = BSk24TrialConfig(
             amplitudes=(0.0, 0.1),
