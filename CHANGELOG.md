@@ -4,6 +4,13 @@ All notable changes to the supported package are recorded here.
 
 ## Unreleased
 
+### Fixed
+
+- New CFL child packets record the CFL general-notebook hint in
+  `reproduction.json`. Sealed 1.2.0 packets remain unchanged and may retain
+  the legacy BSk24 hint, which validation labels explicitly as compatibility
+  metadata.
+
 ### Documentation
 
 - Reconciled the landing page, quickstart, parameters, method, result/CSV,

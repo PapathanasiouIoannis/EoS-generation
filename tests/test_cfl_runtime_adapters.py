@@ -15,6 +15,7 @@ from eos_generation._internal.cfl_thermodynamics import (
 from eos_generation._internal.execution import (
     _assert_cfl_a0_gate_invariant,
     _logical_outcome_ids,
+    _reproduction_notebook,
 )
 from eos_generation.cfl import (
     build_cfl_baseline,
@@ -36,6 +37,20 @@ def _owner_child():
         precision="quick",
     )
     return plan_experiment(settings).child_plans[0]
+
+
+@pytest.mark.parametrize(
+    ("matter_model", "expected"),
+    (
+        ("bsk24", "notebooks/bsk24_experiment.ipynb"),
+        ("cfl", "notebooks/cfl_experiment.ipynb"),
+    ),
+)
+def test_reproduction_notebook_hint_matches_the_matter_model(
+    matter_model: str,
+    expected: str,
+) -> None:
+    assert _reproduction_notebook(matter_model) == expected
 
 
 def test_cfl_packet_adapters_retain_physical_identity_and_a0_arrays(

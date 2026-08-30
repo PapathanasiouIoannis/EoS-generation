@@ -156,6 +156,16 @@ def _matter_model(config: Any) -> str:
     return value
 
 
+def _reproduction_notebook(matter_model: str) -> str:
+    """Return the general notebook hint paired with one governed model."""
+
+    if matter_model == "bsk24":
+        return "notebooks/bsk24_experiment.ipynb"
+    if matter_model == "cfl":
+        return "notebooks/cfl_experiment.ipynb"
+    raise ValueError(f"unsupported matter model {matter_model!r}")
+
+
 def _anchor_selection_record(config: Any, baseline: Any) -> dict[str, Any]:
     if _matter_model(config) == "bsk24":
         return {
@@ -845,7 +855,7 @@ def run_bsk24_trial(
             "reported separately by the bounded cross-environment regression; "
             "not used to define packet provenance"
         ),
-        "notebook": "notebooks/bsk24_experiment.ipynb",
+        "notebook": _reproduction_notebook(matter_model),
         **portable_reproduction,
     }
     write_json_atomic(reproduction, packet / "reproduction.json")

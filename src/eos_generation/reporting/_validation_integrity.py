@@ -517,11 +517,39 @@ def _validate_anchor_selection(
     _validate_bsk24_anchor_selection(configuration, metadata, layer)
 
 
+def _validate_reproduction_notebook(
+    notebook: str,
+    *,
+    matter_model: str,
+    layer: _Layer,
+) -> None:
+    """Validate the model hint while preserving sealed v1.2 CFL packets."""
+
+    bsk24_notebook = "notebooks/bsk24_experiment.ipynb"
+    expected = (
+        "notebooks/cfl_experiment.ipynb"
+        if matter_model == "cfl"
+        else bsk24_notebook
+    )
+    if notebook == expected:
+        layer.checks["reproduction_notebook_status"] = "model_specific"
+        return
+    if matter_model == "cfl" and notebook == bsk24_notebook:
+        layer.checks["reproduction_notebook_status"] = (
+            "legacy_v1_2_cfl_bsk24_path"
+        )
+        layer.warn("reproduction:notebook_legacy_v1_2_cfl_bsk24_path")
+        return
+    layer.checks["reproduction_notebook_status"] = "mismatch"
+    layer.fail("reproduction:notebook_mismatch")
+
+
 def _validate_reproduction(
     packet: Path,
     reproduction: Any,
     source_hashes: Any,
     child_configuration_hash: str | None,
+    matter_model: str,
     layer: _Layer,
 ) -> None:
     """Validate the concrete fresh-plan, hash-bound reproduction contract."""
@@ -571,6 +599,11 @@ def _validate_reproduction(
         layer.fail("reproduction:schema_mismatch")
     if reproduction["child_configuration_file"] != "complete_configuration.json":
         layer.fail("reproduction:child_configuration_file_mismatch")
+    _validate_reproduction_notebook(
+        reproduction["notebook"],
+        matter_model=matter_model,
+        layer=layer,
+    )
     if (
         child_configuration_hash is None
         or reproduction["child_configuration_hash"] != child_configuration_hash
@@ -712,7 +745,6 @@ def _validate_reproduction(
         "portable_run_command": expected_run_command,
         "portable_reproduction_working_directory": "repository_root",
         "reproduction_scope": "aggregate_experiment",
-        "notebook": "notebooks/bsk24_experiment.ipynb",
     }
     for key, value in packet_expected.items():
         if reproduction.get(key) != value:
@@ -1389,6 +1421,7 @@ def _validate_internal(
         reproduction,
         source_hashes,
         configuration_hash,
+        matter_model,
         layer,
     )
     _validate_packet_schema_and_summary(
