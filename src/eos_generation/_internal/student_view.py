@@ -48,9 +48,11 @@ _TABLE_PURPOSES = {
 }
 _TABLE_GUIDANCE = {
     "case_ledger.csv": (
-        "One row represents one declared deformation proposal. Use `case_id` to "
-        "join its amplitude, geometry, and accepted/rejected status to downstream "
-        "tables. The analytical `direct` baseline is not a deformation proposal "
+        "One row represents one declared deformation proposal. Join nonzero "
+        "deformations to downstream tables with `case_id`. A public Cartesian "
+        "zero-amplitude control instead maps through `physical_case_id`; several "
+        "logical rows can alias one physical control, and stellar tables reuse "
+        "`direct`. The analytical `direct` baseline is not a deformation proposal "
         "and therefore need not have a ledger row."
     ),
     "thermodynamic_profiles.csv": (
@@ -265,14 +267,14 @@ def _render_readme(
         "",
         "## Which files to keep together",
         "",
-        "For portable EoS analysis, copy both `case_ledger.csv` and `thermodynamic_profiles.csv` from the same `geometry_NNN/` directory. The profiles contain the sampled quantities and case IDs; the ledger supplies the complete deformation coordinates and accepted/rejected status. For stellar work, keep that same ledger with the applicable stellar CSVs.",
+        "For portable EoS analysis, copy both `case_ledger.csv` and `thermodynamic_profiles.csv` from the same `geometry_NNN/` directory. The profiles contain the sampled quantities and case IDs; the ledger supplies the complete deformation coordinates and accepted/rejected status. Nonzero profile IDs join directly to ledger `case_id`. The owning zero-amplitude thermodynamic block is keyed by `physical_case_id`, while several logical controls can alias it and stellar tables reuse `direct`. For stellar work, keep that same ledger with the applicable stellar CSVs.",
         "",
         "When combining several geometry directories, add the `geometry_NNN` folder name as a column in your own analysis. When combining separate experiments, also retain the canonical configuration hash and authoritative packet location. A `case_id` identifies a deformation proposal, not the complete source-code and runtime provenance of an experiment.",
         "",
         "## Minimal analysis workflow",
         "",
-        "1. Open `case_ledger.csv` and select an accepted `case_id` with the `student_view_eligibility_status` appropriate to your analysis.",
-        "2. Open the result table needed for the question and filter its `case_id` column to that exact value.",
+        "1. For a deformation curve, open `case_ledger.csv` and select an accepted nonzero-amplitude `case_id` with the `student_view_eligibility_status` appropriate to your analysis.",
+        "2. Open the result table needed for the question and filter its `case_id` column to that exact nonzero value. For the analytical baseline use `direct`; preserve zero-amplitude logical controls and their `physical_case_id` mapping as separate identity evidence.",
         "3. For an EoS curve, plot `epsilon_mev_fm3` on the horizontal axis and a saved quantity such as `pressure_mev_fm3` or `cs2` on the vertical axis.",
         "4. Treat `direct` as the baseline comparison. Do not compare cases by spreadsheet row number alone; use the saved physical coordinate and status columns.",
         "5. Blank or unavailable values are not zero. Preserve the saved status and reason columns when exporting or filtering data.",
@@ -305,6 +307,7 @@ def _render_dictionary(stage: Path, tables: tuple[Path, ...]) -> str:
         "## How to identify a data point",
         "",
         "- `case_id` groups rows belonging to the same baseline or deformation. A change of spreadsheet row is not by itself a change of EoS.",
+        "- Nonzero downstream `case_id` values join directly to the ledger. Public Cartesian zero-amplitude controls use the ledger's `physical_case_id`; several logical rows can alias one thermodynamic control, and stellar tables reuse `direct`.",
         "- Within a thermodynamic case, `epsilon_mev_fm3` identifies the sampled total-energy-density coordinate.",
         "- Within a stellar case, the saved stage and central-pressure/central-energy-density columns identify the attempted stellar model.",
         "- Do not use row numbers as scientific identifiers. When copying a subset, keep its `case_id`, physical coordinate, stage, and status columns.",

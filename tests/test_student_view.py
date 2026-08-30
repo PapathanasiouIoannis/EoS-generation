@@ -192,6 +192,8 @@ class StudentViewTests(unittest.TestCase):
             self.assertIn("A CSV row is not a new EoS", readme)
             self.assertIn("`case_id = direct`", readme)
             self.assertIn("one distinct deformed EoS", readme)
+            self.assertIn("Nonzero profile IDs join directly", readme)
+            self.assertIn("physical_case_id", readme)
             self.assertIn(
                 "copy both `case_ledger.csv` and `thermodynamic_profiles.csv`",
                 readme,
@@ -205,6 +207,7 @@ class StudentViewTests(unittest.TestCase):
                 dictionary,
             )
             self.assertIn("Do not use row numbers as scientific identifiers", dictionary)
+            self.assertIn("zero-amplitude controls use the ledger's `physical_case_id`", dictionary)
 
     def test_rejects_failed_or_incomplete_sources_and_existing_destination(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
