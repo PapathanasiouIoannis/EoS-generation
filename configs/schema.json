@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/PapathanasiouIoannis/EoS-generation/main/configs/schema.json",
-  "title": "Equation-of-state experiment settings",
-  "description": "Public settings for a controlled sound-speed deformation experiment. Omitting matter_model retains the legacy BSk24 contract; CFL configurations declare matter_model explicitly. Runtime semantic validation remains authoritative.",
+  "title": "BSk24 experiment settings",
+  "description": "Public settings for a controlled BSk24 sound-speed deformation experiment. Runtime semantic validation remains authoritative.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -46,12 +46,9 @@
     },
     "matter_model": {
       "type": "string",
-      "enum": [
-        "bsk24",
-        "cfl"
-      ],
+      "enum": ["bsk24"],
       "default": "bsk24",
-      "description": "Matter model discriminator. The legacy default is BSk24; CFL configurations must declare cfl explicitly."
+      "description": "Optional compatibility field for explicitly named BSk24 configurations."
     },
     "amplitudes": {
       "type": "array",
@@ -64,7 +61,15 @@
       "x-unit": "dimensionless"
     },
     "epsilon_match": {
-      "description": "Model-specific reconstruction anchor. BSk24 uses standard or a governed total-energy-density anchor; CFL uses the undeformed zero-pressure self-bound surface.",
+      "oneOf": [
+        {"const": "standard"},
+        {
+          "type": "number",
+          "exclusiveMinimum": 76.5591451931,
+          "exclusiveMaximum": 1508.9793344234
+        }
+      ],
+      "description": "Standard BSk24 reconstruction anchor or a governed total-energy-density anchor.",
       "x-unit": "MeV fm^-3 when numeric"
     },
     "center": {
@@ -130,51 +135,6 @@
     {
       "if": {"properties": {"precision": {"enum": ["dataset", "dataset_10_tighter", "dataset_20", "dataset_40", "dataset_40_curves", "dataset_relaxed", "dataset_relaxed_80"]}}, "required": ["precision"]},
       "then": {"properties": {"calculation": {"const": "stellar"}, "diagnostics": {"const": "off"}}}
-    },
-    {
-      "if": {
-        "properties": {
-          "matter_model": {
-            "const": "cfl"
-          }
-        },
-        "required": [
-          "matter_model"
-        ]
-      },
-      "then": {
-        "properties": {
-          "epsilon_match": {
-            "const": "surface"
-          },
-          "diagnostics": {
-            "const": "off"
-          },
-          "precision": {
-            "enum": [
-              "quick",
-              "strict",
-              "dataset_40"
-            ]
-          }
-        }
-      },
-      "else": {
-        "properties": {
-          "epsilon_match": {
-            "oneOf": [
-              {
-                "const": "standard"
-              },
-              {
-                "type": "number",
-                "exclusiveMinimum": 76.5591451931,
-                "exclusiveMaximum": 1508.9793344234
-              }
-            ]
-          }
-        }
-      }
     },
     {
       "if": {

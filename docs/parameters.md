@@ -3,7 +3,7 @@
 Public JSON configurations are described by
 [`../configs/schema.json`](../configs/schema.json). The schema supports editors
 and CI validation; runtime constructors remain authoritative for finite-value,
-cross-field, model-domain, and output-path checks.
+cross-field, BSk24-domain, and output-path checks.
 
 Every public JSON file must include a nonempty `$schema` annotation. That
 annotation is removed before scientific settings are normalized and hashed.
@@ -12,19 +12,16 @@ annotation is removed before scientific settings are normalized and hashed.
 
 | Field | Meaning | Allowed values and units |
 |---|---|---|
-| `matter_model` | Governed matter baseline | Omit for canonical legacy BSk24, or set explicitly to `"cfl"`. Explicit `"bsk24"` is accepted by the runtime but omitted again from canonical BSk24 serialization. |
+| `matter_model` | Governed matter baseline | Omit for canonical BSk24 settings, or set explicitly to `"bsk24"`; canonical serialization omits it. |
 | `amplitudes` | Additive coefficients multiplying the windowed Gaussian contribution to `c_s^2` | Nonempty array of distinct finite dimensionless numbers. If zero is absent, a logical identity control is inserted for each geometry. |
-| `epsilon_match` | Reconstruction anchor and lower edge of the activation window | BSk24: `"standard"` or a governed total-energy-density value in MeV fm^-3. CFL: exactly `"surface"`. |
+| `epsilon_match` | Reconstruction anchor and lower edge of the activation window | `"standard"` or a governed total-energy-density value in MeV fm^-3. |
 | `center` | Gaussian center `ε0` | Positive finite scalar or nonempty array of distinct values, in MeV fm^-3. |
 | `width` | Gaussian standard deviation `σ` | Positive finite scalar or nonempty array of distinct values, in MeV fm^-3. |
 | `ramp_width` | Width `Δ` of the quintic smootherstep rise | Positive finite scalar or nonempty array of distinct values, in MeV fm^-3. |
 | `calculation` | Requested calculation layer | `"thermodynamics"` or `"stellar"`. |
 | `precision` | Governed numerical profile | `"quick"`, `"strict"`, or one of the experimental dataset-family names below. |
 | `fixed_masses` | Requested fixed gravitational masses | Nonempty array of distinct positive values below 10, in solar masses; at most 32 values. Retained in thermodynamics-only settings but used only by stellar work. |
-| `diagnostics` | Governed extended stellar diagnostics | BSk24: `"off"` or `"on"`; `"on"` requires stellar calculation. CFL: `"off"` only. |
-
-CFL microphysical constants are frozen package data, not public sweep fields.
-See the [CFL contract](cfl.md).
+| `diagnostics` | Governed extended stellar diagnostics | `"off"` or `"on"`; `"on"` requires stellar calculation. |
 
 ## Cartesian expansion and identity controls
 
@@ -76,17 +73,6 @@ endpoint. A point contact is not overlap.
 `ramp_width` controls the activation window and is not restricted by
 `center - epsilon_match`.
 
-### CFL
-
-The surface anchor is exactly `190.2181760065314 MeV fm^-3`; the formula-derived
-upper energy-density endpoint is exactly `4008.81724402691 MeV fm^-3`.
-The center must lie strictly inside that domain. Width must be positive and
-representably nonzero. Surface plus ramp width must not exceed the upper
-endpoint; equality is allowed.
-
-Rounded display values are not substitutes for the governed binary64
-endpoints in settings identity or comparison.
-
 ## Calculation layers
 
 `thermodynamics` evaluates the raw proposal and, only when accepted,
@@ -101,15 +87,12 @@ truly brackets the target and the required central pressure stays inside the
 case EoS domain. Maximum-mass availability is independent: the largest sampled
 mass is not promoted to a maximum without a bracketed, refined turning point.
 
-For BSk24, an early retained causal endpoint can leave valid fixed-mass results
-while making maximum mass unavailable. CFL does not use a shortened causal
-prefix: the complete frozen domain must pass before reconstruction.
+An early retained causal endpoint can leave valid fixed-mass results while
+making maximum mass unavailable.
 
-With BSk24 diagnostics `on`, the workflow retains governed endpoint radial
+With diagnostics `on`, the workflow retains governed endpoint radial
 diagnostics for the zero-amplitude control and selected accepted sign
-endpoints. Rejected cases do not reach that stage. Bare-CFL radial/support
-semantics have not been established, so CFL diagnostics fail closed at
-settings validation.
+endpoints. Rejected cases do not reach that stage.
 
 ## Precision profiles
 
@@ -129,17 +112,17 @@ Its stellar stages use 61, 121, and 121 pressures; the final stage uses rtol
 inherit the strict thermodynamic/raw-gate grids and replace the repeated
 stellar sequence with the single stage shown below.
 
-| Profile | Models | Governing intent |
+| Profile | Model | Governing intent |
 |---|---|---|
-| `quick` | BSk24, CFL | Small exploratory profile. Thermodynamics-only work uses two stages; stellar work instead uses one thermodynamic pilot plus one 17-pressure stage at rtol `1e-8`, atol `1e-10`. Not a convergence certificate. |
-| `strict` | BSk24, CFL | Three thermodynamic stages and, for stellar work, 61/121/121-pressure stages with final rtol `1e-10`, atol `1e-12`. Saved convergence statuses still require interpretation. |
-| `dataset` | BSk24 only | One 61-pressure stellar stage at rtol `1e-10`, atol `1e-12`, while retaining strict-family thermodynamic stages. |
-| `dataset_10_tighter` | BSk24 only | One 10-pressure stage at rtol `1e-11`, atol `1e-13`; changes sampling and tolerance together. |
-| `dataset_20` | BSk24 only | One 20-pressure stage at rtol `1e-10`, atol `1e-12`. |
-| `dataset_40` | BSk24, CFL | One 40-pressure stage at rtol `1e-10`, atol `1e-12`; the only CFL dataset-family profile. |
-| `dataset_40_curves` | BSk24 only | Curve-only final thermodynamic stage plus the 40-pressure stellar grid; omits residual processing, fixed-mass roots, maximum-mass refinement, and retained radial profiles. |
-| `dataset_relaxed` | BSk24 only | One 61-pressure stage at rtol `1e-8`, atol `1e-10`. |
-| `dataset_relaxed_80` | BSk24 only | One 80-pressure stage at the `dataset_relaxed` tolerances. |
+| `quick` | BSk24 | Small exploratory profile. Thermodynamics-only work uses two stages; stellar work instead uses one thermodynamic pilot plus one 17-pressure stage at rtol `1e-8`, atol `1e-10`. Not a convergence certificate. |
+| `strict` | BSk24 | Three thermodynamic stages and, for stellar work, 61/121/121-pressure stages with final rtol `1e-10`, atol `1e-12`. Saved convergence statuses still require interpretation. |
+| `dataset` | BSk24 | One 61-pressure stellar stage at rtol `1e-10`, atol `1e-12`, while retaining strict-family thermodynamic stages. |
+| `dataset_10_tighter` | BSk24 | One 10-pressure stage at rtol `1e-11`, atol `1e-13`; changes sampling and tolerance together. |
+| `dataset_20` | BSk24 | One 20-pressure stage at rtol `1e-10`, atol `1e-12`. |
+| `dataset_40` | BSk24 | One 40-pressure stage at rtol `1e-10`, atol `1e-12` |
+| `dataset_40_curves` | BSk24 | Curve-only final thermodynamic stage plus the 40-pressure stellar grid; omits residual processing, fixed-mass roots, maximum-mass refinement, and retained radial profiles. |
+| `dataset_relaxed` | BSk24 | One 61-pressure stage at rtol `1e-8`, atol `1e-10`. |
+| `dataset_relaxed_80` | BSk24 | One 80-pressure stage at the `dataset_relaxed` tolerances. |
 
 Every dataset-family profile requires `calculation = "stellar"` and
 `diagnostics = "off"`. All are experimental single-stage stellar routes, not
@@ -153,8 +136,6 @@ Read [Dataset workflows](dataset.md) before using them.
 
 - [`../configs/quickstart.json`](../configs/quickstart.json): small BSk24
   thermodynamics onboarding configuration.
-- [`../configs/cfl_quickstart.json`](../configs/cfl_quickstart.json): small CFL
-  thermodynamics workflow check.
 - [`../configs/custom_experiment.json`](../configs/custom_experiment.json):
   strict BSk24 thermodynamics template with signed amplitudes.
 - [`../configs/stellar_example.json`](../configs/stellar_example.json): small

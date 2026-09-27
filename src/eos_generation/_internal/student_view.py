@@ -194,7 +194,6 @@ def _render_readme(
     source: Path,
     destination: Path,
     settings_hash: str,
-    matter_model: str,
     copied_tables: tuple[Path, ...],
 ) -> str:
     relative_source = _relative_link(source, destination)
@@ -249,16 +248,8 @@ def _render_readme(
         "        └── rows (sampled thermodynamic points or stellar models)",
         "```",
         "",
-        (
-            "- `case_id = direct` is the undeformed analytical bare CFL baseline saved for comparison; its zero-pressure surface has finite density and joins directly to vacuum."
-            if matter_model == "cfl"
-            else "- `case_id = direct` is the undeformed analytical BSk24 baseline saved for comparison."
-        ),
-        (
-            "- The CFL Cartesian sweep owns one physical `A = 0` control; other logical geometry controls alias it without duplicate scientific calculation. It is expected to reproduce the frozen baseline under the governed identity policy."
-            if matter_model == "cfl"
-            else "- The BSk24 Cartesian sweep owns one physical `A = 0` control; other logical geometry controls alias it without duplicate scientific calculation. The owner is expected to reproduce the baseline under the governed identity policy."
-        ),
+        "- `case_id = direct` is the undeformed analytical BSk24 baseline saved for comparison.",
+        "- The BSk24 Cartesian sweep owns one physical `A = 0` control; other logical geometry controls alias it without duplicate scientific calculation. The owner is expected to reproduce the baseline under the governed identity policy.",
         "- Each nonzero-amplitude `case_id` is one distinct deformed EoS within that geometry.",
         "- Read amplitude and geometry values from `case_ledger.csv`; do not try to recover the complete scientific identity from the readable part of the case-ID text. Its final hexadecimal suffix is a deterministic collision-resistant digest of the deformation coordinates.",
         "- A rejected ledger row is a completed scientific outcome. It deliberately has no reconstructed thermodynamic profile or stellar sequence.",
@@ -418,12 +409,7 @@ def create_student_view(
             raise ValueError("student view requires a completed authoritative experiment")
         settings_hash = metadata.get("settings_hash")
         settings = metadata.get("settings")
-        matter_model = (
-            str(settings.get("matter_model", "bsk24"))
-            if isinstance(settings, Mapping)
-            else "bsk24"
-        )
-        if matter_model not in {"bsk24", "cfl"}:
+        if not isinstance(settings, Mapping) or settings.get("matter_model", "bsk24") != "bsk24":
             raise ValueError("authoritative matter model is unsupported")
         if (
             not isinstance(settings_hash, str)
@@ -475,7 +461,6 @@ def create_student_view(
                     source=source,
                     destination=target,
                     settings_hash=settings_hash,
-                    matter_model=matter_model,
                     copied_tables=tables,
                 ),
                 encoding="utf-8",

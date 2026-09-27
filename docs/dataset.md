@@ -1,7 +1,7 @@
 # Dataset workflows
 
 Dataset-family profiles are experimental single-stage stellar workflows. They
-preserve the governed equations, model-specific raw gates, units, surface
+preserve the governed equations, raw gates, units, surface
 conventions, and failure semantics, but they are not renamed `strict` runs and
 do not provide a per-case stellar refinement envelope.
 
@@ -35,45 +35,9 @@ exactly five figures from saved packet tables. It creates no `STUDENT_VIEW/`,
 `EOS_DATA/`, persistent labels, or duplicate data tree. Reporting makes zero
 scientific solver calls.
 
-## Focused CFL notebook
-
-[`../notebooks/cfl_dataset.ipynb`](../notebooks/cfl_dataset.ipynb) is the
-parallel pure, bare, self-bound CFL route. Its checked-in settings contain
-three amplitudes at one geometry and use `dataset_40`, the only dataset-family
-profile enabled for CFL.
-
-The profile retains the strict-family thermodynamic/raw-domain stages, one
-40-pressure stellar stage at rtol `1e-10`, atol `1e-12`, fixed-mass roots,
-adaptive maximum-mass refinement, all-node tides, and the exact-once
-finite-density surface-jump evidence. Per-child scientific PNG groups are
-disabled; tables and statuses remain authoritative.
-
-After aggregate validation, the notebook creates one `CFL_DATASET/` directory
-with exactly seven files:
-
-```text
-CFL_DATASET/
-├── cfl_eos_data.csv
-├── cfl_stellar_data.csv
-├── pressure_energy_density.png
-├── speed_of_sound.png
-├── mass_radius.png
-├── k2_mass.png
-└── lambda_mass.png
-```
-
-`cfl_0` is the direct baseline. Accepted nonzero deformations receive
-`cfl_1`, `cfl_2`, ... in deterministic geometry/case order. Both CSVs retain
-the canonical experiment, geometry, and case identities. Rejected proposals
-remain in the sealed packet and are not exported as accepted EoSs.
-
-The reporting adapter reads required saved tables once and calls no solver. A
-failed presentation must not trigger a scientific rerun; the notebook retains
-the completed in-memory result so its reporting cell can be retried.
-
 ## Passive-to-explicit procedure
 
-For either focused notebook:
+For either BSk24 notebook:
 
 1. Activate the `eos-generation` environment and restart the kernel after
    changing installed package source.
@@ -93,12 +57,12 @@ count and available logical CPUs; nested pools remain disabled.
 All profiles below require `calculation = "stellar"` and
 `diagnostics = "off"`.
 
-| Profile | Models | Single stellar stage |
+| Profile | Model | Single stellar stage |
 |---|---|---|
 | `dataset` | BSk24 | 61 pressures, rtol `1e-10`, atol `1e-12` |
 | `dataset_10_tighter` | BSk24 | 10 pressures, rtol `1e-11`, atol `1e-13`; sampling and tolerance change together |
 | `dataset_20` | BSk24 | 20 pressures, rtol `1e-10`, atol `1e-12` |
-| `dataset_40` | BSk24, CFL | 40 pressures, rtol `1e-10`, atol `1e-12` |
+| `dataset_40` | BSk24 | 40 pressures, rtol `1e-10`, atol `1e-12` |
 | `dataset_40_curves` | BSk24 | Final thermodynamic stage and 40-pressure curve-only output at rtol `1e-10`, atol `1e-12` |
 | `dataset_relaxed` | BSk24 | 61 pressures, rtol `1e-8`, atol `1e-10` |
 | `dataset_relaxed_80` | BSk24 | 80 pressures, rtol `1e-8`, atol `1e-10` |
@@ -169,7 +133,3 @@ Before using a dataset profile for a large study:
   EoSs/geometries to avoid leakage; and
 - measure runtime on the intended hardware without promising a universal
   speedup.
-
-The CFL `dataset_40` route has software/passivity coverage but no matched
-campaign-level `strict` qualification. Its output must remain experimental
-until that comparison is performed.

@@ -2,8 +2,7 @@
 
 This guide installs EoS Generation from a source checkout, creates a passive
 plan, explicitly executes a small thermodynamic example, and inspects the
-saved result. The historical command name `bsk24-trial` is the supported CLI
-for both BSk24 and CFL.
+saved result. The command name is `bsk24-trial`.
 
 Planning is always passive. Only a hash-bound `run` command with `--execute`
 may start scientific work or create a result.
@@ -68,32 +67,13 @@ kernel is missing, see [Troubleshooting](troubleshooting.md).
 amplitudes at one geometry with the `quick`, thermodynamics-only profile. It
 does not request a stellar calculation.
 
-The parallel [`../configs/cfl_quickstart.json`](../configs/cfl_quickstart.json)
-uses the same small workflow shape but declares:
-
-```json
-{
-  "matter_model": "cfl",
-  "epsilon_match": "surface"
-}
-```
-
-Those fields select the frozen pure-CFL baseline and its finite-density
-surface anchor. CFL microphysical constants are not settings. Field meanings,
-units, and relationships are documented in [Parameters](parameters.md).
+Field meanings, units, and relationships are documented in
+[Parameters](parameters.md).
 
 ## 4. Make a passive plan
 
-For BSk24:
-
 ```powershell
 bsk24-trial plan --config configs/quickstart.json --output-root runs
-```
-
-For CFL:
-
-```powershell
-bsk24-trial plan --config configs/cfl_quickstart.json --output-root runs
 ```
 
 The plan resolves defaults, expands the named numerical profile, lists the
@@ -120,23 +100,18 @@ plan:
 bsk24-trial run --config configs/quickstart.json --output-root runs --plan-hash REVIEWED_PLAN_HASH --execute
 ```
 
-For the CFL example, keep `configs/cfl_quickstart.json` in both commands. The
-CLI rejects a missing execution flag, a missing or stale hash, settings drift,
+The CLI rejects a missing execution flag, a missing or stale hash, settings drift,
 and an existing destination.
 
 Execution writes a deterministic directory such as
 `runs/experiment_0123456789ab`. Do not type that example literally; use the
-path printed by your run. Both supplied quickstarts stop after thermodynamic
-gating and reconstruction. They do not call the stellar solver.
+path printed by your run. The quickstart stops after thermodynamic gating and
+reconstruction. It does not call the stellar solver.
 
 Rejected and unresolved proposals are recorded outcomes. They retain raw gate
-evidence and a reason, but receive no reconstruction or stellar work. BSk24
-and CFL differ at the causal boundary:
-
-- BSk24 may retain an otherwise valid certified prefix through its first
-  continuous `c_s^2 = 1` crossing; and
-- CFL must pass its complete frozen domain, so a causal failure anywhere
-  rejects the whole proposal.
+evidence and a reason, but receive no reconstruction or stellar work. An
+otherwise valid proposal may retain a certified prefix through its first
+continuous `c_s^2 = 1` crossing.
 
 ## 6. Validate, summarize, and inspect plots
 
@@ -200,24 +175,10 @@ governed input requires another disabled preview.
 |---|---|---|
 | [`bsk24_experiment.ipynb`](../notebooks/bsk24_experiment.ipynb) | 125 geometries x 9 amplitudes, stellar `dataset_40`; 1,125 logical cases | `STUDENT_VIEW/`, persistent-label `EOS_DATA/`, combined `plots/` |
 | [`bsk24_dataset.ipynb`](../notebooks/bsk24_dataset.ipynb) | Large negative-amplitude BSk24 campaign, stellar `dataset_40_curves` | Exactly five combined plots; no `STUDENT_VIEW/` or `EOS_DATA/` |
-| [`cfl_experiment.ipynb`](../notebooks/cfl_experiment.ipynb) | 7 amplitudes at one geometry, stellar `quick`; 119 sampled-sequence tidal targets before adaptive work | `STUDENT_VIEW/` plus a manifested combined `plots/` view |
-| [`cfl_dataset.ipynb`](../notebooks/cfl_dataset.ipynb) | 3 amplitudes at one geometry, experimental stellar `dataset_40` | `CFL_DATASET/` with two CSVs and five figures |
 
 The BSk24 notebooks are campaign-scale and are not onboarding examples. Use
 the JSON quickstart first. The focused dataset profiles are experimental and
 are not substitutes for the multi-stage `strict` profile.
-
-### Reopen a CFL experiment passively
-
-The general CFL notebook can reopen a completed CFL experiment. Leave
-execution disabled, set `LOAD_EXPERIMENT` to the completed experiment path,
-and keep `BUILD_SAVED_PLOTS = False`. This validates and displays an existing
-view without scientific work or file changes.
-
-Set `BUILD_SAVED_PLOTS = True` only to create a missing combined view from
-saved tables. An existing view is verified rather than overwritten. This
-control is not present in the focused CFL dataset notebook; that notebook
-builds its seven-file `CFL_DATASET/` view after a newly authorized run.
 
 ## Next steps
 
@@ -225,7 +186,6 @@ builds its seven-file `CFL_DATASET/` view after a newly authorized run.
   to define a strict BSk24 thermodynamic study.
 - Inspect [`../configs/stellar_example.json`](../configs/stellar_example.json)
   before requesting the more expensive stellar layer.
-- Read [Method](method.md) for equations, units, and model-specific gates.
+- Read [Method](method.md) for equations, units, and causal gates.
 - Read [Dataset workflows](dataset.md) before using any dataset-family profile
   or campaign helper.
-- Read the [CFL contract](cfl.md) before interpreting CFL output.

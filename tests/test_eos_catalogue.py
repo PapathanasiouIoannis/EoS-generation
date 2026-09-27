@@ -58,30 +58,18 @@ def fixture(
     experiment = root / "runs" / name / "experiment_test"
     packet = experiment / "geometry_001"
     packet.mkdir(parents=True)
-    if matter_model == "bsk24":
-        source_hashes = {
-            f"src/eos_generation/bsk24/{name}.py": physics * 64
-            for name in ("baseline", "deformation", "reconstruction")
-        }
-        source_hashes["src/eos_generation/_internal/config.py"] = "b" * 64
-    elif matter_model == "cfl":
-        source_hashes = {
-            f"src/eos_generation/cfl/{name}.py": physics * 64
-            for name in ("baseline", "deformation", "reconstruction")
-        }
-        source_hashes["src/eos_generation/_internal/cfl_thermodynamics.py"] = "b" * 64
-    else:
+    if matter_model != "bsk24":
         raise ValueError(matter_model)
+    source_hashes = {
+        f"src/eos_generation/bsk24/{name}.py": physics * 64
+        for name in ("baseline", "deformation", "reconstruction")
+    }
+    source_hashes["src/eos_generation/_internal/config.py"] = "b" * 64
     source_hashes["src/eos_generation/reporting/plotting.py"] = ("c" if precision == "quick" else "d") * 64
     write_json(packet / "source_hashes.json", source_hashes)
-    baseline_validation_status = (
-        "literature_supported_frozen_design_contract"
-        if matter_model == "cfl"
-        else "pass"
-    )
     write_json(packet / "metadata.json", {
         "packet_status": "complete", "configuration_hash": "e" * 64,
-        "baseline_validation_status": baseline_validation_status,
+        "baseline_validation_status": "pass",
         "identity_status": "pass",
     })
     write_json(packet / "run_state.json", {"packet_status": "complete", "configuration_hash": "e" * 64})
@@ -117,8 +105,6 @@ def fixture(
                 "pressure_mev_fm3": epsilon / 10,
                 "cs2": 0.1,
             }
-            if matter_model == "cfl":
-                row["matter_model"] = "cfl"
             profiles.append(row)
     write_csv(packet / "thermodynamic_profiles.csv", profiles)
     sequences, fixed, maximum = [], [], []
@@ -254,65 +240,38 @@ class EosCatalogueTests(unittest.TestCase):
                 {row["eos_id"] for row in physical_rows},
             )
 
-    def test_cfl_and_bsk24_share_one_registry_without_identity_collisions(self):
+    def test_baseline_validation_status_is_fail_closed(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            hadronic = self.build(root, fixture(root, "hadronic"))
-            cfl = self.build(root, fixture(root, "quark", matter_model="cfl"))
-            hadronic_rows = CATALOGUE.csv_rows(Path(hadronic["data_path"]) / "case_aliases.csv")
-            cfl_rows = CATALOGUE.csv_rows(Path(cfl["data_path"]) / "case_aliases.csv")
-            self.assertEqual(
-                {"H000000", "H000001"},
-                {row["eos_id"] for row in hadronic_rows if row["eos_id"]},
-            )
-            self.assertEqual(
-                {"C000000", "C000001"},
-                {row["eos_id"] for row in cfl_rows if row["eos_id"]},
-            )
-            self.assertEqual({"bsk24"}, {row["matter_model"] for row in hadronic_rows})
-            self.assertEqual({"cfl"}, {row["matter_model"] for row in cfl_rows})
-            self.assertEqual(hadronic["catalogue_id"], cfl["catalogue_id"])
-            entries, _, _, count = CATALOGUE.read_registry(root / "runs/eos_catalogue")
-            self.assertEqual(4, len(entries))
-            self.assertEqual(2, count)
-
-    def test_model_specific_baseline_validation_status_is_fail_closed(self):
-        wrong_statuses = {
-            "bsk24": "literature_supported_frozen_design_contract",
-            "cfl": "pass",
-        }
-        for matter_model, wrong_status in wrong_statuses.items():
-            with self.subTest(matter_model=matter_model), tempfile.TemporaryDirectory() as temporary:
-                root = Path(temporary)
-                experiment = fixture(root, matter_model, matter_model=matter_model)
-                packet = experiment / "geometry_001"
-                metadata = CATALOGUE.read_json(packet / "metadata.json")
-                metadata["baseline_validation_status"] = wrong_status
-                write_json(packet / "metadata.json", metadata)
-                seal(packet)
-                with self.assertRaisesRegex(
-                    ValueError,
-                    "packet identity, baseline, or completion check failed",
-                ):
-                    CATALOGUE.collect_sources(root, experiment)
+            experiment = fixture(root, "wrong-baseline-status")
+            packet = experiment / "geometry_001"
+            metadata = CATALOGUE.read_json(packet / "metadata.json")
+            metadata["baseline_validation_status"] = "unverified"
+            write_json(packet / "metadata.json", metadata)
+            seal(packet)
+            with self.assertRaisesRegex(
+                ValueError,
+                "packet identity, baseline, or completion check failed",
+            ):
+                CATALOGUE.collect_sources(root, experiment)
 
     def test_authoritative_matter_model_must_match_experiment(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            experiment = fixture(root, "cfl-model-column", matter_model="cfl")
+            experiment = fixture(root, "model-column")
             packet = experiment / "geometry_001"
             path = packet / "thermodynamic_profiles.csv"
             rows = CATALOGUE.csv_rows(path)
-            rows[0]["matter_model"] = "bsk24"
+            rows[0]["matter_model"] = "unknown"
             write_csv(path, rows)
             seal(packet)
             with self.assertRaisesRegex(ValueError, "matter_model disagrees"):
                 CATALOGUE.collect_sources(root, experiment)
 
-    def test_cfl_direct_baseline_occurrence_belongs_only_to_declared_owner(self):
+    def test_direct_baseline_occurrence_belongs_only_to_declared_owner(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            experiment = fixture(root, "multi-geometry-cfl", matter_model="cfl")
+            experiment = fixture(root, "multi-geometry-bsk24")
             owner = experiment / "geometry_001"
             nonowner = experiment / "geometry_002"
             owner_config = CATALOGUE.read_json(owner / "complete_configuration.json")
@@ -351,11 +310,11 @@ class EosCatalogueTests(unittest.TestCase):
             catalogue_rows = CATALOGUE.csv_rows(
                 Path(result["data_path"]) / "eos_catalogue.csv"
             )
-            baseline = next(row for row in catalogue_rows if row["eos_id"] == "C000000")
+            baseline = next(row for row in catalogue_rows if row["eos_id"] == "H000000")
             self.assertEqual("direct", baseline["source_case_id"])
             self.assertEqual("geometry_001", baseline["geometry_id"])
 
-    def test_legacy_bsk24_registry_chain_accepts_a_versioned_cfl_extension(self):
+    def test_legacy_bsk24_registry_chain_accepts_a_versioned_bsk24_extension(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             self.build(root, fixture(root, "legacy"))
@@ -365,10 +324,10 @@ class EosCatalogueTests(unittest.TestCase):
             transaction["schema_id"] = CATALOGUE.LEGACY_SCHEMA
             transaction["sha256"] = CATALOGUE.digest(transaction)
             write_json(first, transaction)
-            result = self.build(root, fixture(root, "cfl", matter_model="cfl"))
+            result = self.build(root, fixture(root, "new-bsk24", physics="f"))
             rows = CATALOGUE.csv_rows(Path(result["data_path"]) / "case_aliases.csv")
             self.assertEqual(
-                {"C000000", "C000001"},
+                {"H000002", "H000003"},
                 {row["eos_id"] for row in rows if row["eos_id"]},
             )
             second = CATALOGUE.read_json(

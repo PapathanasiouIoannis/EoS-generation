@@ -15,7 +15,6 @@ from eos_generation._internal.planning import (
     BSk24TrialConfig,
 )
 from eos_generation._internal.summary import (
-    CFL_PACKET_SCHEMA_ID,
     PACKET_SCHEMA_ID,
 )
 from eos_generation.reporting.plot_orchestration import ALL_FIGURES
@@ -26,7 +25,7 @@ def load_trial_packet(
     *,
     result_factory: Callable[[Path, Any, dict[str, Any], pd.DataFrame], Any],
 ) -> Any:
-    """Open a completed BSk24 or CFL packet without scientific execution."""
+    """Open a completed BSk24 packet without scientific execution."""
     packet = ensure_within_runs(packet_path)
     config_path = packet / "complete_configuration.json"
     metadata_path = packet / "metadata.json"
@@ -34,16 +33,9 @@ def load_trial_packet(
         raise FileNotFoundError("not a completed governed trial packet")
     config_payload = json.loads(config_path.read_text(encoding="utf-8"))
     matter_model = str(config_payload.get("matter_model", "bsk24"))
-    if matter_model == "cfl":
-        from eos_generation.cfl.planning import CFLTrialConfig
-
-        config = CFLTrialConfig.from_dict(config_payload)
-        expected_schema = CFL_PACKET_SCHEMA_ID
-    elif matter_model == "bsk24":
-        config = BSk24TrialConfig.from_dict(config_payload)
-        expected_schema = PACKET_SCHEMA_ID
-    else:
+    if matter_model != "bsk24":
         raise ValueError(f"unsupported saved matter_model: {matter_model!r}")
+    config = BSk24TrialConfig.from_dict(config_payload)
     if config.output_path is None:
         raise ValueError("saved child configuration has no output path")
     saved_output = resolve_runs_path(config.output_path)
@@ -53,12 +45,10 @@ def load_trial_packet(
         )
     config = replace(config, output_path=packet)
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-    if metadata.get("schema_id") != expected_schema:
+    if metadata.get("schema_id") != PACKET_SCHEMA_ID:
         raise ValueError(
             "packet schema is not supported by this eos_generation release"
         )
-    if matter_model == "cfl" and metadata.get("matter_model") != "cfl":
-        raise ValueError("CFL packet metadata is missing its matter-model identity")
     inventory_path = packet / "plot_inventory.csv"
     if inventory_path.is_file():
         inventory = pd.read_csv(inventory_path)

@@ -16,7 +16,6 @@ from eos_generation._internal.provenance import (
     _source_inventory_id_for_paths,
 )
 from eos_generation._internal.summary import (
-    CFL_PACKET_SCHEMA_ID,
     PACKET_SCHEMA_ID,
     build_summary_model,
     render_summary_markdown,
@@ -25,7 +24,6 @@ from eos_generation.bsk24.deformation import (
     BSK24_RETAINED_EPSILON_MATCH_MEV_FM3,
 )
 from eos_generation.reporting._validation_cases import (
-    _validate_cfl_raw_gate_profiles,
     _validate_case_consistency,
     _validate_ledger,
     _validate_plot_inventory,
@@ -37,13 +35,8 @@ from eos_generation.reporting._validation_io import (
     _safe_packet_relative,
     _sha256,
 )
-from eos_generation.stellar.tov import (
-    TIDAL_CORRECTION_VERSION,
-    TIDAL_JUMP_FORMULA,
-)
 
 TRIAL_PLAN_SCHEMA = "eos_generation_trial_plan_v1"
-CFL_TRIAL_PLAN_SCHEMA = "eos_generation_cfl_trial_plan_v1"
 PLOT_PROVENANCE_SCHEMA = "eos_generation_plot_generation_provenance_v1"
 
 CORE_REQUIRED_FILES = (
@@ -287,232 +280,12 @@ def _finite_number(value: Any) -> float | None:
     return result if math.isfinite(result) else None
 
 
-def _cfl_profile_sha256(profile: Mapping[str, Any]) -> str | None:
-    payload = dict(profile)
-    stored = payload.pop("parameter_set_sha256", None)
-    if not isinstance(stored, str):
-        return None
-    try:
-        calculated = hashlib.sha256(
-            json.dumps(
-                payload,
-                allow_nan=False,
-                ensure_ascii=True,
-                separators=(",", ":"),
-                sort_keys=True,
-            ).encode("ascii")
-        ).hexdigest()
-    except (TypeError, ValueError, UnicodeEncodeError):
-        return None
-    return calculated if calculated == stored else None
-
-
-def _validate_cfl_anchor_selection(
-    configuration: Mapping[str, Any],
-    metadata: Mapping[str, Any],
-    layer: _Layer,
-) -> None:
-    """Bind a CFL packet to its canonical finite-density vacuum surface."""
-
-    if configuration.get("epsilon_match") != "surface":
-        layer.fail("cfl_anchor:epsilon_match_not_surface")
-    profile = configuration.get("baseline_profile")
-    if not isinstance(profile, Mapping):
-        layer.fail("cfl_anchor:baseline_profile_missing")
-        return
-
-    parameter_hash = profile.get("parameter_set_sha256")
-    if (
-        not isinstance(parameter_hash, str)
-        or re.fullmatch(r"[0-9a-f]{64}", parameter_hash) is None
-        or _cfl_profile_sha256(profile) != parameter_hash
-    ):
-        layer.fail("cfl_anchor:baseline_profile_hash_mismatch")
-    for field in (
-        "parameter_set_id",
-        "parameter_set_sha256",
-        "formulation_id",
-        "formulation_version",
-    ):
-        configured_field = (
-            "baseline_parameter_set_id"
-            if field == "parameter_set_id"
-            else "baseline_parameter_set_sha256"
-            if field == "parameter_set_sha256"
-            else field
-        )
-        if configuration.get(configured_field) != profile.get(field):
-            layer.fail(f"cfl_anchor:configuration_profile_mismatch:{field}")
-
-    surface = profile.get("surface")
-    if not isinstance(surface, Mapping):
-        layer.fail("cfl_anchor:surface_profile_missing")
-        return
-    required_surface_fields = (
-        "energy_density_mev_fm3",
-        "pressure_mev_fm3",
-        "baryon_density_fm3",
-        "quark_chemical_potential_mev",
-        "baryon_chemical_potential_mev",
-        "common_fermi_momentum_mev",
-        "sound_speed_squared",
-        "energy_per_baryon_mev",
-    )
-    values = {
-        field: _finite_number(surface.get(field))
-        for field in required_surface_fields
-    }
-    for field, value in values.items():
-        if value is None:
-            layer.fail(f"cfl_anchor:surface_nonfinite:{field}")
-    if any(value is None for value in values.values()):
-        return
-
-    epsilon = float(values["energy_density_mev_fm3"])
-    pressure = float(values["pressure_mev_fm3"])
-    density = float(values["baryon_density_fm3"])
-    mu_q = float(values["quark_chemical_potential_mev"])
-    mu_b = float(values["baryon_chemical_potential_mev"])
-    fermi_momentum = float(values["common_fermi_momentum_mev"])
-    sound_speed = float(values["sound_speed_squared"])
-    energy_per_baryon = float(values["energy_per_baryon_mev"])
-    if epsilon <= 0.0:
-        layer.fail("cfl_anchor:surface_energy_not_positive")
-    if pressure != 0.0:
-        layer.fail("cfl_anchor:surface_pressure_not_exact_zero")
-    if density <= 0.0:
-        layer.fail("cfl_anchor:surface_baryon_density_not_positive")
-    if mu_q <= 0.0 or mu_b <= 0.0 or fermi_momentum <= 0.0:
-        layer.fail("cfl_anchor:surface_chemical_state_not_positive")
-    if not 0.0 < sound_speed <= 1.0:
-        layer.fail("cfl_anchor:surface_sound_speed_not_causal_stable")
-    if mu_b != 3.0 * mu_q:
-        layer.fail("cfl_anchor:mu_b_not_three_mu_q")
-    if energy_per_baryon != mu_b:
-        layer.fail("cfl_anchor:surface_energy_per_baryon_mismatch")
-    if epsilon != density * mu_b - pressure:
-        layer.fail("cfl_anchor:surface_euler_identity_mismatch")
-    if configuration.get("epsilon_match_mev_fm3") != epsilon:
-        layer.fail("cfl_anchor:configuration_surface_energy_mismatch")
-    complete_domain = configuration.get("complete_domain_mev_fm3")
-    if (
-        not isinstance(complete_domain, list)
-        or len(complete_domain) != 2
-        or complete_domain[0] != epsilon
-        or _finite_number(complete_domain[1]) is None
-        or float(complete_domain[1]) <= epsilon
-    ):
-        layer.fail("cfl_anchor:complete_domain_mismatch")
-
-    frozen = metadata.get("frozen_cfl_parameters")
-    if not isinstance(frozen, Mapping):
-        layer.fail("cfl_anchor:metadata_frozen_profile_missing")
-    elif dict(frozen) != dict(profile):
-        layer.fail("cfl_anchor:metadata_frozen_profile_mismatch")
-    for field in (
-        "baseline_parameter_set_id",
-        "baseline_parameter_set_sha256",
-        "formulation_id",
-        "formulation_version",
-    ):
-        if metadata.get(field) != configuration.get(field):
-            layer.fail(f"cfl_anchor:metadata_provenance_mismatch:{field}")
-    for field in (
-        "deformation_profile_id",
-        "deformation_profile_version",
-        "reconstruction_profile_id",
-        "reconstruction_schema_version",
-        "pressure_primitive_policy",
-        "stellar_sequence_policy",
-        "stellar_local_refinement_policy",
-        "domain_id",
-    ):
-        if metadata.get(field) != configuration.get(field):
-            layer.fail(f"cfl_anchor:metadata_provenance_mismatch:{field}")
-    from eos_generation.stellar.discontinuities import (
-        BARE_SELF_BOUND_SEQUENCE_POLICY,
-        SEED_PRESERVING_LOCAL_REFINEMENT_POLICY,
-    )
-
-    if configuration.get("stellar_sequence_policy") != BARE_SELF_BOUND_SEQUENCE_POLICY:
-        layer.fail("cfl_anchor:stellar_sequence_policy_mismatch")
-    if configuration.get("stellar_local_refinement_policy") != SEED_PRESERVING_LOCAL_REFINEMENT_POLICY:
-        layer.fail("cfl_anchor:stellar_local_refinement_policy_mismatch")
-    surface_tidal_policy = metadata.get("surface_tidal_policy")
-    expected_surface_tidal_policy = {
-        "finite_surface_energy_density": True,
-        "required_correction": TIDAL_JUMP_FORMULA,
-        "correction_version": TIDAL_CORRECTION_VERSION,
-        "application_count": "exactly_once_per_successful_tidal_star",
-    }
-    if not isinstance(surface_tidal_policy, Mapping):
-        layer.fail("cfl_anchor:surface_tidal_policy_missing")
-    else:
-        for field, expected in expected_surface_tidal_policy.items():
-            if surface_tidal_policy.get(field) != expected:
-                layer.fail(
-                    f"cfl_anchor:surface_tidal_policy_mismatch:{field}"
-                )
-        saved_evidence = surface_tidal_policy.get("saved_evidence")
-        if not isinstance(saved_evidence, str) or not saved_evidence.strip():
-            layer.fail("cfl_anchor:surface_tidal_saved_evidence_missing")
-
-    record = metadata.get("anchor_selection")
-    if not isinstance(record, Mapping):
-        layer.fail("anchor_selection:missing_for_current_packet")
-        return
-    if record.get("mode") != "bare_self_bound_zero_pressure_surface":
-        layer.fail("anchor_selection:mode_mismatch")
-    if record.get("exploratory") is not False:
-        layer.fail("anchor_selection:mode_mismatch")
-    if record.get("selected_epsilon_match_mev_fm3") != epsilon:
-        layer.fail("anchor_selection:selected_epsilon_mismatch")
-    derived = record.get("derived_state")
-    if not isinstance(derived, Mapping):
-        layer.fail("anchor_selection:derived_state_missing")
-    else:
-        for field in (
-            "energy_density_mev_fm3",
-            "pressure_mev_fm3",
-            "baryon_density_fm3",
-            "quark_chemical_potential_mev",
-            "baryon_chemical_potential_mev",
-            "sound_speed_squared",
-        ):
-            if derived.get(field) != surface.get(field):
-                layer.fail(f"anchor_selection:derived_state_mismatch:{field}")
-    for field in (
-        "window_and_reconstruction_share_this_anchor",
-        "surface_pressure_preserved_exactly",
-        "surface_baryon_density_preserved_exactly",
-        "surface_baryon_chemical_potential_preserved_exactly",
-    ):
-        if record.get(field) is not True:
-            layer.fail(f"anchor_selection:missing_exact_declaration:{field}")
-    if record.get("surface_exterior") != "vacuum":
-        layer.fail("anchor_selection:surface_exterior_not_vacuum")
-    if record.get("crust_or_hadronic_envelope") != "absent":
-        layer.fail("anchor_selection:crust_or_envelope_not_absent")
-    layer.checks["cfl_surface_anchor"] = {
-        "energy_density_mev_fm3": epsilon,
-        "pressure_mev_fm3": pressure,
-        "baryon_density_fm3": density,
-        "baryon_chemical_potential_mev": mu_b,
-        "baseline_parameter_set_sha256": parameter_hash,
-        "formulation_id": profile.get("formulation_id"),
-        "formulation_version": profile.get("formulation_version"),
-    }
-
-
 def _validate_anchor_selection(
     configuration: Any,
     metadata: Any,
     layer: _Layer,
 ) -> None:
     if not isinstance(configuration, dict) or not isinstance(metadata, dict):
-        return
-    if configuration.get("matter_model", "bsk24") == "cfl":
-        _validate_cfl_anchor_selection(configuration, metadata, layer)
         return
     _validate_bsk24_anchor_selection(configuration, metadata, layer)
 
@@ -523,22 +296,10 @@ def _validate_reproduction_notebook(
     matter_model: str,
     layer: _Layer,
 ) -> None:
-    """Validate the model hint while preserving sealed v1.2 CFL packets."""
+    """Validate the BSk24 reproduction notebook path."""
 
-    bsk24_notebook = "notebooks/bsk24_experiment.ipynb"
-    expected = (
-        "notebooks/cfl_experiment.ipynb"
-        if matter_model == "cfl"
-        else bsk24_notebook
-    )
-    if notebook == expected:
+    if notebook == "notebooks/bsk24_experiment.ipynb":
         layer.checks["reproduction_notebook_status"] = "model_specific"
-        return
-    if matter_model == "cfl" and notebook == bsk24_notebook:
-        layer.checks["reproduction_notebook_status"] = (
-            "legacy_v1_2_cfl_bsk24_path"
-        )
-        layer.warn("reproduction:notebook_legacy_v1_2_cfl_bsk24_path")
         return
     layer.checks["reproduction_notebook_status"] = "mismatch"
     layer.fail("reproduction:notebook_mismatch")
@@ -770,9 +531,7 @@ def _validate_packet_schema_and_summary(
 
     schema = metadata.get("schema_id") if isinstance(metadata, dict) else None
     layer.checks["packet_schema_id"] = schema
-    expected_schema = (
-        CFL_PACKET_SCHEMA_ID if matter_model == "cfl" else PACKET_SCHEMA_ID
-    )
+    expected_schema = PACKET_SCHEMA_ID
     if schema != expected_schema:
         layer.fail(f"packet_schema:unrecognized:{schema!r}")
         return None
@@ -815,25 +574,22 @@ def _csv_finite_number(value: Any) -> float | None:
     return result if math.isfinite(result) else None
 
 
-def _validate_cfl_case_aliases(
+def _validate_case_aliases(
     configuration: Mapping[str, Any],
     case_plan: list[dict[str, str]] | None,
     case_ledger: list[dict[str, str]] | None,
     layer: _Layer,
 ) -> None:
-    """Verify logical-to-physical CFL identities before completeness checks."""
+    """Verify logical-to-physical BSk24 identities before completeness checks."""
 
     if case_plan is None or case_ledger is None:
         return
     baseline_id = configuration.get("zero_amplitude_physical_case_id")
-    model = str(configuration.get("matter_model", "bsk24"))
-    expected_prefix = (
-        "cfl_baseline_" if model == "cfl" else "bsk24_baseline_"
-    )
+    expected_prefix = "bsk24_baseline_"
     if not isinstance(baseline_id, str) or not baseline_id.startswith(
         expected_prefix
     ):
-        layer.fail("cfl_case_aliases:baseline_physical_id_invalid")
+        layer.fail("case_aliases:baseline_physical_id_invalid")
         return
     plan_by_id = {
         str(row.get("case_id", "")): row
@@ -850,7 +606,7 @@ def _validate_cfl_case_aliases(
         physical_id = str(row.get("physical_case_id", ""))
         planned_physical_id = str(planned.get("physical_case_id", ""))
         if not physical_id or physical_id != planned_physical_id:
-            layer.fail(f"cfl_case_aliases:physical_id_mismatch:{case_id}")
+            layer.fail(f"case_aliases:physical_id_mismatch:{case_id}")
             continue
         physical_ids.add(physical_id)
         declared_alias = _csv_boolean(row.get("is_physical_case_alias"))
@@ -860,18 +616,18 @@ def _validate_cfl_case_aliases(
             declared_alias is not expected_alias
             or planned_alias is not expected_alias
         ):
-            layer.fail(f"cfl_case_aliases:alias_flag_mismatch:{case_id}")
+            layer.fail(f"case_aliases:alias_flag_mismatch:{case_id}")
         if expected_alias:
             alias_count += 1
         amplitude = _csv_finite_number(planned.get("amplitude"))
         if amplitude is None:
-            layer.fail(f"cfl_case_aliases:amplitude_invalid:{case_id}")
+            layer.fail(f"case_aliases:amplitude_invalid:{case_id}")
         elif amplitude == 0.0:
             if physical_id != baseline_id:
-                layer.fail(f"cfl_case_aliases:a0_physical_id_mismatch:{case_id}")
+                layer.fail(f"case_aliases:a0_physical_id_mismatch:{case_id}")
         elif physical_id != case_id:
-            layer.fail(f"cfl_case_aliases:nonzero_alias_forbidden:{case_id}")
-    layer.checks["cfl_case_aliases"] = {
+            layer.fail(f"case_aliases:nonzero_alias_forbidden:{case_id}")
+    layer.checks["case_aliases"] = {
         "logical_case_count": len(case_ledger),
         "physical_case_count": len(physical_ids),
         "alias_count": alias_count,
@@ -879,7 +635,7 @@ def _validate_cfl_case_aliases(
     }
 
 
-def _validate_cfl_plan_aliases(
+def _validate_plan_aliases(
     configuration: Mapping[str, Any],
     trial_plan: Mapping[str, Any],
     case_plan: list[dict[str, str]] | None,
@@ -893,10 +649,10 @@ def _validate_cfl_plan_aliases(
     planned_cases = trial_plan.get("case_table")
     aliases = trial_plan.get("logical_alias_table")
     if not isinstance(planned_cases, list):
-        layer.fail("cfl_plan_aliases:case_table_missing")
+        layer.fail("plan_aliases:case_table_missing")
         return
     if not isinstance(aliases, list):
-        layer.fail("cfl_plan_aliases:logical_alias_table_missing")
+        layer.fail("plan_aliases:logical_alias_table_missing")
         return
     saved_case_ids = {str(row.get("case_id", "")) for row in case_plan}
     serialized_case_ids = {
@@ -905,9 +661,9 @@ def _validate_cfl_plan_aliases(
         if isinstance(row, Mapping)
     }
     if len(serialized_case_ids) != len(planned_cases):
-        layer.fail("cfl_plan_aliases:serialized_case_identity_invalid")
+        layer.fail("plan_aliases:serialized_case_identity_invalid")
     if saved_case_ids != serialized_case_ids:
-        layer.fail("cfl_plan_aliases:serialized_case_table_mismatch")
+        layer.fail("plan_aliases:serialized_case_table_mismatch")
 
     saved_alias_by_id = {
         str(row.get("case_id", "")): row
@@ -915,37 +671,37 @@ def _validate_cfl_plan_aliases(
         if row.get("case_id")
     }
     if len(saved_alias_by_id) != len(saved_aliases):
-        layer.fail("cfl_plan_aliases:saved_alias_identity_invalid")
+        layer.fail("plan_aliases:saved_alias_identity_invalid")
 
     baseline_id = configuration.get("zero_amplitude_physical_case_id")
     alias_ids: set[str] = set()
     for item in aliases:
         if not isinstance(item, Mapping):
-            layer.fail("cfl_plan_aliases:alias_not_object")
+            layer.fail("plan_aliases:alias_not_object")
             continue
         case_id = str(item.get("case_id", ""))
         if not case_id or case_id in alias_ids or case_id in saved_case_ids:
-            layer.fail(f"cfl_plan_aliases:alias_identity_invalid:{case_id}")
+            layer.fail(f"plan_aliases:alias_identity_invalid:{case_id}")
             continue
         alias_ids.add(case_id)
         amplitude = _finite_number(item.get("amplitude"))
         if amplitude != 0.0:
-            layer.fail(f"cfl_plan_aliases:nonzero_alias:{case_id}")
+            layer.fail(f"plan_aliases:nonzero_alias:{case_id}")
         if item.get("physical_case_id") != baseline_id:
-            layer.fail(f"cfl_plan_aliases:physical_id_mismatch:{case_id}")
+            layer.fail(f"plan_aliases:physical_id_mismatch:{case_id}")
         if item.get("is_physical_case_alias") is not True:
-            layer.fail(f"cfl_plan_aliases:alias_flag_missing:{case_id}")
+            layer.fail(f"plan_aliases:alias_flag_missing:{case_id}")
         if item.get("planned_for_execution") is not False:
-            layer.fail(f"cfl_plan_aliases:execution_flag_invalid:{case_id}")
+            layer.fail(f"plan_aliases:execution_flag_invalid:{case_id}")
         if item.get("physical_case_owner") is not False:
-            layer.fail(f"cfl_plan_aliases:owner_flag_invalid:{case_id}")
+            layer.fail(f"plan_aliases:owner_flag_invalid:{case_id}")
         saved = saved_alias_by_id.get(case_id)
         if saved is None:
-            layer.fail(f"cfl_plan_aliases:saved_alias_missing:{case_id}")
+            layer.fail(f"plan_aliases:saved_alias_missing:{case_id}")
         else:
             if saved.get("physical_case_id") != item.get("physical_case_id"):
                 layer.fail(
-                    f"cfl_plan_aliases:saved_physical_id_mismatch:{case_id}"
+                    f"plan_aliases:saved_physical_id_mismatch:{case_id}"
                 )
             for field in (
                 "is_physical_case_alias",
@@ -954,7 +710,7 @@ def _validate_cfl_plan_aliases(
             ):
                 if _csv_boolean(saved.get(field)) is not item.get(field):
                     layer.fail(
-                        f"cfl_plan_aliases:saved_flag_mismatch:{case_id}:{field}"
+                        f"plan_aliases:saved_flag_mismatch:{case_id}:{field}"
                     )
             for field in (
                 "amplitude",
@@ -966,26 +722,26 @@ def _validate_cfl_plan_aliases(
                     item.get(field)
                 ):
                     layer.fail(
-                        f"cfl_plan_aliases:saved_geometry_mismatch:{case_id}:{field}"
+                        f"plan_aliases:saved_geometry_mismatch:{case_id}:{field}"
                     )
     if set(saved_alias_by_id) != alias_ids:
-        layer.fail("cfl_plan_aliases:saved_alias_id_mismatch")
+        layer.fail("plan_aliases:saved_alias_id_mismatch")
 
     deltas = configuration.get("deltas_mev_fm3")
     owner = configuration.get("zero_amplitude_control_owner")
     if not isinstance(deltas, list) or not isinstance(owner, bool):
-        layer.fail("cfl_plan_aliases:configuration_geometry_invalid")
+        layer.fail("plan_aliases:configuration_geometry_invalid")
     else:
         expected_alias_count = len(deltas) - (1 if owner else 0)
         if len(alias_ids) != expected_alias_count:
             layer.fail(
-                "cfl_plan_aliases:alias_count_mismatch:"
+                "plan_aliases:alias_count_mismatch:"
                 f"{len(alias_ids)}:{expected_alias_count}"
             )
-    layer.checks["cfl_logical_alias_count"] = len(alias_ids)
+    layer.checks["alias_logical_alias_count"] = len(alias_ids)
 
 
-def _normalize_cfl_raw_gate_identities(
+def _normalize_raw_gate_identities(
     configuration: Mapping[str, Any],
     raw_gate: Any,
     case_plan: list[dict[str, str]] | None,
@@ -1023,7 +779,7 @@ def _normalize_cfl_raw_gate_identities(
             )
         )
         if not valid_alias_only_child:
-            layer.fail("cfl_raw_gate_identity:logical_physical_mapping_invalid")
+            layer.fail("raw_gate_identity:logical_physical_mapping_invalid")
             return raw_gate, set(), set()
         if isinstance(metadata, Mapping):
             for outcome in ("accepted", "rejected"):
@@ -1035,94 +791,49 @@ def _normalize_cfl_raw_gate_identities(
                     layer.fail(
                         f"metadata:{outcome}_physical_case_count_mismatch"
                     )
-        layer.checks["cfl_raw_gate_physical_case_count"] = 0
-        layer.checks["cfl_raw_gate_accepted_physical_case_count"] = 0
-        layer.checks["cfl_raw_gate_rejected_physical_case_count"] = 0
+        layer.checks["raw_gate_physical_case_count"] = 0
+        layer.checks["raw_gate_accepted_physical_case_count"] = 0
+        layer.checks["raw_gate_rejected_physical_case_count"] = 0
         return dict(raw_gate), set(), set()
     if any(
         not physical_id for physical_id in logical_to_physical.values()
     ):
-        layer.fail("cfl_raw_gate_identity:logical_physical_mapping_invalid")
+        layer.fail("raw_gate_identity:logical_physical_mapping_invalid")
         return raw_gate, set(), set()
     physical_to_logical = {
         physical_id: logical_id
         for logical_id, physical_id in logical_to_physical.items()
     }
     if len(physical_to_logical) != len(logical_to_physical):
-        layer.fail("cfl_raw_gate_identity:duplicate_owned_physical_id")
+        layer.fail("raw_gate_identity:duplicate_owned_physical_id")
         return raw_gate, set(), set()
 
     cases = raw_gate.get("cases")
     if not isinstance(cases, dict):
-        layer.fail("cfl_raw_gate_identity:cases_not_object")
+        layer.fail("raw_gate_identity:cases_not_object")
         return raw_gate, set(), set()
     raw_case_ids = set(cases)
     expected_physical_ids = set(physical_to_logical)
     if raw_case_ids != expected_physical_ids:
         layer.fail(
-            "cfl_raw_gate_identity:case_coverage_mismatch:"
+            "raw_gate_identity:case_coverage_mismatch:"
             f"missing={sorted(expected_physical_ids - raw_case_ids)}:"
             f"extra={sorted(raw_case_ids - expected_physical_ids)}"
         )
     accepted_physical = set(raw_gate.get("accepted_case_ids", []))
     rejected_physical = set(raw_gate.get("rejected_case_ids", []))
     if accepted_physical & rejected_physical:
-        layer.fail("cfl_raw_gate_identity:accepted_rejected_overlap")
+        layer.fail("raw_gate_identity:accepted_rejected_overlap")
     if accepted_physical | rejected_physical != raw_case_ids:
-        layer.fail("cfl_raw_gate_identity:outcome_coverage_mismatch")
-    model = str(configuration.get("matter_model", "bsk24"))
+        layer.fail("raw_gate_identity:outcome_coverage_mismatch")
     for physical_id, report in cases.items():
         if not isinstance(report, Mapping):
-            layer.fail(f"cfl_raw_gate_identity:report_not_object:{physical_id}")
+            layer.fail(f"raw_gate_identity:report_not_object:{physical_id}")
             continue
         if report.get("case_id") != physical_id:
             layer.fail(
-                f"cfl_raw_gate_identity:report_case_id_mismatch:{physical_id}"
+                f"raw_gate_identity:report_case_id_mismatch:{physical_id}"
             )
-        if model == "cfl":
-            expected_report_fields = {
-                "schema_version": "cfl_raw_local_physics_gate_v1",
-                "profile_id": configuration.get("deformation_profile_id"),
-                "profile_version": configuration.get(
-                    "deformation_profile_version"
-                ),
-                "pressure_primitive_policy": configuration.get(
-                    "pressure_primitive_policy"
-                ),
-                "baseline_parameter_set_id": configuration.get(
-                    "baseline_parameter_set_id"
-                ),
-                "baseline_parameter_set_sha256": configuration.get(
-                    "baseline_parameter_set_sha256"
-                ),
-            }
-            for field, expected in expected_report_fields.items():
-                if report.get(field) != expected:
-                    layer.fail(
-                        "cfl_raw_gate_identity:report_provenance_mismatch:"
-                        f"{physical_id}:{field}"
-                    )
-            report_payload = dict(report)
-            report_sha256 = report_payload.pop("report_sha256", None)
-            try:
-                calculated_report_sha256 = hashlib.sha256(
-                    json.dumps(
-                        report_payload,
-                        allow_nan=False,
-                        ensure_ascii=True,
-                        separators=(",", ":"),
-                        sort_keys=True,
-                    ).encode("ascii")
-                ).hexdigest()
-            except (TypeError, ValueError, UnicodeEncodeError):
-                calculated_report_sha256 = None
-            if (
-                not isinstance(report_sha256, str)
-                or calculated_report_sha256 != report_sha256
-            ):
-                layer.fail(
-                    f"cfl_raw_gate_identity:report_hash_mismatch:{physical_id}"
-                )
 
     if isinstance(metadata, Mapping):
         for outcome, observed in (
@@ -1158,17 +869,17 @@ def _normalize_cfl_raw_gate_identities(
                 physical_to_logical.get(str(physical_id), str(physical_id))
                 for physical_id in value
             ]
-    layer.checks["cfl_raw_gate_physical_case_count"] = len(raw_case_ids)
-    layer.checks["cfl_raw_gate_accepted_physical_case_count"] = len(
+    layer.checks["raw_gate_physical_case_count"] = len(raw_case_ids)
+    layer.checks["raw_gate_accepted_physical_case_count"] = len(
         accepted_physical
     )
-    layer.checks["cfl_raw_gate_rejected_physical_case_count"] = len(
+    layer.checks["raw_gate_rejected_physical_case_count"] = len(
         rejected_physical
     )
     return normalized, accepted_physical, rejected_physical
 
 
-def _validate_cfl_identity_metadata(
+def _validate_alias_identity_metadata(
     configuration: Mapping[str, Any],
     metadata: Any,
     case_plan: list[dict[str, str]] | None,
@@ -1193,21 +904,21 @@ def _validate_cfl_identity_metadata(
     }
     for field, value in expected.items():
         if metadata.get(field) != value:
-            layer.fail(f"metadata:cfl_identity_mismatch:{field}")
+            layer.fail(f"metadata:alias_identity_mismatch:{field}")
     owner = configuration.get("zero_amplitude_control_owner")
     baseline_id = configuration.get("zero_amplitude_physical_case_id")
     if owner is True:
         if baseline_id not in accepted_physical:
-            layer.fail("metadata:cfl_owner_baseline_not_accepted")
+            layer.fail("metadata:alias_owner_baseline_not_accepted")
         if baseline_id in rejected_physical:
-            layer.fail("metadata:cfl_owner_baseline_rejected")
+            layer.fail("metadata:alias_owner_baseline_rejected")
     elif owner is False:
         if baseline_id in accepted_physical or baseline_id in rejected_physical:
-            layer.fail("metadata:cfl_nonowner_contains_physical_baseline")
+            layer.fail("metadata:alias_nonowner_contains_physical_baseline")
     else:
-        layer.fail("metadata:cfl_zero_amplitude_owner_invalid")
-    layer.checks["cfl_logical_case_count"] = expected["logical_case_count"]
-    layer.checks["cfl_physical_case_count"] = expected["physical_case_count"]
+        layer.fail("metadata:alias_zero_amplitude_owner_invalid")
+    layer.checks["alias_logical_case_count"] = expected["logical_case_count"]
+    layer.checks["alias_physical_case_count"] = expected["physical_case_count"]
 
 
 def _validate_internal(
@@ -1276,7 +987,7 @@ def _validate_internal(
     matter_model = "bsk24"
     if isinstance(configuration, dict):
         declared_model = configuration.get("matter_model", "bsk24")
-        if declared_model not in {"bsk24", "cfl"}:
+        if declared_model != "bsk24":
             layer.fail(f"matter_model:unsupported:{declared_model!r}")
         else:
             matter_model = str(declared_model)
@@ -1288,14 +999,11 @@ def _validate_internal(
             "matter_model:validator_mismatch:"
             f"{matter_model}:{expected_matter_model}"
         )
-    a0_alias_mode = matter_model == "cfl" or (
-        matter_model == "bsk24"
-        and isinstance(
+    a0_alias_mode = isinstance(
             configuration.get("zero_amplitude_control_owner")
             if isinstance(configuration, Mapping)
             else None,
             bool,
-        )
     )
     if a0_alias_mode and not (
         packet / "logical_case_aliases.csv"
@@ -1311,24 +1019,10 @@ def _validate_internal(
         configuration_hash_fn,
     )
     _validate_saved_output_paths(packet, configuration, trial_plan, layer)
-    expected_plan_schema = (
-        CFL_TRIAL_PLAN_SCHEMA if matter_model == "cfl" else TRIAL_PLAN_SCHEMA
-    )
     if not isinstance(trial_plan, dict) or trial_plan.get(
         "schema_id"
-    ) != expected_plan_schema:
+    ) != TRIAL_PLAN_SCHEMA:
         layer.fail("trial_plan:unsupported_schema")
-    if (
-        matter_model == "cfl"
-        and isinstance(trial_plan, dict)
-        and trial_plan.get("matter_model") != "cfl"
-    ):
-        layer.fail("trial_plan:matter_model_mismatch")
-    if matter_model == "cfl" and (
-        not isinstance(metadata, dict)
-        or metadata.get("matter_model") != "cfl"
-    ):
-        layer.fail("metadata:matter_model_mismatch")
     if not isinstance(plot_provenance, dict) or plot_provenance.get(
         "schema_id"
     ) != PLOT_PROVENANCE_SCHEMA:
@@ -1358,7 +1052,7 @@ def _validate_internal(
             raw_gate_for_consistency,
             accepted_physical,
             rejected_physical,
-        ) = _normalize_cfl_raw_gate_identities(
+        ) = _normalize_raw_gate_identities(
             configuration,
             raw_gate,
             case_plan,
@@ -1383,29 +1077,21 @@ def _validate_internal(
         ),
     )
     if a0_alias_mode and isinstance(configuration, dict):
-        if matter_model == "cfl":
-            _validate_cfl_raw_gate_profiles(
-                _read_csv(packet, "raw_gate_profiles.csv", layer),
-                raw_gate=raw_gate,
-                accepted=accepted_physical,
-                rejected=rejected_physical,
-                layer=layer,
-            )
         if isinstance(trial_plan, dict):
-            _validate_cfl_plan_aliases(
+            _validate_plan_aliases(
                 configuration,
                 trial_plan,
                 case_plan,
                 logical_aliases,
                 layer,
             )
-        _validate_cfl_case_aliases(
+        _validate_case_aliases(
             configuration,
             case_plan,
             case_ledger,
             layer,
         )
-        _validate_cfl_identity_metadata(
+        _validate_alias_identity_metadata(
             configuration,
             metadata,
             case_plan,

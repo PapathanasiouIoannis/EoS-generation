@@ -10,8 +10,8 @@ validation. For a general-notebook run, `STUDENT_VIEW/` is the easiest place
 to find the main tables. Its CSV files are byte-for-byte copies of artifacts
 in the authoritative geometry packets, and its generated
 `DATA_DICTIONARY.md` lists the exact headers present in that run. The focused
-notebooks do not create `STUDENT_VIEW/`; use their derived output described
-below or read the authoritative geometry packets directly.
+BSk24 dataset notebook does not create `STUDENT_VIEW/`; read the authoritative
+geometry packets directly.
 
 ## Start with the primary tables
 
@@ -22,11 +22,7 @@ Derived notebook views add convenience labels differently:
   `case_aliases.csv`, and `eos_catalogue.csv` backed by the append-only
   `runs/eos_catalogue/` registry;
 - the focused BSk24 dataset notebook builds only five plots and creates no
-  `EOS_DATA/` or friendly labels;
-- the general CFL notebook uses run-local C labels in its combined view; and
-- the focused CFL dataset route creates only
-  `CFL_DATASET/cfl_eos_data.csv` and `cfl_stellar_data.csv`, with run-local
-  `cfl_0`, `cfl_1`, ... labels.
+  `EOS_DATA/` or friendly labels.
 
 All derived tables retain canonical experiment, geometry, and case provenance.
 Friendly identifiers never replace packet identity and must not be used as
@@ -36,30 +32,6 @@ provenance remain separate. Rejected proposals have no accepted-EoS label,
 and missing maximum mass does not erase an independently accepted EoS.
 Archive the BSk24 registry with its data; do not delete, edit, or reset it.
 Full identity rules are in [`results.md`](results.md#persistent-bsk24-eos_data).
-
-The focused CFL export is intentionally smaller than the packet tables. Its
-ordered headers are:
-
-```text
-cfl_eos_data.csv:
-label,experiment,geometry_id,case_id,status,amplitude,epsilon0_mev_fm3,sigma_mev_fm3,delta_mev_fm3,epsilon_mev_fm3,pressure_mev_fm3,cs2
-
-cfl_stellar_data.csv:
-label,experiment,geometry_id,case_id,status,amplitude,epsilon0_mev_fm3,sigma_mev_fm3,delta_mev_fm3,stage,attempted_index,calculation_status,failure_category,failure_reason,central_pressure_mev_fm3,Mass,Radius,tidal_status,tidal_failure_reason,k2,Lambda,is_sampled_peak
-```
-
-`cfl_0` is the accepted analytical `direct` baseline, with
-`geometry_id=baseline`, zero amplitude, and blank geometry coordinates.
-Accepted nonzero cases receive `cfl_1`, `cfl_2`, ... in stable geometry/case
-order. Only the final configured numerical stage is exported, but all of its
-attempted rows, failures, and gaps are retained. The five figures stop at the
-sampled peak; `k2` and `Lambda` points require
-`validated_lambda_validation_v1`. That sampled peak is not a resolved
-maximum mass.
-
-These derived CSVs omit packet auxiliaries, surface-jump evidence, fixed-mass
-rows, and maximum-mass evidence. They never replace the sealed packets; use
-the authoritative packet when those fields are needed.
 
 Each `geometry_NNN/` directory in `STUDENT_VIEW/03_PRIMARY_DATA/` contains the
 tables applicable to that geometry and calculation:
@@ -139,9 +111,7 @@ before the declared amplitudes.
 
 There are three important case types:
 
-- `case_id = direct` is the undeformed analytical baseline for the selected
-  matter model (BSk24 or frozen CFL). It appears
-  in thermodynamic and stellar result tables, but it is not a deformation
+- `case_id = direct` is the undeformed analytical BSk24 baseline. It appears in thermodynamic and stellar result tables, but it is not a deformation
   proposal and therefore has no row in `case_ledger.csv`.
 - The deterministic case ID with `amplitude = 0` is a logical identity
   control. In a public Cartesian experiment, exactly one geometry owns its
@@ -187,11 +157,9 @@ Within one thermodynamic case, energy density is the independent saved
 coordinate. BSk24 reconstruction grids are nonuniform: they are logarithmic
 below the anchor and linear from the anchor to the case endpoint. If BSk24
 reaches `c_s^2 = 1`, the refined first crossing is the included last point, so
-accepted BSk24 cases can end at different coordinates. CFL accepted profiles
-instead span the complete formula-derived surface-to-endpoint domain; a causal
-failure anywhere rejects the proposal. Never substitute row number for energy
-density. Join or compare cases using saved coordinates on a common valid
-domain.
+accepted BSk24 cases can end at different coordinates. Never substitute row
+number for energy density. Join or compare cases using saved coordinates on a
+common valid domain.
 
 Within one stellar case and stage, central pressure increases. Mass need not
 increase over the complete sequence: models after the sampled mass peak can
@@ -232,19 +200,19 @@ exception and has no ledger row.
 | `case_id` | Deterministic identifier for the complete deformation coordinates |
 | `amplitude` | Dimensionless additive amplitude `A` applied to `c_s^2` |
 | `epsilon_match_mev_fm3` | Total-energy-density reconstruction anchor in MeV fm^-3 |
-| `anchor_mode` | Saved categorical anchor selection: `standard` or `exploratory` for BSk24, and `self_bound_surface` for CFL |
+| `anchor_mode` | Saved categorical anchor selection: `standard` or `exploratory` |
 | `epsilon0_mev_fm3` | Gaussian center in MeV fm^-3 |
 | `sigma_mev_fm3` | Gaussian standard deviation in MeV fm^-3 |
 | `delta_mev_fm3` | Smootherstep activation-ramp width in MeV fm^-3; this is not a pressure difference |
 | `status` | Final `accepted` or `rejected` lifecycle status |
-| `acceptance_domain` | Model-specific accepted domain: a BSk24 retained prefix or the complete governed CFL domain |
+| `acceptance_domain` | Accepted BSk24 retained prefix |
 | `raw_gate_status` | Exact accepted, rejected, or unresolved raw-local-physics gate outcome |
-| `full_domain_gate_status` | Summary of complete raw assessment. BSk24 can record raw noncausality beyond an accepted first crossing; CFL acceptance requires a full-domain pass. |
+| `full_domain_gate_status` | Summary of complete raw assessment; raw noncausality beyond an accepted first crossing remains recorded. |
 | `selected_domain_status` | Separate acceptance, rejection, or unresolved status of the selected usable domain; preserve it with the complete raw evidence |
 | `complete_raw_proposal_causal_through_direct_endpoint` | Boolean complete-domain causality result for an accepted proposal; it can be false for a BSk24 case accepted only through its first continuous causal crossing |
 | `retained_epsilon_max_mev_fm3` | Included upper total-energy-density endpoint of the accepted reconstructed branch; blank for a rejected or unresolved proposal |
 | `retained_pressure_max_mev_fm3` | Pressure at that included retained endpoint in MeV fm^-3; blank when no retained reconstruction exists |
-| `retained_endpoint_reason` | One of `direct_bsk24_causal_endpoint`, `published_bsk24_fit_endpoint`, `first_continuous_causal_crossing`, or `formula_derived_cfl_domain_endpoint` for an accepted row |
+| `retained_endpoint_reason` | One of `direct_bsk24_causal_endpoint`, `published_bsk24_fit_endpoint`, or `first_continuous_causal_crossing` for an accepted row |
 | `rejection_reason` | Blank for accepted cases; strict JSON text describing the first saved failure for rejected cases |
 | `pressure_reconstruction` | Whether reconstruction completed or was skipped after raw-gate rejection |
 | `stellar_calculation` | Whether stellar work was disabled, completed with its saved availability statuses, incomplete/failed, or skipped after rejection |
@@ -253,7 +221,7 @@ exception and has no ledger row.
 | `student_view_eligibility_status` | Whether the case is eligible for student-facing use; for a stellar case this requires every configured target row at the final reporting stage to be uniquely present and `bracketed_and_solved`, but does not require maximum-mass availability |
 | `clipping_or_repair` | Records that no failed result was made acceptable by clipping or repair |
 
-Public Cartesian BSk24 and CFL ledgers also include `physical_case_id` and
+Public Cartesian BSk24 ledgers also include `physical_case_id` and
 `is_physical_case_alias`. These make the shared physical identity of
 zero-amplitude logical controls explicit; nonzero cases use their own
 `case_id` as the physical ID.
@@ -267,9 +235,9 @@ outcome, not a missing positive example.
 One row is one sampled total-energy-density point belonging to the EoS named
 by `case_id`. The full-profile file contains `direct` plus every accepted
 reconstructed case; rejected and unresolved cases are absent. Accepted BSk24
-cases stop at their included case-specific endpoint. Accepted CFL cases span
-the complete frozen domain. Complete raw evidence, including BSk24 values
-after an earlier retained crossing, belongs in `raw_gate_profiles.csv` rather
+cases stop at their included case-specific endpoint. Complete raw evidence,
+including BSk24 values after an earlier retained crossing, belongs in
+`raw_gate_profiles.csv` rather
 than this reconstructed table.
 
 | Column | Meaning |
@@ -292,15 +260,7 @@ than this reconstructed table.
 The three relative columns are fractions, not percentages. A value of `0.02`
 means a two-percent relative change. The baryon-density and enthalpy responses
 are zero for `direct`. The direct pressure response is zero wherever direct
-pressure is nonzero; at the exact CFL zero-pressure surface its denominator is
-zero, so the saved value is blank/NaN rather than a manufactured zero.
-
-CFL full profiles additionally include `physical_case_id`, `matter_model`,
-`baryon_chemical_potential_mev`, and
-`quark_chemical_potential_mev`. The baryon chemical potential is the same
-effective one-fluid quantity as `effective_baryon_enthalpy_mev`. The frozen
-analytical baseline provides the quark chemical potential; reconstructed
-deformations deliberately leave that microscopic column blank.
+pressure is nonzero.
 
 The `dataset_40_curves` route intentionally writes a reduced profile with
 only `case_id`, `amplitude`, `delta_mev_fm3`, `epsilon_mev_fm3`,
@@ -350,14 +310,6 @@ remain blank in those rows.
 | `tov_rtol` | Saved relative ODE solver tolerance |
 | `tov_atol` | Saved absolute ODE solver tolerance |
 | `sequence_points_requested` | Number of central-pressure attempts requested for that stage |
-
-CFL sequence rows also retain the surface-discontinuity evidence used by the
-tidal calculation: `tidal_expected_jump_count`,
-`tidal_applied_jump_count`, `tidal_surface_jump_count`,
-`tidal_surface_delta_y`, `tidal_surface_y_before`,
-`tidal_surface_y_after`, `tidal_surface_event_pressure_mev_fm3`, and the
-strict `tidal_jump_evidence_json` payload. A usable CFL tidal result requires
-one expected, applied, and surface jump with internally consistent values.
 
 Use only rows with the required background and tidal status. The sampled
 stable prefix ends at the sampled-peak row used by the workflow, but that row
@@ -412,12 +364,6 @@ status and the saved valid tidal capability status. An unavailable status can
 specifically record that the stable evidence, bracket, or root would lie
 outside the retained EoS domain; other fixed-mass rows solved inside the
 domain remain valid.
-
-Solved CFL fixed-mass tidal rows carry the same eight surface-jump evidence
-columns listed for `stellar_sequences.csv`. A valid bare-surface result has
-expected, applied, and surface jump counts of one, a negative
-`tidal_surface_delta_y`, event pressure zero, and
-`tidal_surface_y_after = tidal_surface_y_before + tidal_surface_delta_y`.
 
 ## `maximum_mass_screening.csv`
 
@@ -639,7 +585,7 @@ calculation, precision, accepted cases, and diagnostics setting.
 | File | Main use |
 |---|---|
 | `case_plan.csv` | Planned case identities, identity-control injection, and requested stages |
-| `raw_gate_profiles.csv` | Complete raw deformation evidence and gate status; for BSk24 this can include values beyond an accepted earlier crossing, while CFL uses the complete domain as its acceptance boundary |
+| `raw_gate_profiles.csv` | Complete raw deformation evidence and gate status, including values beyond an accepted earlier crossing |
 | `thermodynamic_residuals.csv` | Reconstruction and derivative-consistency residuals for accepted cases |
 | `window_characterization.csv` | One-row summaries of nominal and realized deformation geometry |
 | `a0_identity_table.csv` | Saved zero-amplitude identity evidence |
@@ -658,12 +604,6 @@ retains direct pressure, integrated pressure change, resulting raw pressure,
 and raw `c_s^2` at its saved coordinates. Read it together with the gate
 report's continuous-resolution and first-crossing evidence; the CSV sampling
 alone is not the continuous certificate.
-
-CFL has no accepted early-causal prefix: a crossing rejects the complete
-proposal. Its raw table instead carries case/physical/model identity, the
-frozen baseline hash, geometry, energy density, window/Gaussian values,
-`delta_cs2`, `raw_cs2`, and `gate_status`; it does not contain the BSk24 raw
-pressure-array fields.
 
 ## Combining geometries or experiments
 
@@ -692,8 +632,7 @@ physical zeros.
   geometry-specific zero-amplitude IDs remain logical lifecycle identities.
 - Rejected proposals have no reconstructed or stellar rows by design.
 - Accepted BSk24 cases can have different retained endpoints; compare only
-  their common saved domains and never extrapolate a shorter case. Accepted
-  CFL cases span the complete frozen domain.
+  their common saved domains and never extrapolate a shorter case.
 - Blank and unavailable values are not zero.
 - A sampled stellar peak is not automatically a resolved maximum mass.
 - Maximum-mass unavailability does not invalidate independently solved

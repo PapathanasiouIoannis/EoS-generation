@@ -22,8 +22,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = _Parser(
         prog="bsk24-trial",
         description=(
-            "Plan, run, inspect, and validate controlled BSk24 or CFL "
-            "experiments."
+            "Plan, run, inspect, and validate controlled BSk24 experiments."
         ),
     )
     subparsers = parser.add_subparsers(dest="command", required=True)

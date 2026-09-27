@@ -33,14 +33,6 @@ MODEL_CONTRACTS = {
         "deformed_family": "deformed_BSk24",
         "baseline_validation_status": "pass",
     },
-    "cfl": {
-        "prefix": "C",
-        "baseline_family": "CFL",
-        "deformed_family": "deformed_CFL",
-        "baseline_validation_status": (
-            "literature_supported_frozen_design_contract"
-        ),
-    },
 }
 PRIMARY_TABLES = (
     "case_ledger.csv", "thermodynamic_profiles.csv", "stellar_sequences.csv",
@@ -207,30 +199,17 @@ The baseline collapses geometry only after the caller has checked identity pass.
 """
     if matter_model not in MODEL_CONTRACTS:
         raise ValueError(f"unsupported matter model in EoS identity: {matter_model!r}")
-    if matter_model == "bsk24":
-        physics = {
-            name: checksum for name, checksum in source_hashes.items()
-            if name.startswith("src/eos_generation/bsk24/")
-            or name == "src/eos_generation/_internal/config.py"
-        }
-        required = {
-            "src/eos_generation/bsk24/baseline.py",
-            "src/eos_generation/bsk24/deformation.py",
-            "src/eos_generation/bsk24/reconstruction.py",
-            "src/eos_generation/_internal/config.py",
-        }
-    else:
-        physics = {
-            name: checksum for name, checksum in source_hashes.items()
-            if name.startswith("src/eos_generation/cfl/")
-            or name == "src/eos_generation/_internal/cfl_thermodynamics.py"
-        }
-        required = {
-            "src/eos_generation/cfl/baseline.py",
-            "src/eos_generation/cfl/deformation.py",
-            "src/eos_generation/cfl/reconstruction.py",
-            "src/eos_generation/_internal/cfl_thermodynamics.py",
-        }
+    physics = {
+        name: checksum for name, checksum in source_hashes.items()
+        if name.startswith("src/eos_generation/bsk24/")
+        or name == "src/eos_generation/_internal/config.py"
+    }
+    required = {
+        "src/eos_generation/bsk24/baseline.py",
+        "src/eos_generation/bsk24/deformation.py",
+        "src/eos_generation/bsk24/reconstruction.py",
+        "src/eos_generation/_internal/config.py",
+    }
     if not required.issubset(physics) or any(
         not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value)
         for value in physics.values()
@@ -660,9 +639,9 @@ def build_eos_data(root: Path, experiment: Path, destination: Path) -> dict[str,
             "eos_id AND evaluation provenance; QUICK/STRICT and repeated controls are "
             "not independent EoSs. Use the final stage and valid observable statuses "
             "for analysis. Missing M_max is not zero or the largest sampled mass.\n\n"
-            "H labels identify BSk24 EoSs and C labels identify CFL EoSs; neither is a "
-            "claim about observational acceptance. IDs are not ML features. Each model "
-            "family begins with its validated baseline at H000000 or C000000. Archive "
+            "H labels identify BSk24 EoSs and do not claim observational "
+            "acceptance. IDs are not ML features. The family begins with its "
+            "validated baseline at H000000. Archive "
             "runs/eos_catalogue with your data: numbering is local to its catalogue_id. "
             "Never delete, renumber, or reset it.\n\n"
             "Identical exact coordinates and saved EoS source signatures reuse IDs "

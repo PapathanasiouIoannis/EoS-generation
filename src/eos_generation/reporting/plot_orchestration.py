@@ -28,7 +28,6 @@ from eos_generation._internal.saved_tables import (
     summarize_fixed_mass_response_population,
 )
 from eos_generation._internal.summary import PACKET_SCHEMA_ID, write_packet_summary
-from eos_generation._internal.summary import CFL_PACKET_SCHEMA_ID
 
 
 WINDOWED_FIGURES = (
@@ -344,7 +343,7 @@ def generate_trial_plots_from_saved_tables(
     packet_schema = (
         metadata.get("schema_id") if isinstance(metadata, dict) else None
     )
-    if packet_schema not in {PACKET_SCHEMA_ID, CFL_PACKET_SCHEMA_ID}:
+    if packet_schema != PACKET_SCHEMA_ID:
         raise ValueError(
             "plot generation requires a recognized packet schema; found "
             f"{packet_schema!r}"
@@ -356,18 +355,9 @@ def generate_trial_plots_from_saved_tables(
         )
     config_payload = json.loads(config_path.read_text(encoding="utf-8"))
     matter_model = str(config_payload.get("matter_model", "bsk24"))
-    if matter_model == "cfl":
-        from eos_generation.cfl.planning import CFLTrialConfig
-
-        if packet_schema != CFL_PACKET_SCHEMA_ID:
-            raise ValueError("CFL configuration and packet schema disagree")
-        config = CFLTrialConfig.from_dict(config_payload)
-    elif matter_model == "bsk24":
-        if packet_schema != PACKET_SCHEMA_ID:
-            raise ValueError("BSk24 configuration and packet schema disagree")
-        config = BSk24TrialConfig.from_dict(config_payload)
-    else:
+    if matter_model != "bsk24":
         raise ValueError(f"unsupported saved matter_model: {matter_model!r}")
+    config = BSk24TrialConfig.from_dict(config_payload)
     inventory = _actual_plot_inventory(packet, config, groups=groups)
     applicable = inventory.loc[
         inventory.status.isin(("applicable", "applicable_partial")), "figure"

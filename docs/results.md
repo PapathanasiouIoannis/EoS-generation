@@ -59,17 +59,13 @@ cases, and requested plot groups. The packet layers are:
 
 | Layer | Saved evidence |
 |---|---|
-| Definition | Canonical settings, matter model, expanded numerical profile, plan/configuration hashes, physical case IDs, and logical aliases |
+| Definition | Canonical BSk24 settings, expanded numerical profile, plan/configuration hashes, physical case IDs, and logical aliases |
 | Lifecycle | One accepted, rejected, or unresolved outcome with a reason for each executed physical proposal, plus nonexecuting alias mappings |
-| Thermodynamics | Complete raw gate profiles, model-specific domain evidence, reconstructed accepted profiles, identity checks, and requested convergence/residual data |
+| Thermodynamics | Complete raw gate profiles, retained-domain evidence, reconstructed accepted profiles, identity checks, and requested convergence/residual data |
 | Stellar | Domain-bounded sequences, fixed-mass outcomes, tidal capability evidence, and independent maximum-mass availability when requested |
 | Diagnostics | Applicable extended BSk24 radial/support tables when enabled |
 | Figures | Packet plots rendered from saved tables and an explicit plot inventory |
 | Provenance | Source and runtime identities, portable two-step reproduction commands, and exact SHA-256 manifests |
-
-CFL packets additionally retain the frozen formulation/parameter IDs and
-hashes, formula-derived surface/domain values, complete-domain gate evidence,
-and finite-density surface-jump records.
 
 ## Cases, identities, and aliases
 
@@ -94,7 +90,7 @@ well as `case_id`.
 
 ## Accepted, rejected, and unresolved proposals
 
-An accepted proposal passed the requested model-specific hard checks and
+An accepted proposal passed the requested BSk24 hard checks and
 reached every applicable hard-valid stage. Acceptance is not an observational
 preference, a microscopic composition claim, or a guarantee that every
 optional observable is available.
@@ -104,15 +100,10 @@ proposal and failure evidence are saved, but it receives no reconstructed
 profile or stellar sequence. Missing downstream values must remain missing;
 do not fill, smooth, clip, or extrapolate across the failure.
 
-The causal policy is model-specific:
-
-- For BSk24, an otherwise valid proposal may retain the certified prefix
-  through its first continuous `c_s^2 = 1` crossing. The crossing is included,
-  and raw values after it are evidence outside the usable branch. A later
-  return below one does not reopen the EoS.
-- For CFL, the entire formula-derived domain is authoritative. A mechanical or
-  causal failure anywhere rejects the whole proposal; CFL is not truncated to
-  a passing prefix.
+An otherwise valid proposal may retain the certified prefix through its first
+continuous `c_s^2 = 1` crossing. The crossing is included, and raw values
+after it are evidence outside the usable branch. A later return below one
+does not reopen the EoS.
 
 ## Stellar availability
 
@@ -129,17 +120,11 @@ Maximum-mass assessment must distinguish:
 - the largest sampled mass.
 
 Only the first is a resolved maximum mass. The largest sampled model must not
-be substituted for an unresolved result. For BSk24, a shortened causal branch
+be substituted for an unresolved result. A shortened causal branch
 can preserve valid fixed-mass results while maximum mass remains unavailable.
 
 Tidal quantities require an explicit valid capability status in addition to a
-successful background TOV model. For a bare CFL star, the solver must record
-one negative outward `y` jump at the finite-density zero-pressure surface and
-use the corrected vacuum-side value for `k2`. Missing, repeated, wrong-sign,
-or inconsistent jump evidence fails the CFL tidal capability closed.
-
-CFL extended radial diagnostics are unsupported in 1.2.0. Their absence is
-expected and must not be interpreted using BSk24 diagnostic semantics.
+successful background TOV model.
 
 ## Primary CSV tables
 
@@ -199,8 +184,6 @@ make zero scientific solver calls.
 |---|---|
 | General BSk24 notebook | `STUDENT_VIEW/`, persistent-label `EOS_DATA/`, and combined `plots/` |
 | Focused BSk24 dataset notebook | Exactly five combined figures in `plots/`; no `STUDENT_VIEW/` or `EOS_DATA/` |
-| General CFL notebook | `STUDENT_VIEW/` plus a separately manifested combined `plots/` view with run-local C labels |
-| Focused CFL dataset notebook | `CFL_DATASET/` containing exactly `cfl_eos_data.csv`, `cfl_stellar_data.csv`, and five combined figures |
 
 ### `STUDENT_VIEW/`
 
@@ -223,13 +206,6 @@ not join independent checkouts on an H label alone. Friendly labels never
 replace canonical case IDs or packet provenance. The focused BSk24 dataset
 notebook does not build this view.
 
-### CFL labels
-
-The general CFL notebook's C labels are local presentation labels. The focused
-CFL dataset route instead uses deterministic run-local `cfl_0`, `cfl_1`, ...
-labels in its two export tables. Neither scheme replaces canonical experiment,
-geometry, and case identities.
-
 ## Reproduction and archival
 
 Each completed experiment saves portable two-step reproduction commands:
@@ -243,14 +219,10 @@ destination. Do not edit a packet to make source hashes agree, reuse a stale
 hash, or overwrite the original. Reproduction creates a new packet below
 `runs/reproductions/`.
 
-Newly generated child packets record the general notebook appropriate to their
-matter model in the legacy `notebook` compatibility field:
-`notebooks/bsk24_experiment.ipynb` or `notebooks/cfl_experiment.ipynb`. CFL
-packets already sealed by release 1.2.0 may still name
-`notebooks/bsk24_experiment.ipynb`; do not edit or reseal them. For every
-packet, the saved matter model, configuration, and two hash-bound reproduction
-commands are authoritative; use the focused dataset notebook when reproducing
-that presentation route.
+Newly generated child packets record `notebooks/bsk24_experiment.ipynb`
+in the legacy `notebook` compatibility field. The saved configuration and two
+hash-bound reproduction commands are authoritative; use the focused dataset
+notebook when reproducing that presentation route.
 
 Archive an important result as a complete experiment tree with all child
 packets and manifests. Derived views are useful but do not replace that

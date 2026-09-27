@@ -54,7 +54,7 @@ CONFIG_SCHEMA_URL = (
     "EoS-generation/main/configs/schema.json"
 )
 _CALCULATIONS = ("thermodynamics", "stellar")
-_MATTER_MODELS = ("bsk24", "cfl")
+_MATTER_MODELS = ("bsk24",)
 _PRECISIONS = (
     "quick",
     "strict",
@@ -126,13 +126,7 @@ class ExperimentSettings:
                 f"settings expand to {expanded_cases} cases including the zero "
                 f"control; the public planning limit is {_MAX_EXPANDED_CASES}"
             )
-        if self.matter_model == "cfl":
-            if self.epsilon_match != "surface":
-                raise ValueError(
-                    "CFL experiments require epsilon_match='surface' so the "
-                    "undeformed zero-pressure self-bound surface is preserved"
-                )
-        elif self.epsilon_match != "standard":
+        if self.epsilon_match != "standard":
             object.__setattr__(
                 self,
                 "epsilon_match",
@@ -142,24 +136,8 @@ class ExperimentSettings:
             raise ValueError(f"calculation must be one of {_CALCULATIONS}")
         if self.precision not in _PRECISIONS:
             raise ValueError(f"precision must be one of {_PRECISIONS}")
-        if self.matter_model == "cfl" and self.precision not in {
-            "quick",
-            "strict",
-            "dataset_40",
-        }:
-            raise ValueError(
-                "CFL experiments support governed quick or strict precision, "
-                "plus the explicitly experimental dataset_40 profile; other "
-                "dataset profiles are not established for self-bound CFL"
-            )
         if self.diagnostics not in _DIAGNOSTICS:
             raise ValueError(f"diagnostics must be one of {_DIAGNOSTICS}")
-        if self.matter_model == "cfl" and self.diagnostics == "on":
-            raise ValueError(
-                "CFL extended diagnostics are unavailable because their bare "
-                "self-bound radial, baryonic, and support semantics have not "
-                "been established"
-            )
         if self.diagnostics == "on" and self.calculation != "stellar":
             raise ValueError("diagnostics='on' requires calculation='stellar'")
         if self.precision in {"dataset", "dataset_10_tighter", "dataset_20", "dataset_40", "dataset_40_curves", "dataset_relaxed", "dataset_relaxed_80"} and (
@@ -262,8 +240,6 @@ class ExperimentSettings:
             "fixed_masses": list(self.fixed_masses),
             "diagnostics": self.diagnostics,
         }
-        if self.matter_model == "cfl":
-            return {"matter_model": "cfl", **data}
         return data
 
     def deterministic_hash(self) -> str:
@@ -328,9 +304,8 @@ class ExperimentPlan:
 
     def summary_text(self) -> str:
         estimates = self.estimates
-        model_title = "BSk24" if self.settings.matter_model == "bsk24" else "CFL"
         lines = [
-            f"{model_title} experiment plan",
+            "BSk24 experiment plan",
             f"Plan hash: {self.plan_hash}",
             f"Calculation: {self.settings.calculation}",
             f"Precision: {self.settings.precision}",
@@ -493,9 +468,8 @@ class ExperimentResult:
             ),
             None,
         )
-        model_title = "CFL" if self.settings.matter_model == "cfl" else "BSk24"
         lines = [
-            f"{model_title} experiment: "
+            "BSk24 experiment: "
             + ("COMPLETE" if self.completed else "INCOMPLETE"),
             f"Path: {self.experiment_path}",
             f"Calculation: {self.settings.calculation}",
@@ -562,10 +536,7 @@ def plan_experiment(
 
     if not isinstance(settings, ExperimentSettings):
         raise TypeError("settings must be ExperimentSettings")
-    if settings.matter_model == "cfl":
-        from .cfl.planning import prepare_cfl_trial as prepare_trial
-    else:
-        from ._internal.planning import prepare_bsk24_trial as prepare_trial
+    from ._internal.planning import prepare_bsk24_trial as prepare_trial
 
     from ._internal.artifacts import project_root, runs_root
 
