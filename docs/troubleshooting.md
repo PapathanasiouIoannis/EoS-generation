@@ -154,8 +154,7 @@ Validate the JSON syntax, then compare the fields with
 [`parameters.md`](parameters.md). Common causes are:
 
 - an unknown or misspelled field;
-- `matter_model = "cfl"` without `epsilon_match = "surface"`, or a BSk24
-  configuration using the CFL-only surface spelling;
+- an unsupported `matter_model` or anchor spelling;
 - a nonpositive width or ramp width;
 - a nonpositive center;
 - duplicate values within amplitudes, centers, widths, ramp widths, or fixed
@@ -163,19 +162,11 @@ Validate the JSON syntax, then compare the fields with
 - a center/width pair whose nominal four-sigma support has no nonzero overlap
   with the deformable domain above the selected anchor;
 - diagnostics `on` with a thermodynamics-only calculation;
-- diagnostics `on` for CFL, whose extended radial capability is unsupported;
 - a numeric anchor outside its allowed homogeneous-core interval;
-- a CFL center outside its formula-derived energy-density domain, or a ramp
-  whose surface-plus-width exceeds the upper endpoint;
 - `NaN` or infinity, which JSON settings do not permit.
 
 Use `bsk24-trial plan` after every edit. Do not bypass validation by changing
 implementation constants.
-
-The frozen CFL energy-density endpoints are
-`190.2181760065314` and `4008.81724402691 MeV fm^-3`. Similar-looking
-rounded design-review values are display references, not replacement
-endpoints for equality or identity checks. See [`cfl.md`](cfl.md).
 
 ## Planning created files or started a long calculation
 
@@ -210,10 +201,6 @@ Do not clip the failed points, discard a small violating region, or infer that
 an isolated feature is harmless without a scientific analysis of its origin
 and convergence.
 
-For CFL, the raw gate covers the full frozen domain. A continuous causal
-crossing or failure near the upper endpoint rejects the whole proposal; it is
-not acceptable to shorten the EoS to the last passing grid point.
-
 ## Stellar output is missing
 
 Check, in order:
@@ -228,13 +215,6 @@ Check, in order:
 
 Unavailable output must have an explicit reason. It should not be replaced by
 zero or extrapolated past the supported branch.
-
-For a CFL tidal result, also inspect the surface-jump evidence. The bare star
-has finite energy density just inside `P = 0` and vacuum outside, so the
-outward `y` correction must be negative and applied exactly once before
-`k2`. A missing or duplicate jump correctly makes the capability unavailable.
-CFL has no crust or hadronic envelope that can be substituted for this
-surface rule.
 
 ## The mass-radius curve does not reach zero mass
 
@@ -304,15 +284,6 @@ failure is not transient: stop and investigate it. Never edit registrations,
 delete the registry to reset numbering, or reassign a label. IDs allocated
 before an interrupted presentation export remain reserved for retry.
 
-For `cfl_dataset.ipynb`, the science result is stored in memory before the
-minimal presentation begins. Rerun only the execution/reporting cell in the
-same kernel: it recognizes the consumed authorization token, reuses the
-completed result, and rebuilds or reopens `CFL_DATASET/` without solver calls.
-After a kernel restart, load the completed experiment and call
-`eos_generation.reporting.cfl_dataset.build_cfl_dataset_output` with a new
-unoccupied destination. The adapter publishes atomically, so a failed build
-leaves no partial final directory.
-
 ## `status` cannot load an experiment
 
 `status` strictly loads a completed experiment whose aggregate and child
@@ -339,13 +310,6 @@ in place to make hashes agree.
 
 ## A plot looks empty or has crossed-out points
 
-For the CFL notebook, `LOAD_EXPERIMENT` with execution disabled reopens saved
-results without calculations. If only the combined view is missing, explicitly
-set `BUILD_SAVED_PLOTS = True`; the view is built from validated tables and
-cannot rerun science. A damaged existing view fails hash validation and is
-never silently overwritten. Preserve it for diagnosis and rebuild in a
-separately archived copy rather than editing a scientific packet.
-
 Read the plot inventory and the corresponding saved status table. Marked or
 omitted points can represent rejected proposals, unavailable stellar
 capabilities, unbracketed masses, or failed convergence. Confirm which status
@@ -366,17 +330,3 @@ owns the physical `A = 0` case; the other zero rows should be marked as
 nonexecuting aliases to its physical case ID. The physical work estimate must
 count the baseline once. If the executor schedules every alias, stop and
 report that as a deduplication bug.
-
-## A quick CFL result disagrees with a published curve
-
-First confirm that the publication uses the same full finite-`m_s` equation
-set, `B`, gap, strange mass, surface convention, and no crust. Truncated bag
-forms and a quoted `B` in `MeV fm^-3` are not interchangeable with
-the current authoritative `B = 57.5 MeV fm^-3`; its derived fourth root is
-`144.97957215191494 MeV`.
-
-Even with matching conventions, the quick profile is exploratory. Do not tune
-settings or tolerances until the result agrees visually. Publication-level
-claims require a reviewed strict convergence study, a convention-matched
-published benchmark, and an independent solver comparison; an expected table
-generated by this implementation is not independent validation.

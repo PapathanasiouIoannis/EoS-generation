@@ -74,8 +74,7 @@ def collect_curves(root: Path, experiment: Path, eos_data: Path) -> tuple[list, 
         sequence = pd.read_csv(catalogue.verified(packet, "stellar_sequences.csv", checksums))
         sequence = sequence.loc[sequence.stage.eq(config["tov_stages"][-1]["name"])]
         case_groups = list(profile.groupby("case_id", sort=False))
-        # CFL packets retain both the direct baseline and its physical A=0
-        # alias.  Prefer the direct row so the deduplicated baseline keeps the
+        # Prefer the direct row so the deduplicated baseline keeps the
         # stellar sequence stored under case_id="direct".
         case_groups.sort(key=lambda item: str(item[0]) != "direct")
         for case_id, rows in case_groups:
@@ -217,7 +216,7 @@ def build_dataset_plots(
     if len(matter_models) != 1 or next(iter(matter_models)) not in catalogue.MODEL_CONTRACTS:
         raise ValueError("dataset plots require exactly one recognized matter model")
     matter_model = next(iter(matter_models))
-    family_title = "CFL" if matter_model == "cfl" else "BSk24"
+    family_title = "BSk24"
     amplitudes = [float(c["alias"]["amplitude"]) for c in curves]
     scale = max([abs(v) for v in amplitudes] + [0.01])
     norm = matplotlib.colors.Normalize(-scale, scale)

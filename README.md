@@ -3,17 +3,12 @@
 [![CI](https://github.com/PapathanasiouIoannis/EoS-generation/actions/workflows/ci.yml/badge.svg)](https://github.com/PapathanasiouIoannis/EoS-generation/actions/workflows/ci.yml)
 
 EoS Generation is a Python 3.12 package for controlled sound-speed
-deformations of cold equations of state. Version 1.2.0 supports two separate
-baselines:
-
-- analytical BSk24 neutron-star matter; and
-- one frozen, pure, bare, self-bound color-flavor-locked (CFL) quark-matter
-  model.
+deformations of analytical BSk24 neutron-star matter.
 
 The package constructs a smooth change to dimensionless `c_s^2 = dP/dε`,
-applies model-specific fail-closed checks, reconstructs an effective cold
+applies fail-closed checks, reconstructs an effective cold
 one-fluid barotrope, and can optionally calculate TOV and tidal observables.
-It does not model microscopic composition or a BSk24–CFL hybrid star.
+It does not model microscopic composition.
 
 ## Execution is opt-in
 
@@ -31,9 +26,8 @@ overwritten.
 
 ## Install from a source checkout
 
-The project is not published on PyPI. Clone the repository or unpack the
-[v1.2.0 source release](https://github.com/PapathanasiouIoannis/EoS-generation/releases/tag/v1.2.0),
-then run these commands from the directory containing `pyproject.toml` and
+The project is not published on PyPI. Clone this repository, then run these
+commands from the directory containing `pyproject.toml` and
 `environment.yml`:
 
 ```powershell
@@ -42,7 +36,7 @@ conda activate eos-generation
 python -m pip install -e . --no-deps
 ```
 
-For the four Jupyter notebooks, install the optional notebook tools as well:
+For the two Jupyter notebooks, install the optional notebook tools as well:
 
 ```powershell
 python -m pip install -e ".[notebook]"
@@ -87,19 +81,15 @@ bsk24-trial status runs/experiment_0123456789ab
 bsk24-trial plot runs/experiment_0123456789ab
 ```
 
-Use [`configs/cfl_quickstart.json`](configs/cfl_quickstart.json) in the same
-commands for a small, thermodynamics-only CFL workflow check. Always use the
-same configuration and output root that produced the reviewed hash.
-
 ## Supported scientific scope
 
-| Model | Baseline and boundary | Raw-deformation policy |
-|---|---|---|
-| BSk24 | Unified cold neutron-star EoS; total energy density and pressure in MeV fm^-3 | An otherwise valid proposal may retain the certified prefix through its first continuous `c_s^2 = 1` crossing. The crossing is included; later values remain raw evidence only. |
-| CFL | Frozen `m_s = 100 MeV`, `Delta = 100 MeV`, `B = 57.5 MeV fm^-3`; finite-density surface joined directly to vacuum | The complete formula-derived domain must pass. A mechanical or causal failure anywhere in that domain rejects the proposal; CFL is not shortened at a crossing. |
+BSk24 is a unified cold neutron-star EoS. Total energy density and pressure
+are in MeV fm^-3. An otherwise valid proposal may retain the certified prefix
+through its first continuous `c_s^2 = 1` crossing. The crossing is included;
+later values remain raw evidence only.
 
-For both models, amplitudes are dimensionless additions to `c_s^2` in units
-with `c = 1`. `center`, `width`, `ramp_width`, and numeric BSk24 anchors are
+Amplitudes are dimensionless additions to `c_s^2` in units with `c = 1`.
+`center`, `width`, `ramp_width`, and numeric anchors are
 total-energy-density coordinates in MeV fm^-3. Fixed masses are gravitational
 masses in solar masses.
 
@@ -112,23 +102,20 @@ smoothed, repaired, or extrapolated into acceptance.
 For stellar runs, a fixed-mass result requires a true stable-branch bracket
 inside the retained EoS domain. Maximum mass is reported only after a turning
 point is bracketed and refined. Valid fixed-mass results can remain available
-when a BSk24 causal endpoint prevents maximum-mass resolution.
+when a causal endpoint prevents maximum-mass resolution.
 
-Read the [method](docs/method.md) and the dedicated
-[CFL scientific contract](docs/cfl.md) before interpreting results.
+Read the [method](docs/method.md) before interpreting results.
 
 ## Configurations and entry points
 
 The distribution name is `eos-generation`, the import package is
-`eos_generation`, and the compatibility command for both matter models is
+`eos_generation`, and the command is
 `bsk24-trial`.
 
 Public JSON settings are governed by [`configs/schema.json`](configs/schema.json).
 Useful starting files are:
 
 - [`configs/quickstart.json`](configs/quickstart.json): small BSk24
-  thermodynamics check;
-- [`configs/cfl_quickstart.json`](configs/cfl_quickstart.json): small CFL
   thermodynamics check;
 - [`configs/custom_experiment.json`](configs/custom_experiment.json): strict
   BSk24 thermodynamics template; and
@@ -174,7 +161,7 @@ adapters to this same API.
 
 ## Notebook choices
 
-All four tracked notebooks have empty outputs and execution counts, and all
+Both tracked notebooks have empty outputs and execution counts, and both
 default to `EXECUTE_REVIEWED_PLAN = False`. Their checked-in settings are not
 equally suitable for a first run:
 
@@ -182,8 +169,6 @@ equally suitable for a first run:
 |---|---|---|
 | [`bsk24_experiment.ipynb`](notebooks/bsk24_experiment.ipynb) | Large 125-geometry, nine-amplitude `dataset_40` stellar campaign: 1,125 logical cases | `STUDENT_VIEW/`, persistent-label `EOS_DATA/`, and combined `plots/` |
 | [`bsk24_dataset.ipynb`](notebooks/bsk24_dataset.ipynb) | Large focused BSk24 campaign using experimental `dataset_40_curves` | Exactly five combined plots; no `STUDENT_VIEW/` or `EOS_DATA/` |
-| [`cfl_experiment.ipynb`](notebooks/cfl_experiment.ipynb) | Seven amplitudes at one geometry with exploratory stellar `quick`: 119 sampled-sequence tidal targets before adaptive refinement | `STUDENT_VIEW/` and a manifested combined `plots/` view with run-local C labels |
-| [`cfl_dataset.ipynb`](notebooks/cfl_dataset.ipynb) | Three amplitudes at one geometry with experimental `dataset_40` | `CFL_DATASET/`: two CSVs and exactly five figures |
 
 For any notebook, run all cells once with execution disabled, review the exact
 case count, work, profile, and destination, then change only the execution flag
@@ -205,8 +190,7 @@ evidence includes:
   physical case IDs, and logical zero-amplitude aliases;
 - raw gates, accepted/rejected lifecycle status, reconstructed thermodynamic
   profiles, and convergence evidence;
-- stellar sequences, fixed-mass outcomes, turning-point availability, and CFL
-  surface-jump evidence when applicable; and
+- stellar sequences, fixed-mass outcomes, and turning-point availability; and
 - source/environment provenance, exact manifests, and two-step reproduction
   commands.
 
@@ -224,12 +208,10 @@ manifest. See [Results](docs/results.md) and the [CSV data guide](docs/csv-data-
 |---|---|
 | [Quickstart](docs/quickstart.md) | Installation, first passive plan, explicit run, and notebook procedure |
 | [Parameters](docs/parameters.md) | JSON fields, units, constraints, and governed precision profiles |
-| [Method](docs/method.md) | Deformation, reconstruction, model-specific gates, stellar semantics, and limitations |
+| [Method](docs/method.md) | Deformation, reconstruction, causal gates, stellar semantics, and limitations |
 | [Results](docs/results.md) | Packet layout, validation/status, plotting, and observable availability |
 | [CSV data guide](docs/csv-data-guide.md) | Table schemas, joins, ordering, plotting, and leakage-safe ML preparation |
 | [Dataset workflows](docs/dataset.md) | Experimental dataset profiles, focused notebooks, saved-data helpers, and qualification limits |
-| [CFL contract](docs/cfl.md) | Frozen equations, constants, domain, surface/tidal convention, and publication boundary |
-| [CFL verification status](docs/cfl_acceptance.md) | What has been checked and what remains unqualified |
 | [Troubleshooting](docs/troubleshooting.md) | Environment, planning, validation, result, and reporting failures |
 | [Developer guide](docs/developer.md) | Architecture, invariants, testing, packaging, and change review |
 
@@ -239,12 +221,9 @@ process in [`SECURITY.md`](SECURITY.md).
 
 ## Status, citation, and license
 
-Version 1.2.0 is a beta scientific-software release. BSk24 and CFL workflow
-contracts are regression-tested, but the experimental dataset profiles are not
-STRICT convergence certificates. Publication-level CFL stellar claims still
-require a convention-matched published benchmark and a reviewed convergence
-assessment for the claimed deformation domain; see the
-[verification status](docs/cfl_acceptance.md).
+BSk24 workflow contracts are regression-tested, but the experimental dataset
+profiles are not STRICT convergence certificates. Assess convergence and
+independent scientific references before publication-level claims.
 
 If you use the software, cite the release metadata in
 [`CITATION.cff`](CITATION.cff). EoS Generation is distributed under the

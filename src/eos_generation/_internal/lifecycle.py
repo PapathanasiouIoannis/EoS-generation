@@ -146,7 +146,6 @@ def _case_lifecycle_ledger(
             "direct_bsk24_causal_endpoint",
             "published_bsk24_fit_endpoint",
             "first_continuous_causal_crossing",
-            "formula_derived_cfl_domain_endpoint",
         }:
             raise ValueError(
                 f"accepted case {case_id!r} has no resolved retained endpoint"

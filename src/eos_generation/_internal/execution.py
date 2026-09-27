@@ -18,8 +18,6 @@ from eos_generation._internal.artifacts import (
 )
 from eos_generation.stellar.tov import (
     LAMBDA_FRAMEWORK_CAPABILITY,
-    TIDAL_CORRECTION_VERSION,
-    TIDAL_JUMP_FORMULA,
     TIDAL_NOT_REQUESTED_STATUS,
 )
 from eos_generation._internal.diagnostics import (
@@ -56,7 +54,6 @@ from eos_generation._internal.stellar import (
     _stellar_status_summary,
 )
 from eos_generation._internal.summary import (
-    CFL_PACKET_SCHEMA_ID,
     PACKET_SCHEMA_ID,
     write_packet_summary,
 )
@@ -79,7 +76,6 @@ from eos_generation.bsk24.deformation import (
 
 TRIAL_PACKET_SCHEMA = PACKET_SCHEMA_ID
 RAW_GATE_SCHEMA = "eos_generation_raw_gate_v2"
-CFL_TRIAL_PACKET_SCHEMA = CFL_PACKET_SCHEMA_ID
 
 
 def _maximum_mass_availability_summary(
@@ -149,76 +145,20 @@ class RunCallbacks:
     a0_identity_table: Callable[..., tuple[dict[str, Any], pd.DataFrame]] | None = None
 
 
-def _matter_model(config: Any) -> str:
-    value = str(getattr(config, "matter_model", "bsk24"))
-    if value not in {"bsk24", "cfl"}:
-        raise ValueError(f"unsupported matter model {value!r}")
-    return value
-
-
-def _reproduction_notebook(matter_model: str) -> str:
-    """Return the general notebook hint paired with one governed model."""
-
-    if matter_model == "bsk24":
-        return "notebooks/bsk24_experiment.ipynb"
-    if matter_model == "cfl":
-        return "notebooks/cfl_experiment.ipynb"
-    raise ValueError(f"unsupported matter model {matter_model!r}")
-
-
 def _anchor_selection_record(config: Any, baseline: Any) -> dict[str, Any]:
-    if _matter_model(config) == "bsk24":
-        return {
-            "mode": (
-                "exploratory_selected_epsilon_match"
-                if config.exploratory_anchor_requested
-                else "standard_n_b_0p16_fm3"
-            ),
-            "exploratory": config.exploratory_anchor_requested,
-            "selected_epsilon_match_mev_fm3": (
-                config.effective_epsilon_match_mev_fm3
-            ),
-            "derived_state": baseline.anchor.to_dict(),
-            "window_and_reconstruction_share_this_anchor": True,
-            "microscopic_composition_status": "unassessed",
-        }
-
-    from eos_generation.cfl.baseline import (
-        BARYON_CHEMICAL_POTENTIAL_SURFACE_MEV,
-        BARYON_DENSITY_SURFACE_FM3,
-        ENERGY_DENSITY_SURFACE_MEV_FM3,
-        PRESSURE_SURFACE_MEV_FM3,
-        QUARK_CHEMICAL_POTENTIAL_SURFACE_MEV,
-        SOUND_SPEED_SQUARED_SURFACE,
-    )
-
     return {
-        "mode": "bare_self_bound_zero_pressure_surface",
-        "exploratory": False,
+        "mode": (
+            "exploratory_selected_epsilon_match"
+            if config.exploratory_anchor_requested
+            else "standard_n_b_0p16_fm3"
+        ),
+        "exploratory": config.exploratory_anchor_requested,
         "selected_epsilon_match_mev_fm3": (
-            ENERGY_DENSITY_SURFACE_MEV_FM3
+            config.effective_epsilon_match_mev_fm3
         ),
-        "derived_state": {
-            "energy_density_mev_fm3": ENERGY_DENSITY_SURFACE_MEV_FM3,
-            "pressure_mev_fm3": PRESSURE_SURFACE_MEV_FM3,
-            "baryon_density_fm3": BARYON_DENSITY_SURFACE_FM3,
-            "baryon_chemical_potential_mev": (
-                BARYON_CHEMICAL_POTENTIAL_SURFACE_MEV
-            ),
-            "quark_chemical_potential_mev": (
-                QUARK_CHEMICAL_POTENTIAL_SURFACE_MEV
-            ),
-            "sound_speed_squared": SOUND_SPEED_SQUARED_SURFACE,
-        },
+        "derived_state": baseline.anchor.to_dict(),
         "window_and_reconstruction_share_this_anchor": True,
-        "surface_pressure_preserved_exactly": True,
-        "surface_baryon_density_preserved_exactly": True,
-        "surface_baryon_chemical_potential_preserved_exactly": True,
-        "surface_exterior": "vacuum",
-        "crust_or_hadronic_envelope": "absent",
-        "microscopic_composition_status": (
-            "frozen_neutral_equal-density_CFL_model"
-        ),
+        "microscopic_composition_status": "unassessed",
     }
 
 
@@ -227,11 +167,11 @@ def _logical_outcome_ids(
     *,
     accepted_physical_ids: list[str],
     rejected_physical_ids: list[str],
-    is_cfl: bool,
+    alias_mode: bool,
 ) -> tuple[list[str], list[str]]:
     """Map authoritative physical gate outcomes to lifecycle identities."""
 
-    if not is_cfl:
+    if not alias_mode:
         return list(accepted_physical_ids), list(rejected_physical_ids)
     accepted_physical = set(accepted_physical_ids)
     rejected_physical = set(rejected_physical_ids)
@@ -259,7 +199,7 @@ def _logical_outcome_ids(
     return logical_accepted, logical_rejected
 
 
-def _assert_cfl_a0_gate_invariant(
+def _assert_a0_gate_invariant(
     config: Any,
     deformations: Mapping[str, Any],
     gate_reports: Mapping[str, Any],
@@ -273,8 +213,7 @@ def _assert_cfl_a0_gate_invariant(
         if float(getattr(deformation, "amplitude")) == 0.0
     ]
     owner = bool(getattr(config, "zero_amplitude_control_owner", True))
-    model = str(getattr(config, "matter_model", "bsk24"))
-    model_label = "CFL" if model.casefold() == "cfl" else model
+    model_label = "bsk24"
     if not owner:
         if zero_ids:
             raise RuntimeError(
@@ -308,10 +247,8 @@ def run_bsk24_trial(
     callbacks: RunCallbacks,
 ) -> Any:
     """Explicitly execute one governed trial and persist an immutable packet."""
-    matter_model = _matter_model(config)
-    is_cfl = matter_model == "cfl"
     curve_only = bool(getattr(config, "curve_only_output", False))
-    a0_alias_mode = is_cfl or isinstance(
+    a0_alias_mode = isinstance(
         getattr(config, "zero_amplitude_control_owner", None), bool
     )
     execution_started = time.perf_counter()
@@ -329,7 +266,7 @@ def run_bsk24_trial(
         phase_started = finished
         if os.environ.get("EOS_GENERATION_PROGRESS") == "1":
             print(
-                f"[{matter_model.upper()}] {name}: "
+                f"[BSK24] {name}: "
                 f"{phase_wall_seconds[name]:.1f} s",
                 flush=True,
             )
@@ -378,7 +315,7 @@ def run_bsk24_trial(
     )
     finish_phase("packet_initialization")
 
-    if is_cfl or config.epsilon_match_mev_fm3 is None:
+    if config.epsilon_match_mev_fm3 is None:
         # Preserve the exact established call shape for standard packets and
         # repository test doubles.
         stages = {
@@ -488,7 +425,7 @@ def run_bsk24_trial(
     finish_phase("raw_local_physics_gate")
 
     if a0_alias_mode:
-        _assert_cfl_a0_gate_invariant(
+        _assert_a0_gate_invariant(
             config,
             deformations,
             gate_reports,
@@ -501,7 +438,7 @@ def run_bsk24_trial(
         plan,
         accepted_physical_ids=accepted_ids,
         rejected_physical_ids=rejected_ids,
-        is_cfl=a0_alias_mode,
+        alias_mode=a0_alias_mode,
     )
 
     stage_cases: dict[str, dict[str, Any]] = {
@@ -589,21 +526,6 @@ def run_bsk24_trial(
     # work.
     generated = stage_cases[reference_stage]
     declared_gate_reports = gate_reports
-    if is_cfl:
-        declared_gate_reports = {}
-        for case_id, report in gate_reports.items():
-            declared = dict(report)
-            eos = generated.get(case_id)
-            if eos is not None:
-                declared["retained_domain"] = {
-                    "epsilon_max_mev_fm3": float(eos.energy_density_max_mev_fm3),
-                    "pressure_max_mev_fm3": float(eos.pressure_max_mev_fm3),
-                    "endpoint_reason": "formula_derived_cfl_domain_endpoint",
-                }
-                declared[
-                    "complete_raw_proposal_causal_through_direct_endpoint"
-                ] = bool(report.get("full_declared_domain_passed"))
-            declared_gate_reports[case_id] = declared
     lifecycle_accepted_ids = list(accepted_ids)
     lifecycle_rejected_ids = list(rejected_ids)
     finish_phase("thermodynamic_reconstruction")
@@ -717,11 +639,7 @@ def run_bsk24_trial(
             )
             write_json_atomic(
                 {
-                    "schema_id": (
-                        "eos_generation_cfl_maximum_mass_reports_v1"
-                        if is_cfl
-                        else "bsk24_maximum_mass_reports_v2"
-                    ),
+                    "schema_id": "bsk24_maximum_mass_reports_v2",
                     "cases": dict(maximum_reports),
                 },
                 packet / "maximum_mass_reports.json",
@@ -803,7 +721,7 @@ def run_bsk24_trial(
     write_csv_atomic(identity_table, packet / "a0_identity_table.csv")
     if a0_alias_mode and identity_report.get("status") != "pass":
         raise RuntimeError(
-            f"{matter_model} zero-amplitude deterministic identity failed; the partial "
+            "bsk24 zero-amplitude deterministic identity failed; the partial "
             "packet retains the identity evidence and cannot be completed"
         )
 
@@ -855,7 +773,7 @@ def run_bsk24_trial(
             "reported separately by the bounded cross-environment regression; "
             "not used to define packet provenance"
         ),
-        "notebook": _reproduction_notebook(matter_model),
+        "notebook": "notebooks/bsk24_experiment.ipynb",
         **portable_reproduction,
     }
     write_json_atomic(reproduction, packet / "reproduction.json")
@@ -887,9 +805,7 @@ def run_bsk24_trial(
     )
     anchor_selection = _anchor_selection_record(config, baseline)
     metadata = {
-        "schema_id": (
-            CFL_TRIAL_PACKET_SCHEMA if is_cfl else TRIAL_PACKET_SCHEMA
-        ),
+        "schema_id": TRIAL_PACKET_SCHEMA,
         "packet_status": "calculations_complete_plots_pending",
         "generator_id": WINDOWED_GAUSSIAN_GENERATOR_ID,
         "preserved_generator_id": PURE_GAUSSIAN_GENERATOR_ID,
@@ -951,105 +867,6 @@ def run_bsk24_trial(
                 or config.to_dict().get("zero_amplitude_physical_case_id"),
             }
         )
-    if is_cfl:
-        from eos_generation.cfl.baseline import (
-            CFL_DEFORMATION_PROFILE_ID,
-            CFL_DEFORMATION_PROFILE_VERSION,
-            CFL_DOMAIN_ID,
-            CFL_FORMULATION_ID,
-            CFL_FORMULATION_VERSION,
-            FROZEN_CFL_PARAMETERS,
-            FROZEN_PARAMETER_SET_ID,
-            FROZEN_PARAMETER_SET_SHA256,
-            PAIRING_GAP_MEV,
-            QUARK_CHEMICAL_POTENTIAL_SURFACE_MEV,
-            STRANGE_QUARK_MASS_MEV,
-        )
-        from eos_generation.cfl.deformation import (
-            CFL_PRESSURE_PRIMITIVE_POLICY,
-        )
-        from eos_generation.cfl.reconstruction import (
-            CFL_RECONSTRUCTION_PROFILE_ID,
-            CFL_WINDOWED_EOS_SCHEMA_VERSION,
-        )
-
-        pairing_stress = (
-            STRANGE_QUARK_MASS_MEV**2
-            / QUARK_CHEMICAL_POTENTIAL_SURFACE_MEV
-        )
-        metadata.update(
-            {
-                "matter_model": "cfl",
-                "generator_id": CFL_DEFORMATION_PROFILE_ID,
-                "preserved_generator_id": (
-                    "cfl_undeformed_analytic_baseline_v1"
-                ),
-                "source_baseline_identifier": FROZEN_PARAMETER_SET_ID,
-                "baseline_parameter_set_id": FROZEN_PARAMETER_SET_ID,
-                "baseline_parameter_set_sha256": (
-                    FROZEN_PARAMETER_SET_SHA256
-                ),
-                "baseline_validation_status": (
-                    "literature_supported_frozen_design_contract"
-                ),
-                "baseline_validation_scope": (
-                    "analytic_thermodynamics_and_self_bound_stability; "
-                    "two_flavor_nuclear_stability_is_an_external_assumption"
-                ),
-                "formulation_id": CFL_FORMULATION_ID,
-                "formulation_version": CFL_FORMULATION_VERSION,
-                "deformation_profile_id": CFL_DEFORMATION_PROFILE_ID,
-                "deformation_profile_version": (
-                    CFL_DEFORMATION_PROFILE_VERSION
-                ),
-                "reconstruction_profile_id": CFL_RECONSTRUCTION_PROFILE_ID,
-                "reconstruction_schema_version": (
-                    CFL_WINDOWED_EOS_SCHEMA_VERSION
-                ),
-                "pressure_primitive_policy": CFL_PRESSURE_PRIMITIVE_POLICY,
-                "stellar_sequence_policy": config.to_dict()["stellar_sequence_policy"],
-                "stellar_local_refinement_policy": config.to_dict()["stellar_local_refinement_policy"],
-                "domain_id": CFL_DOMAIN_ID,
-                "frozen_cfl_parameters": FROZEN_CFL_PARAMETERS.to_dict(),
-                "composition_policy": {
-                    "microscopic_composition": (
-                        "neutral_color_flavor_locked_equal_number_density_model"
-                    ),
-                    "species_chemical_potentials": (
-                        "common_quark_mu_with_mu_B_equals_3_mu"
-                    ),
-                    "beta_equilibrium": (
-                        "CFL_neutrality_mu_e_equals_zero_no_leptons"
-                    ),
-                    "hadronic_or_crust_composition": "absent",
-                },
-                "self_bound_stability": {
-                    "absolute_stability_criterion": (
-                        "mu_B_at_zero_pressure_mev <= 930.0"
-                    ),
-                    "absolute_stability_status": "pass",
-                    "pairing_stress_criterion": (
-                        "m_s_squared_over_mu_q_mev < 2_Delta_mev"
-                    ),
-                    "pairing_stress_at_surface_mev": pairing_stress,
-                    "pairing_stress_limit_mev": 2.0 * PAIRING_GAP_MEV,
-                    "pairing_stress_status": "pass",
-                    "ordinary_nuclei_two_flavor_constraint_mev": 934.0,
-                    "ordinary_nuclei_two_flavor_status": (
-                        "external_assumption_not_demonstrated_by_CFL_only_model"
-                    ),
-                },
-                "surface_tidal_policy": {
-                    "finite_surface_energy_density": True,
-                    "required_correction": TIDAL_JUMP_FORMULA,
-                    "correction_version": TIDAL_CORRECTION_VERSION,
-                    "application_count": "exactly_once_per_successful_tidal_star",
-                    "saved_evidence": (
-                        "stellar_sequences.csv and fixed_mass_observables.csv"
-                    ),
-                },
-            }
-        )
     _write_methods(packet, config, metadata)
     write_json_atomic(metadata, packet / "metadata.json")
     finish_phase("provenance_and_packet_documents")
@@ -1087,11 +904,7 @@ def run_bsk24_trial(
         },
     )
     runtime_performance = {
-        "schema_id": (
-            "eos_generation_cfl_runtime_performance_v1"
-            if is_cfl
-            else "bsk24_runtime_performance_v1"
-        ),
+        "schema_id": "bsk24_runtime_performance_v1",
         "configuration_hash": config.deterministic_hash(),
         "anchor_selection": anchor_selection,
         "clock": "time.perf_counter",
@@ -1169,19 +982,9 @@ def run_bsk24_trial(
     return callbacks.load_trial(packet)
 
 
-def run_cfl_trial(config: Any, *, callbacks: RunCallbacks) -> Any:
-    """Execute a governed CFL trial through the shared packet lifecycle."""
-
-    if _matter_model(config) != "cfl":
-        raise TypeError("run_cfl_trial requires a CFL configuration")
-    return run_bsk24_trial(config, callbacks=callbacks)
-
-
 __all__ = [
-    "CFL_TRIAL_PACKET_SCHEMA",
     "RAW_GATE_SCHEMA",
     "RunCallbacks",
     "TRIAL_PACKET_SCHEMA",
     "run_bsk24_trial",
-    "run_cfl_trial",
 ]

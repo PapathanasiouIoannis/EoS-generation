@@ -4,23 +4,15 @@ All notable changes to the supported package are recorded here.
 
 ## Unreleased
 
-### Fixed
+### Changed
 
-- New CFL child packets record the CFL general-notebook hint in
-  `reproduction.json`. Sealed 1.2.0 packets remain unchanged and may retain
-  the legacy BSk24 hint, which validation labels explicitly as compatibility
-  metadata.
-
-### Documentation
-
-- Reconciled the landing page, quickstart, parameters, method, result/CSV,
-  dataset, CFL status, troubleshooting, developer, and notebook guidance with
-  the repository restored by pull request #18 and release 1.2.0.
-- Corrected the model boundary: BSk24 can retain a certified prefix through
-  its first continuous causal crossing, while CFL requires the complete
-  formula-derived domain to pass.
-- Corrected current notebook defaults and derived-output descriptions without
-  changing code cells, scientific settings, result schemas, or calculations.
+- Focused the supported package, CLI, validation, reporting, configuration
+  schema, notebooks, and CI on analytical BSk24.
+- Retained the BSk24 `dataset_40` and `dataset_40_curves` large-run workflows,
+  saved-data adapters, deterministic identities, and fail-closed contracts.
+- Removed the CFL implementation and its dedicated notebooks, tests,
+  configuration, and documentation from the current source tree. Historical
+  release notes below remain as release history.
 
 ## 1.2.0 - 2026-08-30
 

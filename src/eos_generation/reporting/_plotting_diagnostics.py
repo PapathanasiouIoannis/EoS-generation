@@ -36,13 +36,10 @@ def _radial_case_role(case_id: str, coordinates: pd.Series) -> str:
     return "positive_endpoint" if float(amplitude) > 0.0 else "negative_endpoint"
 
 
-def _radial_case_title(
-    case_id: str, coordinates: pd.Series, *, matter_model: str = "bsk24"
-) -> str:
+def _radial_case_title(case_id: str, coordinates: pd.Series) -> str:
     role = _radial_case_role(case_id, coordinates)
     if role == "direct":
-        model = "CFL" if matter_model == "cfl" else "BSk24"
-        return f"Direct {model} baseline radial structure"
+        return "Direct BSk24 baseline radial structure"
     amplitude = float(coordinates["amplitude"])
     delta = float(coordinates["delta_mev_fm3"])
     if role == "a0":
@@ -151,7 +148,6 @@ def _radial(packet, config, plt, axis_style) -> bool:
             _radial_case_title(
                 case_id,
                 coordinates,
-                matter_model=getattr(config, "matter_model", "bsk24"),
             ),
             fontsize=13.0,
         )
@@ -390,13 +386,8 @@ def _response(packet, config, plt, axis_style, *, baryonic: bool) -> bool:
     if not baryonic:
         fig.suptitle("Exact fixed-mass stellar response", fontsize=13.0)
     else:
-        model = (
-            "CFL"
-            if getattr(config, "matter_model", "bsk24") == "cfl"
-            else "BSk24"
-        )
         fig.suptitle(
-            f"Baryonic response relative to direct {model}", fontsize=12.5
+            "Baryonic response relative to direct BSk24", fontsize=12.5
         )
     _footer(
         fig,

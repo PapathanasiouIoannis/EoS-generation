@@ -1,4 +1,4 @@
-"""Small, passive-by-default notebook adapter for governed EoS experiments.
+"""Small, passive-by-default notebook adapter for BSk24 experiments.
 
 The notebook contains no equations or solver code.  It translates one plain
 settings cell into :mod:`eos_generation.experiment`, records an exact passive
@@ -24,7 +24,6 @@ from typing import Any
 
 
 _SETTINGS_SCHEMA = "eos_generation_notebook_settings_v1"
-_CFL_SETTINGS_SCHEMA = "eos_generation_cfl_notebook_settings_v1"
 _RUN_SCHEMA = "eos_generation_notebook_run_v1"
 _CALCULATIONS = ("thermodynamics", "stellar")
 _PRECISIONS = ("quick", "strict", "dataset", "dataset_10_tighter", "dataset_20", "dataset_40", "dataset_40_curves", "dataset_relaxed", "dataset_relaxed_80")
@@ -67,15 +66,11 @@ def _numeric_axis(
     return tuple(parsed)
 
 
-def _match_value(value: Any, *, matter_model: str = "bsk24") -> str | float:
+def _match_value(value: Any) -> str | float:
     items = _as_items(value)
     if len(items) != 1:
         raise ValueError("EPSILON_MATCH must be one matching anchor")
     item = items[0]
-    if matter_model == "cfl":
-        if item != "surface":
-            raise ValueError("CFL EPSILON_MATCH must be 'surface'")
-        return "surface"
     if item is None or (
         isinstance(item, str) and item.strip().lower() == "standard"
     ):
@@ -121,15 +116,15 @@ class NotebookSettings:
         # Direct dataclass construction receives the same validation as the
         # canonical notebook constructor.
         object.__setattr__(
-            self, "matter_model", _choice("MATTER_MODEL", self.matter_model, ("bsk24", "cfl"))
+            self, "matter_model", _choice("MATTER_MODEL", self.matter_model, ("bsk24",))
         )
         object.__setattr__(
             self, "amplitudes", _numeric_axis(
-                "AMPLITUDES", self.amplitudes, legacy_zero=self.matter_model == "bsk24"
+                "AMPLITUDES", self.amplitudes
             )
         )
         object.__setattr__(
-            self, "epsilon_match", _match_value(self.epsilon_match, matter_model=self.matter_model)
+            self, "epsilon_match", _match_value(self.epsilon_match)
         )
         object.__setattr__(
             self,
@@ -168,8 +163,6 @@ class NotebookSettings:
         )
         if self.diagnostics == "on" and self.calculation != "stellar":
             raise ValueError("DIAGNOSTICS='on' requires CALCULATION='stellar'")
-        if self.matter_model == "cfl" and self.diagnostics != "off":
-            raise ValueError("CFL extended DIAGNOSTICS are unavailable; use 'off'")
 
     @classmethod
     def from_values(
@@ -186,11 +179,11 @@ class NotebookSettings:
         diagnostics: str = "off",
         matter_model: str = "bsk24",
     ) -> "NotebookSettings":
-        matter_model = _choice("MATTER_MODEL", matter_model, ("bsk24", "cfl"))
+        matter_model = _choice("MATTER_MODEL", matter_model, ("bsk24",))
         return cls(
             matter_model=matter_model,
-            amplitudes=_numeric_axis("AMPLITUDES", amplitudes, legacy_zero=matter_model == "bsk24"),
-            epsilon_match=_match_value(epsilon_match, matter_model=matter_model),
+            amplitudes=_numeric_axis("AMPLITUDES", amplitudes),
+            epsilon_match=_match_value(epsilon_match),
             centers_mev_fm3=_numeric_axis("CENTER", center, positive=True),
             widths_mev_fm3=_numeric_axis("WIDTH", width, positive=True),
             ramp_widths_mev_fm3=_numeric_axis(
@@ -229,8 +222,6 @@ class NotebookSettings:
             "precision": self.precision,
             "diagnostics": self.diagnostics,
         }
-        if self.matter_model == "cfl":
-            data.update(schema_id=_CFL_SETTINGS_SCHEMA, matter_model="cfl")
         return data
 
     def deterministic_hash(self) -> str:
@@ -734,17 +725,6 @@ class NotebookSession:
             "Primary data": self._student_view.primary_data,
             "Authoritative technical packet": self._student_view.authoritative_experiment,
         }
-
-    def present(self, result: Any, *, create: bool = False) -> dict[str, Any]:
-        """Display CFL saved results; only ``create=True`` writes derived plots.
-
-        Scientific packets remain sealed. Failed presentation is recoverable
-        from saved tables without spending another execution authorization.
-        """
-
-        from .reporting.notebook_results import present_cfl_results
-
-        return present_cfl_results(result, create=create)
 
     def load(self, path: str | Path) -> Any:
         """Passively load an existing experiment through the public facade."""

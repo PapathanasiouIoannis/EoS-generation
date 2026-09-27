@@ -17,7 +17,6 @@ from eos_generation._internal.artifacts import (
 from eos_generation._internal.execution import (
     RunCallbacks,
     run_bsk24_trial,
-    run_cfl_trial,
 )
 from eos_generation._internal.loading import load_trial_packet
 from eos_generation._internal.planning import (
@@ -169,85 +168,13 @@ class TrialResult:
         )
 
 
-def plan_trial(config: Any) -> Any:
+def plan_trial(config: BSk24TrialConfig) -> BSk24TrialPlan:
     """Passively validate and estimate one ordinary trial."""
-    if getattr(config, "matter_model", "bsk24") == "cfl":
-        from eos_generation.cfl.planning import prepare_cfl_trial
-
-        return prepare_cfl_trial(config)
     return prepare_bsk24_trial(config)
 
 
-def execute_trial(config: Any) -> TrialResult:
+def execute_trial(config: BSk24TrialConfig) -> TrialResult:
     """Explicitly execute one ordinary trial."""
-    if getattr(config, "matter_model", "bsk24") == "cfl":
-        from eos_generation._internal.cfl_thermodynamics import (
-            _cfl_a0_identity_table,
-            _cfl_deformations,
-            _cfl_raw_gate_frame,
-            _cfl_thermodynamic_convergence,
-            _cfl_thermodynamic_profile_frame,
-            _cfl_thermodynamic_residual_frame,
-        )
-        from eos_generation.cfl.baseline import build_cfl_baseline
-        from eos_generation.cfl.deformation import (
-            raw_local_physics_gate as cfl_raw_local_physics_gate,
-            window_characterization as cfl_window_characterization,
-        )
-        from eos_generation.cfl.planning import prepare_cfl_trial
-        from eos_generation.cfl.reconstruction import (
-            build_windowed_eos as build_cfl_windowed_eos,
-        )
-
-        def raw_gate_adapter(
-            baseline,
-            deformation,
-            *,
-            dense_lower_points: int,
-            dense_upper_points: int,
-        ):
-            return cfl_raw_local_physics_gate(
-                deformation,
-                baseline=baseline,
-                dense_points=max(dense_lower_points, dense_upper_points),
-            )
-
-        def reconstruction_adapter(
-            baseline,
-            deformation,
-            *,
-            raw_gate_report,
-        ):
-            return build_cfl_windowed_eos(
-                deformation,
-                baseline=baseline,
-                raw_gate_report=raw_gate_report,
-                grid_points=baseline.settings.points,
-            )
-
-        callbacks = RunCallbacks(
-            prepare_trial=prepare_cfl_trial,
-            load_trial=load_trial,
-            generate_plots=generate_trial_plots,
-            validate_packet=validate_trial,
-            build_consistent_baseline=build_cfl_baseline,
-            raw_local_physics_gate=raw_gate_adapter,
-            raw_gate_frame=_cfl_raw_gate_frame,
-            build_windowed_eos=reconstruction_adapter,
-            thermodynamic_profile_frame=_cfl_thermodynamic_profile_frame,
-            thermodynamic_residual_frame=_cfl_thermodynamic_residual_frame,
-            window_characterization=(
-                lambda _baseline, deformation: cfl_window_characterization(
-                    deformation
-                )
-            ),
-            thermodynamic_convergence=_cfl_thermodynamic_convergence,
-            run_stellar=_run_stellar,
-            resolve_deformations=_cfl_deformations,
-            a0_identity_table=_cfl_a0_identity_table,
-        )
-        return run_cfl_trial(config, callbacks=callbacks)
-
     callbacks = RunCallbacks(
         prepare_trial=prepare_bsk24_trial,
         load_trial=load_trial,

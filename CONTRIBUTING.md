@@ -17,13 +17,10 @@ public issue.
 3. Start from a clean, current `main` and create one focused branch.
 4. Keep unrelated local results and user files out of the diff.
 
-The supported user surfaces are the compatibility command `bsk24-trial`, the
-model-specific notebooks under `notebooks/`, the files under `configs/`,
-and the objects exported from `eos_generation`. The command and public Python
-API support legacy BSk24 settings and the explicit frozen CFL matter model;
-the separate CFL notebook uses that same governed API. Preserve legacy BSk24 serialization,
-hashes, case IDs, and behavior unless a deliberate breaking release has been
-agreed.
+The supported user surfaces are `bsk24-trial`, the two BSk24 notebooks under
+`notebooks/`, the files under `configs/`, and the objects exported from
+`eos_generation`. Preserve BSk24 serialization, hashes, case IDs, and
+scientific behavior unless a deliberate scientific change has been agreed.
 
 ## Scientific changes
 
@@ -35,13 +32,6 @@ Document all of the following in the pull request:
   numerical tolerance that changes;
 - the independent reference or benchmark supporting the change;
 - the result fields and plots that may be affected.
-
-For CFL changes, also state whether the pure bare self-bound scope, frozen
-parameter hash, formula-derived binary64 domain, finite-density surface,
-external two-flavor assumption, or exact-once tidal jump evidence is affected.
-The frozen microphysical constants are not sweep parameters. Publication-level
-CFL stellar claims require strict convergence, a convention-matched published
-benchmark, and comparison with an independent solver.
 
 Do not silently extrapolate, repair an invalid proposal, weaken an acceptance
 condition to pass a test, or describe a numerical seam as a physical
@@ -81,10 +71,8 @@ profiles expand to immutable internal numerical settings. Change those
 profiles only as a scientific change, and retain the expanded settings in the
 saved result.
 
-Omitted `matter_model` is the legacy BSk24 identity; CFL must be explicit and
-use the surface anchor. Do not migrate old settings by inserting a default
-field, and do not duplicate the frozen CFL profile in configuration or
-planning code.
+Omitted `matter_model` is the canonical BSk24 identity. Do not migrate old
+settings by inserting a default field.
 
 When adding or moving an active source module, update the source-provenance
 inventory and its regression test. Result validation must remain read-only,

@@ -235,8 +235,8 @@ def _evaluate_background_branch(
     """Evaluate only epsilon(P) for an explicitly certified immutable EoS.
 
     Arbitrary callables retain the established full ``(epsilon, c_s^2)``
-    validation path.  CFL analytic and accepted reconstructed objects opt in
-    only after their complete branches have passed construction-time checks.
+    validation path. Accepted reconstructed objects opt in only after their
+    complete branches have passed construction-time checks.
     """
 
     if getattr(eos_callable, "_background_energy_only_is_certified", False) is True:

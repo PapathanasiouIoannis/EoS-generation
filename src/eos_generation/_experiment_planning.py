@@ -155,9 +155,6 @@ def _precision_profile(name: str, calculation: str) -> dict[str, Any]:
 
 
 def _internal_configs(settings: Any, experiment_path: Path) -> tuple[Any, ...]:
-    if settings.matter_model == "cfl":
-        return _cfl_internal_configs(settings, experiment_path)
-
     from ._internal.planning import BSk24TrialConfig
 
     profile = _precision_profile(settings.precision, settings.calculation)
@@ -216,71 +213,6 @@ def _internal_configs(settings: Any, experiment_path: Path) -> tuple[Any, ...]:
                 )
     if len(configs) != geometry_count:
         raise RuntimeError("geometry expansion count mismatch")
-    return tuple(configs)
-
-
-def _cfl_internal_configs(settings: Any, experiment_path: Path) -> tuple[Any, ...]:
-    """Expand CFL geometries while retaining one shared physical A=0 identity."""
-
-    from .cfl.planning import CFLTrialConfig
-
-    profile = _precision_profile(settings.precision, settings.calculation)
-    stellar = settings.calculation == "stellar"
-    has_nonzero_amplitude = any(value != 0.0 for value in settings.amplitudes)
-    configs: list[Any] = []
-    geometry_count = len(settings.center) * len(settings.width) * len(settings.ramp_width)
-    owner_geometry = min(
-        (center, width, ramp_width)
-        for center in settings.center
-        for width in settings.width
-        for ramp_width in settings.ramp_width
-    )
-    geometry_index = 0
-    for center in settings.center:
-        for width in settings.width:
-            for ramp_width in settings.ramp_width:
-                geometry_index += 1
-                owns_zero = (center, width, ramp_width) == owner_geometry
-                child_stellar = stellar and (
-                    owns_zero or has_nonzero_amplitude
-                )
-                configs.append(
-                    CFLTrialConfig(
-                        amplitudes=settings.amplitudes,
-                        epsilon0_mev_fm3=center,
-                        sigma_mev_fm3=width,
-                        deltas_mev_fm3=(ramp_width,),
-                        zero_amplitude_control_owner=owns_zero,
-                        fixed_masses_msun=settings.fixed_masses,
-                        thermodynamic_stages=profile["thermodynamic_stages"],
-                        tov_stages=(
-                            profile["tov_stages"] if child_stellar else ()
-                        ),
-                        raw_gate_lower_points=profile["raw_gate_lower_points"],
-                        raw_gate_upper_points=profile["raw_gate_upper_points"],
-                        stellar_enabled=child_stellar,
-                        maximum_mass_initial_points=profile[
-                            "maximum_mass_initial_points"
-                        ],
-                        extended_stellar_diagnostics_enabled=(
-                            settings.diagnostics == "on"
-                        ),
-                        extended_stellar_diagnostics_case_policy="endpoints",
-                        diagnostic_delta_mev_fm3=ramp_width,
-                        requested_plot_groups=(
-                            ("none",)
-                            if settings.precision == "dataset_40"
-                            else ("all-applicable",)
-                        ),
-                        output_path=(
-                            experiment_path / f"geometry_{geometry_index:03d}"
-                        ),
-                        output_packet_name=None,
-                        resume_policy="error",
-                    )
-                )
-    if len(configs) != geometry_count:
-        raise RuntimeError("CFL geometry expansion count mismatch")
     return tuple(configs)
 
 

@@ -466,47 +466,6 @@ class DatasetPlotTests(unittest.TestCase):
             )
             self.assertEqual(0, result["solver_calls"])
 
-    def test_cfl_uses_the_same_five_combined_plot_contract_and_c_labels(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            experiment = fixture(
-                root, "cfl-dataset", precision="dataset_40", matter_model="cfl"
-            )
-            packet = experiment / "geometry_001"
-            rows = plots.catalogue.csv_rows(packet / "stellar_sequences.csv")
-            for row in rows:
-                row.update(
-                    k2="0.1",
-                    Lambda="100",
-                    tidal_status="validated_lambda_validation_v1",
-                )
-            write_csv(packet / "stellar_sequences.csv", rows)
-            seal(packet)
-            (experiment / "SHA256SUMS.txt").write_text(
-                "synthetic aggregate marker\n", encoding="utf-8"
-            )
-            destination = experiment.parent / "plots"
-            data = experiment.parent / "EOS_DATA"
-            before = snapshot(experiment)
-            with patch.object(plots.catalogue, "validate_source"):
-                catalogue_result = plots.catalogue.build_eos_data(
-                    root, experiment, data
-                )
-                plot_result = plots.build_dataset_plots(
-                    root, experiment, destination, data
-                )
-            aliases = plots.catalogue.csv_rows(data / "case_aliases.csv")
-            self.assertEqual({"cfl"}, {row["matter_model"] for row in aliases})
-            self.assertEqual(
-                {"C000000", "C000001"},
-                {row["eos_id"] for row in aliases if row["eos_id"]},
-            )
-            self.assertEqual(["cfl"], catalogue_result["matter_models"])
-            self.assertEqual("cfl", plot_result["matter_model"])
-            self.assertEqual(5, len(list(destination.glob("*.png"))))
-            self.assertEqual(0, plot_result["solver_calls"])
-            self.assertEqual(before, snapshot(experiment))
-
     def test_legacy_bsk_alias_mapping_without_matter_model_still_plots(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
