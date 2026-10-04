@@ -84,3 +84,14 @@ jobs:
           Set-Location $env:GITHUB_WORKSPACE
           $changes = git status --porcelain=v1 --untracked-files=all
           if ($changes) { throw ($changes -join "`n") }
+
+  installed-contracts:
+    name: Installed package and scientific contracts
+    runs-on: ubuntu-latest
+    needs: installed-wheel
+    if: ${{ always() }}
+    steps:
+      - name: Require every installed-wheel check to pass
+        env:
+          RESULT: ${{ needs.installed-wheel.result }}
+        run: test "$RESULT" = success
