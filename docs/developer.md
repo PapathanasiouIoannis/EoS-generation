@@ -79,3 +79,20 @@ diagnostic uses that same model. BSk24 literal constants and arithmetic are
 preserved. BSk25 follows paper C1/C4 with its documented discrepancies; its
 compact reference generator has no production imports. Never substitute
 CompOSE interpolation or silently move an invalid anchor.
+
+## Retained boundary evaluation
+
+NumPy scalar and vector arithmetic may differ in their last bits on different
+CPU kernels (see [NumPy issue 25269](https://github.com/numpy/numpy/issues/25269)).
+Nonzero retained endpoints and adjacent noncausal evidence use the same scalar
+analytical evaluation as causal-root refinement. Retained grids evaluate their
+interior and boundary separately from the outset, before physical assessment;
+no failed sampled value is replaced. The complete raw vectors are still saved
+unchanged. The zero control uses its original full-vector baseline evaluation,
+including its endpoint metadata, to preserve exact identity. Causal predicates,
+root tolerances, equations, grids and fixture bytes remain unchanged.
+
+The scalar/vector rounding regression injects a one-ULP scalar pressure
+difference for both models and both amplitude signs, and requires exact boundary
+agreement, admissibility and zero-control identity. Linux and Windows installed
+wheel CI exercise the actual NumPy runtime too.

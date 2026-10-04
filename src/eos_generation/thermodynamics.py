@@ -28,6 +28,7 @@ from .deformation import (
     _scalar_or_array,
     _windowed_cs2,
     _windowed_pressure,
+    _windowed_retained_state,
     smootherstep_window,
     windowed_gaussian_delta_cs2,
     windowed_gaussian_pressure_primitive,
@@ -703,18 +704,21 @@ def _authoritative_retained_endpoint(
         or retained_minimum != expected_domain[0]
         or not baseline.anchor.energy_density_mev_fm3 < endpoint
         or endpoint > expected_domain[1]
+        or (deformation.amplitude == 0.0 and endpoint != expected_domain[1])
         or endpoint_pressure <= 0.0
         or not 0.0 < endpoint_cs2 <= 1.0
     ):
         raise ValueError("raw-gate retained endpoint is outside the deformable domain")
-    expected_pressure = float(
-        _windowed_pressure(np.asarray([endpoint], dtype=float), baseline, deformation)[
-            0
-        ]
-    )
-    expected_cs2 = float(
-        _windowed_cs2(np.asarray([endpoint], dtype=float), baseline, deformation)[0]
-    )
+    if deformation.amplitude == 0.0:
+        expected_pressure = float(baseline.pressure[-1])
+        expected_cs2 = float(baseline.cs2[-1])
+    else:
+        expected_pressure = float(
+            _windowed_pressure(np.asarray(endpoint), baseline, deformation)
+        )
+        expected_cs2 = float(
+            _windowed_cs2(np.asarray(endpoint), baseline, deformation)
+        )
     comparison_rtol = 64.0 * np.finfo(float).eps
     if not math.isclose(
         endpoint_pressure,
@@ -810,12 +814,11 @@ def _authoritative_retained_endpoint(
                     and crossing.get("first_noncausal_cs2") is None
                 )
             elif common_width_evidence_valid:
-                noncausal_cs2_values = _windowed_cs2(
-                    np.asarray([bracket[1]], dtype=float),
-                    baseline,
-                    deformation,
+                analytical_noncausal_cs2 = float(
+                    _windowed_cs2(
+                        np.asarray(bracket[1], dtype=float), baseline, deformation
+                    )
                 )
-                analytical_noncausal_cs2 = float(noncausal_cs2_values[0])
                 reported_noncausal_epsilon = crossing.get(
                     "first_noncausal_epsilon_mev_fm3"
                 )
@@ -1007,8 +1010,7 @@ def build_windowed_eos(
             }
         )
 
-    pressure = _windowed_pressure(retained_epsilon, baseline, deformation)
-    cs2 = _windowed_cs2(retained_epsilon, baseline, deformation)
+    pressure, cs2 = _windowed_retained_state(retained_epsilon, baseline, deformation)
     if (
         not np.all(np.isfinite(pressure))
         or not np.all(np.isfinite(cs2))

@@ -334,6 +334,39 @@ def _windowed_cs2(
     return cs2
 
 
+def _windowed_retained_state(
+    epsilon: np.ndarray,
+    baseline: BSk24ConsistentBaseline,
+    deformation: BSk24WindowedDeformation,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Evaluate the retained grid with the raw root's scalar boundary path.
+
+    NumPy scalar and vector kernels can round differently at the last bit.
+    A nonzero proposal's endpoint is therefore evaluated as a scalar from the
+    outset, just as in causal-root refinement. No sampled value is repaired.
+    The zero control retains the complete original vector evaluation.
+    """
+    if deformation.amplitude == 0.0:
+        return (
+            _windowed_pressure(epsilon, baseline, deformation),
+            _windowed_cs2(epsilon, baseline, deformation),
+        )
+    endpoint = np.asarray(epsilon[-1], dtype=float)
+    pressure = np.concatenate(
+        (
+            _windowed_pressure(epsilon[:-1], baseline, deformation),
+            [_windowed_pressure(endpoint, baseline, deformation)],
+        )
+    )
+    cs2 = np.concatenate(
+        (
+            _windowed_cs2(epsilon[:-1], baseline, deformation),
+            [_windowed_cs2(endpoint, baseline, deformation)],
+        )
+    )
+    return pressure, cs2
+
+
 @dataclass(frozen=True)
 class BSk24WindowedDeformation:
     """One deterministic smootherstep-windowed Gaussian proposal."""

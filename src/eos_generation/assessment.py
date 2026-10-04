@@ -10,6 +10,7 @@ from .deformation import (
     _mass_density_from_energy_density,
     _windowed_cs2,
     _windowed_pressure,
+    _windowed_retained_state,
     windowed_gaussian_delta_cs2,
 )
 from dataclasses import dataclass
@@ -1562,12 +1563,24 @@ def raw_local_physics_gate(
         float(crossing["epsilon_mev_fm3"]) if crossing_resolved else epsilon_max
     )
     retained_endpoint_pressure = (
-        float(_windowed_pressure(np.asarray(retained_endpoint), baseline, deformation))
+        (
+            float(raw_pressure[-1])
+            if deformation.amplitude == 0.0
+            else float(
+                _windowed_pressure(np.asarray(retained_endpoint), baseline, deformation)
+            )
+        )
         if finite and causal_endpoint_available
         else None
     )
     retained_endpoint_cs2 = (
-        raw_scalar(retained_endpoint) if finite and causal_endpoint_available else None
+        (
+            float(raw[-1])
+            if deformation.amplitude == 0.0
+            else raw_scalar(retained_endpoint)
+        )
+        if finite and causal_endpoint_available
+        else None
     )
     later_return_below_one = bool(
         crossing_resolved
@@ -1607,13 +1620,8 @@ def raw_local_physics_gate(
             "resolved_tabulation_resolution",
             "resolved_exact_baseline_identity_grid",
         }:
-            retained_pressure = np.asarray(
-                _windowed_pressure(retained_grid, baseline, deformation),
-                dtype=float,
-            )
-            retained_cs2 = np.asarray(
-                _windowed_cs2(retained_grid, baseline, deformation),
-                dtype=float,
+            retained_pressure, retained_cs2 = _windowed_retained_state(
+                retained_grid, baseline, deformation
             )
             retained_core_usable = bool(
                 np.all(np.isfinite(retained_pressure))

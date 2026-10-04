@@ -219,6 +219,49 @@ class WindowedDeformationTests(unittest.TestCase):
         self.assertTrue(np.array_equal(eos.cs2, self.base.cs2))
         self.assertTrue(np.array_equal(eos.baryon_density, self.base.baryon_density))
 
+    def test_retained_boundary_survives_scalar_vector_rounding_difference(self) -> None:
+        original = baseline.BSk24AnalyticEos.published_fit_pressure_from_mass_density
+
+        def scalar_rounding(model, density):
+            value = original(model, density)
+            # Model a one-ULP scalar/vector kernel difference, independent of CPU.
+            return np.nextafter(value, math.inf) if np.ndim(density) == 0 else value
+
+        for matter_model in ("bsk24", "bsk25"):
+            base = reconstruction.build_consistent_baseline(
+                reconstruction.BSk24GridSettings(lower_points=129, upper_points=257),
+                eos=baseline.make_baseline_eos(matter_model),
+            )
+            with patch.object(
+                baseline.BSk24AnalyticEos,
+                "published_fit_pressure_from_mass_density",
+                new=scalar_rounding,
+            ):
+                for amplitude in (0.0, -0.01, 0.01):
+                    with self.subTest(matter_model=matter_model, amplitude=amplitude):
+                        proposal = deformation.BSk24WindowedDeformation(
+                            "rounding-boundary", amplitude, 200.0, 50.0, 40.0
+                        )
+                        gate, _, _ = assessment.raw_local_physics_gate(base, proposal)
+                        self.assertEqual("accepted_raw_local_physics_gate", gate["status"])
+                        eos = reconstruction.build_windowed_eos(
+                            base, proposal, raw_gate_report=gate
+                        )
+                        retained = gate["retained_domain"]
+                        self.assertEqual(retained["pressure_max_mev_fm3"], eos.pressure[-1])
+                        self.assertEqual(retained["cs2_at_endpoint"], eos.cs2[-1])
+                        self.assertEqual(
+                            "accepted_full_domain_thermodynamic_gate"
+                            if amplitude == 0.0
+                            else "accepted_selected_domain_thermodynamic_gate",
+                            diagnostics.full_domain_thermodynamic_admissibility(
+                                base, eos, raw_gate_report=gate
+                            )["status"],
+                        )
+                        if amplitude == 0.0:
+                            np.testing.assert_array_equal(eos.pressure, base.pressure)
+                            np.testing.assert_array_equal(eos.cs2, base.cs2)
+
     def test_supplied_direct_gate_cannot_forge_an_arbitrary_truncation(self) -> None:
         proposal = deformation.BSk24WindowedDeformation(
             "forged-direct-endpoint", 0.0, 200.0, 50.0, 40.0
