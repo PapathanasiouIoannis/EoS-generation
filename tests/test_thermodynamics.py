@@ -1,4 +1,11 @@
 from __future__ import annotations
+from eos_generation.stellar import (
+    _build_sequence_evidence,
+    _sampled_mass_secants,
+    refine_maximum_mass_from_sequence,
+    resolve_maximum_mass,
+    solve_sequence,
+)
 
 import json
 import math
@@ -11,13 +18,19 @@ import pandas as pd
 from scipy.integrate import quad
 from scipy.optimize import minimize_scalar
 
-from eos_generation.bsk24 import baseline, deformation, reconstruction
-from eos_generation._internal.planning import BSk24TrialConfig
-from eos_generation._internal.thermodynamics import (
+from eos_generation import (
+    baseline,
+    deformation,
+    thermodynamics as reconstruction,
+    assessment,
+    diagnostics,
+)
+from eos_generation.numerics import BSk24TrialConfig
+from eos_generation.diagnostics import (
     _raw_gate_frame,
     _thermodynamic_profile_frame,
 )
-from eos_generation.bsk24._deformation_gate import _first_causal_crossing
+from eos_generation.assessment import _first_causal_crossing
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,11 +39,7 @@ ROOT = Path(__file__).resolve().parents[1]
 class BSk24BaselineTests(unittest.TestCase):
     def test_analytic_fit_matches_retained_validated_regression_rows(self) -> None:
         rows = pd.read_csv(
-            ROOT
-            / "tests"
-            / "fixtures"
-            / "bsk24_contract_v1"
-            / "thermodynamic_rows.csv"
+            ROOT / "tests" / "fixtures" / "bsk24_contract_v1" / "thermodynamic_rows.csv"
         )
         direct = rows.loc[rows["case_id"] == "direct"]
         self.assertEqual(
@@ -42,7 +51,9 @@ class BSk24BaselineTests(unittest.TestCase):
         epsilon = direct["epsilon_mev_fm3"].to_numpy(dtype=float)
         pressure = np.asarray(eos.pressure_from_energy_density(epsilon), dtype=float)
         density = epsilon * baseline.MEV_FM3_TO_MASS_DENSITY_G_CM3
-        cs2 = np.asarray(eos.sound_speed_squared_from_mass_density(density), dtype=float)
+        cs2 = np.asarray(
+            eos.sound_speed_squared_from_mass_density(density), dtype=float
+        )
         np.testing.assert_allclose(
             pressure,
             direct["pressure_mev_fm3"].to_numpy(dtype=float),
@@ -146,9 +157,7 @@ class WindowedDeformationTests(unittest.TestCase):
             "unresolved_near_tangential_causal_contact",
             ambiguous["status"],
         )
-        self.assertFalse(
-            ambiguous["crossing_included_to_governed_tolerance"]
-        )
+        self.assertFalse(ambiguous["crossing_included_to_governed_tolerance"])
 
         superluminal = _first_causal_crossing(
             np.asarray([1.0, 1.5, 2.5, 3.0]),
@@ -164,21 +173,19 @@ class WindowedDeformationTests(unittest.TestCase):
         )
         self.assertLess(superluminal["epsilon_mev_fm3"], 2.0)
         self.assertLessEqual(superluminal["cs2_at_endpoint"], 1.0)
-        self.assertTrue(
-            superluminal["crossing_included_to_governed_tolerance"]
-        )
+        self.assertTrue(superluminal["crossing_included_to_governed_tolerance"])
 
     def test_a0_is_exact_array_identity(self) -> None:
-        proposal = deformation.BSk24WindowedDeformation(
-            "a0", 0.0, 200.0, 50.0, 40.0
-        )
-        gate, _, _ = deformation.raw_local_physics_gate(
+        proposal = deformation.BSk24WindowedDeformation("a0", 0.0, 200.0, 50.0, 40.0)
+        gate, _, _ = assessment.raw_local_physics_gate(
             self.base,
             proposal,
             dense_lower_points=1025,
             dense_upper_points=4097,
         )
-        eos = deformation.build_windowed_eos(self.base, proposal, raw_gate_report=gate)
+        eos = reconstruction.build_windowed_eos(
+            self.base, proposal, raw_gate_report=gate
+        )
         self.assertTrue(np.array_equal(eos.pressure, self.base.pressure))
         self.assertTrue(np.array_equal(eos.cs2, self.base.cs2))
         self.assertTrue(np.array_equal(eos.baryon_density, self.base.baryon_density))
@@ -187,7 +194,7 @@ class WindowedDeformationTests(unittest.TestCase):
         proposal = deformation.BSk24WindowedDeformation(
             "a0-extreme-geometry", 0.0, 200.0, 50.0, 1.0e-11
         )
-        gate, _, _ = deformation.raw_local_physics_gate(
+        gate, _, _ = assessment.raw_local_physics_gate(
             self.base,
             proposal,
             dense_lower_points=17,
@@ -202,7 +209,7 @@ class WindowedDeformationTests(unittest.TestCase):
             0,
             gate["continuous_resolution_certificate"]["added_point_count"],
         )
-        eos = deformation.build_windowed_eos(
+        eos = reconstruction.build_windowed_eos(
             self.base,
             proposal,
             raw_gate_report=gate,
@@ -210,15 +217,56 @@ class WindowedDeformationTests(unittest.TestCase):
         self.assertTrue(np.array_equal(eos.epsilon, self.base.epsilon))
         self.assertTrue(np.array_equal(eos.pressure, self.base.pressure))
         self.assertTrue(np.array_equal(eos.cs2, self.base.cs2))
-        self.assertTrue(
-            np.array_equal(eos.baryon_density, self.base.baryon_density)
-        )
+        self.assertTrue(np.array_equal(eos.baryon_density, self.base.baryon_density))
+
+    def test_retained_boundary_survives_scalar_vector_rounding_difference(self) -> None:
+        original = baseline.BSk24AnalyticEos.published_fit_pressure_from_mass_density
+
+        def scalar_rounding(model, density):
+            value = original(model, density)
+            # Model a one-ULP scalar/vector kernel difference, independent of CPU.
+            return np.nextafter(value, math.inf) if np.ndim(density) == 0 else value
+
+        for matter_model in ("bsk24", "bsk25"):
+            base = reconstruction.build_consistent_baseline(
+                reconstruction.BSk24GridSettings(lower_points=129, upper_points=257),
+                eos=baseline.make_baseline_eos(matter_model),
+            )
+            with patch.object(
+                baseline.BSk24AnalyticEos,
+                "published_fit_pressure_from_mass_density",
+                new=scalar_rounding,
+            ):
+                for amplitude in (0.0, -0.01, 0.01):
+                    with self.subTest(matter_model=matter_model, amplitude=amplitude):
+                        proposal = deformation.BSk24WindowedDeformation(
+                            "rounding-boundary", amplitude, 200.0, 50.0, 40.0
+                        )
+                        gate, _, _ = assessment.raw_local_physics_gate(base, proposal)
+                        self.assertEqual("accepted_raw_local_physics_gate", gate["status"])
+                        eos = reconstruction.build_windowed_eos(
+                            base, proposal, raw_gate_report=gate
+                        )
+                        retained = gate["retained_domain"]
+                        self.assertEqual(retained["pressure_max_mev_fm3"], eos.pressure[-1])
+                        self.assertEqual(retained["cs2_at_endpoint"], eos.cs2[-1])
+                        self.assertEqual(
+                            "accepted_full_domain_thermodynamic_gate"
+                            if amplitude == 0.0
+                            else "accepted_selected_domain_thermodynamic_gate",
+                            diagnostics.full_domain_thermodynamic_admissibility(
+                                base, eos, raw_gate_report=gate
+                            )["status"],
+                        )
+                        if amplitude == 0.0:
+                            np.testing.assert_array_equal(eos.pressure, base.pressure)
+                            np.testing.assert_array_equal(eos.cs2, base.cs2)
 
     def test_supplied_direct_gate_cannot_forge_an_arbitrary_truncation(self) -> None:
         proposal = deformation.BSk24WindowedDeformation(
             "forged-direct-endpoint", 0.0, 200.0, 50.0, 40.0
         )
-        gate, _, _ = deformation.raw_local_physics_gate(
+        gate, _, _ = assessment.raw_local_physics_gate(
             self.base,
             proposal,
             dense_lower_points=257,
@@ -235,7 +283,7 @@ class WindowedDeformationTests(unittest.TestCase):
             ValueError,
             "raw-gate retained endpoint",
         ):
-            deformation.build_windowed_eos(
+            reconstruction.build_windowed_eos(
                 self.base,
                 proposal,
                 raw_gate_report=forged,
@@ -245,7 +293,7 @@ class WindowedDeformationTests(unittest.TestCase):
         proposal = deformation.BSk24WindowedDeformation(
             "forged-subcausal-crossing", 0.05, 200.0, 50.0, 40.0
         )
-        gate, _, _ = deformation.raw_local_physics_gate(
+        gate, _, _ = assessment.raw_local_physics_gate(
             self.base,
             proposal,
             dense_lower_points=257,
@@ -254,19 +302,15 @@ class WindowedDeformationTests(unittest.TestCase):
         forged = json.loads(json.dumps(gate))
         endpoint = 400.0
         endpoint_pressure = float(
-            deformation._windowed_pressure(
-                np.asarray([endpoint]), self.base, proposal
-            )[0]
+            deformation._windowed_pressure(np.asarray([endpoint]), self.base, proposal)[
+                0
+            ]
         )
         endpoint_cs2 = float(
-            deformation._windowed_cs2(
-                np.asarray([endpoint]), self.base, proposal
-            )[0]
+            deformation._windowed_cs2(np.asarray([endpoint]), self.base, proposal)[0]
         )
         forged["full_retained_domain_passed"] = False
-        forged[
-            "complete_raw_proposal_causal_through_direct_endpoint"
-        ] = False
+        forged["complete_raw_proposal_causal_through_direct_endpoint"] = False
         forged["retained_domain"].update(
             {
                 "endpoint_reason": "first_continuous_causal_crossing",
@@ -291,7 +335,7 @@ class WindowedDeformationTests(unittest.TestCase):
             ValueError,
             "raw-gate endpoint and first-crossing evidence disagree",
         ):
-            deformation.build_windowed_eos(
+            reconstruction.build_windowed_eos(
                 self.base,
                 proposal,
                 raw_gate_report=forged,
@@ -308,20 +352,16 @@ class WindowedDeformationTests(unittest.TestCase):
             2.0,
             40.0,
         )
-        subcausal_gate, _, _ = deformation.raw_local_physics_gate(
+        subcausal_gate, _, _ = assessment.raw_local_physics_gate(
             self.base,
             subcausal,
             dense_lower_points=257,
             dense_upper_points=513,
         )
-        self.assertEqual(
-            "unresolved_raw_local_physics_gate", subcausal_gate["status"]
-        )
+        self.assertEqual("unresolved_raw_local_physics_gate", subcausal_gate["status"])
         self.assertEqual(
             "unresolved_near_tangential_causal_contact",
-            subcausal_gate["retained_domain"]["first_causal_crossing"][
-                "status"
-            ],
+            subcausal_gate["retained_domain"]["first_causal_crossing"]["status"],
         )
 
         superluminal = deformation.BSk24WindowedDeformation(
@@ -331,18 +371,14 @@ class WindowedDeformationTests(unittest.TestCase):
             2.0,
             40.0,
         )
-        superluminal_gate, _, _ = deformation.raw_local_physics_gate(
+        superluminal_gate, _, _ = assessment.raw_local_physics_gate(
             self.base,
             superluminal,
             dense_lower_points=257,
             dense_upper_points=513,
         )
-        crossing = superluminal_gate["retained_domain"][
-            "first_causal_crossing"
-        ]
-        self.assertEqual(
-            "accepted_raw_local_physics_gate", superluminal_gate["status"]
-        )
+        crossing = superluminal_gate["retained_domain"]["first_causal_crossing"]
+        self.assertEqual("accepted_raw_local_physics_gate", superluminal_gate["status"])
         self.assertEqual(
             "brentq_estimate_plus_causal_side_float_refinement",
             crossing["refinement_method"],
@@ -355,19 +391,22 @@ class WindowedDeformationTests(unittest.TestCase):
             "positive", 0.05, 200.0, 50.0, 40.0
         )
         for epsilon in (self.anchor + 0.1, self.anchor + 20.0, 200.0, 400.0):
-            expected = proposal.amplitude * quad(
-                lambda value: float(
-                    deformation.windowed_gaussian_shape(
-                        value,
-                        proposal,
-                        epsilon_t_mev_fm3=self.anchor,
-                    )
-                ),
-                self.anchor,
-                epsilon,
-                epsabs=1.0e-13,
-                epsrel=1.0e-13,
-            )[0]
+            expected = (
+                proposal.amplitude
+                * quad(
+                    lambda value: float(
+                        deformation.windowed_gaussian_shape(
+                            value,
+                            proposal,
+                            epsilon_t_mev_fm3=self.anchor,
+                        )
+                    ),
+                    self.anchor,
+                    epsilon,
+                    epsabs=1.0e-13,
+                    epsrel=1.0e-13,
+                )[0]
+            )
             observed = deformation.windowed_gaussian_pressure_primitive(
                 epsilon,
                 proposal,
@@ -379,7 +418,7 @@ class WindowedDeformationTests(unittest.TestCase):
         proposal = deformation.BSk24WindowedDeformation(
             "invalid", -1.0, 200.0, 50.0, 40.0
         )
-        gate, _, _ = deformation.raw_local_physics_gate(
+        gate, _, _ = assessment.raw_local_physics_gate(
             self.base,
             proposal,
             dense_lower_points=1025,
@@ -388,13 +427,13 @@ class WindowedDeformationTests(unittest.TestCase):
         self.assertEqual("rejected_raw_local_physics_gate", gate["status"])
         self.assertEqual("none", gate["clipping_clamping_smoothing_repair"])
         with self.assertRaises(reconstruction.BSk24MechanicalStabilityError):
-            deformation.build_windowed_eos(self.base, proposal, raw_gate_report=gate)
+            reconstruction.build_windowed_eos(self.base, proposal, raw_gate_report=gate)
 
     def test_first_continuous_causal_crossing_is_accepted_and_consumed(self) -> None:
         proposal = deformation.BSk24WindowedDeformation(
             "early-causal", 1.0, 300.0, 2.0, 40.0
         )
-        gate, raw_epsilon, raw_cs2 = deformation.raw_local_physics_gate(
+        gate, raw_epsilon, raw_cs2 = assessment.raw_local_physics_gate(
             self.base,
             proposal,
             dense_lower_points=257,
@@ -408,9 +447,7 @@ class WindowedDeformationTests(unittest.TestCase):
             "first_continuous_causal_crossing",
             retained["endpoint_reason"],
         )
-        self.assertTrue(
-            retained["later_return_below_one_outside_usable_branch"]
-        )
+        self.assertTrue(retained["later_return_below_one_outside_usable_branch"])
         endpoint = retained["epsilon_max_mev_fm3"]
         self.assertLess(endpoint, proposal.epsilon0_mev_fm3)
         self.assertEqual(
@@ -420,7 +457,7 @@ class WindowedDeformationTests(unittest.TestCase):
         self.assertTrue(np.any(raw_epsilon > endpoint))
         self.assertTrue(np.any(raw_cs2[raw_epsilon > endpoint] < 1.0))
 
-        eos = deformation.build_windowed_eos(
+        eos = reconstruction.build_windowed_eos(
             self.base, proposal, raw_gate_report=gate
         )
         self.assertEqual(endpoint, eos.epsilon[-1])
@@ -430,8 +467,9 @@ class WindowedDeformationTests(unittest.TestCase):
             eos.diagnostics["causal_domain"]["endpoint_reason"],
         )
         self.assertTrue(
-            eos.diagnostics["causal_domain"]
-            ["raw_gate_endpoint_consumed_without_rediscovery"]
+            eos.diagnostics["causal_domain"][
+                "raw_gate_endpoint_consumed_without_rediscovery"
+            ]
         )
         self.assertLessEqual(eos.cs2[-1], 1.0)
         self.assertLess(abs(eos.cs2[-1] - 1.0), 1.0e-10)
@@ -446,7 +484,7 @@ class WindowedDeformationTests(unittest.TestCase):
                 crossing["representable_bracket_width_mev_fm3"],
                 crossing["governed_root_tolerance_mev_fm3"],
             )
-        admissibility = deformation.full_domain_thermodynamic_admissibility(
+        admissibility = diagnostics.full_domain_thermodynamic_admissibility(
             self.base,
             eos,
             raw_gate_report=gate,
@@ -468,30 +506,24 @@ class WindowedDeformationTests(unittest.TestCase):
             admissibility["complete_raw_domain_mev_fm3"][-1],
         )
         self.assertTrue(
-            admissibility["independent_checks"]
-            ["complete_raw_evidence_retained"]
+            admissibility["independent_checks"]["complete_raw_evidence_retained"]
         )
         self.assertTrue(
-            admissibility["independent_checks"]
-            ["selected_retained_domain_matches_raw_gate"]
+            admissibility["independent_checks"][
+                "selected_retained_domain_matches_raw_gate"
+            ]
         )
         self.assertEqual(
             "accepted_selected_domain_thermodynamic_gate",
-            eos.diagnostics[
-                "retained_domain_thermodynamic_admissibility"
-            ]["status"],
+            eos.diagnostics["retained_domain_thermodynamic_admissibility"]["status"],
         )
 
     def test_geometry_refinement_finds_narrow_between_node_island_and_pocket(
         self,
     ) -> None:
         left = self.base.anchor_index + 100
-        center = float(
-            0.5 * (self.base.epsilon[left] + self.base.epsilon[left + 1])
-        )
-        ordinary_spacing = float(
-            self.base.epsilon[left + 1] - self.base.epsilon[left]
-        )
+        center = float(0.5 * (self.base.epsilon[left] + self.base.epsilon[left + 1]))
+        ordinary_spacing = float(self.base.epsilon[left + 1] - self.base.epsilon[left])
         sigma = ordinary_spacing / 64.0
         self.assertLess(8.0 * sigma, ordinary_spacing)
 
@@ -506,17 +538,15 @@ class WindowedDeformationTests(unittest.TestCase):
             )
         )
         self.assertLessEqual(float(np.max(ordinary_positive)), 1.0)
-        positive_gate, _, _ = deformation.raw_local_physics_gate(
+        positive_gate, _, _ = assessment.raw_local_physics_gate(
             self.base,
             positive,
             dense_lower_points=129,
             dense_upper_points=257,
         )
-        self.assertEqual(
-            "accepted_raw_local_physics_gate", positive_gate["status"]
-        )
+        self.assertEqual("accepted_raw_local_physics_gate", positive_gate["status"])
         self.assertGreater(positive_gate["raw_maximum_cs2"], 1.0)
-        positive_eos = deformation.build_windowed_eos(
+        positive_eos = reconstruction.build_windowed_eos(
             self.base, positive, raw_gate_report=positive_gate
         )
         analytical = positive_eos.diagnostics["tabulation_resolution"][
@@ -536,15 +566,13 @@ class WindowedDeformationTests(unittest.TestCase):
             )
         )
         self.assertGreater(float(np.min(ordinary_negative)), 0.0)
-        negative_gate, _, _ = deformation.raw_local_physics_gate(
+        negative_gate, _, _ = assessment.raw_local_physics_gate(
             self.base,
             negative,
             dense_lower_points=129,
             dense_upper_points=257,
         )
-        self.assertEqual(
-            "rejected_raw_local_physics_gate", negative_gate["status"]
-        )
+        self.assertEqual("rejected_raw_local_physics_gate", negative_gate["status"])
         self.assertLess(negative_gate["raw_minimum_cs2"], 0.0)
         self.assertEqual(
             "mechanical_stability_nonpositive_cs2",
@@ -564,7 +592,7 @@ class WindowedDeformationTests(unittest.TestCase):
             proposal = deformation.BSk24WindowedDeformation(
                 f"overlap-{center}", 0.01, center, 10.0, 40.0
             )
-            gate, _, _ = deformation.raw_local_physics_gate(
+            gate, _, _ = assessment.raw_local_physics_gate(
                 self.base,
                 proposal,
                 dense_lower_points=513,
@@ -583,15 +611,13 @@ class WindowedDeformationTests(unittest.TestCase):
         no_support = deformation.BSk24WindowedDeformation(
             "no-support", 0.01, 50.0, 10.0, 40.0
         )
-        no_support_gate, _, _ = deformation.raw_local_physics_gate(
+        no_support_gate, _, _ = assessment.raw_local_physics_gate(
             self.base,
             no_support,
             dense_lower_points=129,
             dense_upper_points=257,
         )
-        self.assertEqual(
-            "unresolved_raw_local_physics_gate", no_support_gate["status"]
-        )
+        self.assertEqual("unresolved_raw_local_physics_gate", no_support_gate["status"])
         json.dumps(no_support_gate, allow_nan=False)
         with self.assertRaisesRegex(ValueError, "no meaningful in-domain support"):
             BSk24TrialConfig(
@@ -605,7 +631,7 @@ class WindowedDeformationTests(unittest.TestCase):
         sigma = 1.0e-3
         center = self.anchor - 2.0 * sigma
         delta = 40.0
-        bounds = deformation.calculate_windowed_amplitude_bounds(
+        bounds = assessment.calculate_windowed_amplitude_bounds(
             self.base,
             epsilon0_mev_fm3=center,
             sigma_mev_fm3=sigma,
@@ -666,7 +692,7 @@ class WindowedDeformationTests(unittest.TestCase):
         proposal = deformation.BSk24WindowedDeformation(
             "raw-pressure", 0.05, 200.0, 50.0, 40.0
         )
-        gate, epsilon, raw_cs2 = deformation.raw_local_physics_gate(
+        gate, epsilon, raw_cs2 = assessment.raw_local_physics_gate(
             self.base,
             proposal,
             dense_lower_points=129,
@@ -702,7 +728,7 @@ class WindowedDeformationTests(unittest.TestCase):
             69.87981314665237,
             1.0718924105447882,
         )
-        gate, epsilon, raw_cs2 = deformation.raw_local_physics_gate(
+        gate, epsilon, raw_cs2 = assessment.raw_local_physics_gate(
             self.base,
             proposal,
             dense_lower_points=17,
@@ -736,10 +762,8 @@ class WindowedDeformationTests(unittest.TestCase):
             float(np.min(np.diff(frame["raw_pressure_mev_fm3"]))),
             0.0,
         )
-        with self.assertRaises(
-            reconstruction.BSk24MechanicalStabilityError
-        ) as caught:
-            deformation.build_windowed_eos(
+        with self.assertRaises(reconstruction.BSk24MechanicalStabilityError) as caught:
+            reconstruction.build_windowed_eos(
                 self.base,
                 proposal,
                 raw_gate_report=gate,
@@ -759,7 +783,7 @@ class WindowedDeformationTests(unittest.TestCase):
             137.64908205163843,
             0.1349739042127701,
         )
-        gate, _, _ = deformation.raw_local_physics_gate(
+        gate, _, _ = assessment.raw_local_physics_gate(
             self.base,
             proposal,
             dense_lower_points=17,
@@ -780,13 +804,9 @@ class WindowedDeformationTests(unittest.TestCase):
             comparison["maximum_absolute_error"],
             comparison["maximum_allowed_absolute_error"],
         )
-        self.assertFalse(
-            comparison["pressure_or_cs2_values_modified"]
-        )
-        with self.assertRaises(
-            reconstruction.BSk24MechanicalStabilityError
-        ) as caught:
-            deformation.build_windowed_eos(
+        self.assertFalse(comparison["pressure_or_cs2_values_modified"])
+        with self.assertRaises(reconstruction.BSk24MechanicalStabilityError) as caught:
+            reconstruction.build_windowed_eos(
                 self.base,
                 proposal,
                 raw_gate_report=gate,
@@ -802,7 +822,7 @@ class WindowedDeformationTests(unittest.TestCase):
         proposal = deformation.BSk24WindowedDeformation(
             "retained-resolution", 100.0, 300.0, 2.0, 40.0
         )
-        gate, _, _ = deformation.raw_local_physics_gate(
+        gate, _, _ = assessment.raw_local_physics_gate(
             self.base,
             proposal,
             dense_lower_points=257,
@@ -814,16 +834,12 @@ class WindowedDeformationTests(unittest.TestCase):
             "unresolved_retained_tabulation_resolution",
             gate["first_failure"]["reason"],
         )
-        self.assertEqual(
-            "unresolved_tabulation_resolution", certificate["status"]
-        )
+        self.assertEqual("unresolved_tabulation_resolution", certificate["status"])
         self.assertFalse(gate["retained_domain"]["resolution_certified"])
         self.assertFalse(certificate["reconstruction_performed"])
         self.assertFalse(certificate["stellar_work_performed"])
-        with self.assertRaises(
-            reconstruction.BSk24MechanicalStabilityError
-        ) as caught:
-            deformation.build_windowed_eos(
+        with self.assertRaises(reconstruction.BSk24MechanicalStabilityError) as caught:
+            reconstruction.build_windowed_eos(
                 self.base,
                 proposal,
                 raw_gate_report=gate,
@@ -837,7 +853,7 @@ class WindowedDeformationTests(unittest.TestCase):
         proposal = deformation.BSk24WindowedDeformation(
             "resolution", 0.05, 200.0, 50.0, 40.0
         )
-        gate, _, _ = deformation.raw_local_physics_gate(
+        gate, _, _ = assessment.raw_local_physics_gate(
             self.base,
             proposal,
             dense_lower_points=129,
@@ -849,15 +865,13 @@ class WindowedDeformationTests(unittest.TestCase):
         }
         with (
             patch.object(
-                deformation,
+                reconstruction,
                 "_retained_resolution_grid",
                 return_value=(self.base.epsilon.copy(), unresolved),
             ),
             self.assertRaises(reconstruction.BSk24MechanicalStabilityError) as caught,
         ):
-            deformation.build_windowed_eos(
-                self.base, proposal, raw_gate_report=gate
-            )
+            reconstruction.build_windowed_eos(self.base, proposal, raw_gate_report=gate)
         self.assertEqual(
             "unresolved_tabulation_resolution",
             caught.exception.diagnostics["status"],
@@ -866,20 +880,18 @@ class WindowedDeformationTests(unittest.TestCase):
 
         with (
             patch.object(
-                deformation.BSk24WindowedEos,
+                reconstruction.BSk24WindowedEos,
                 "energy_density_from_pressure",
                 return_value=np.asarray([math.nan]),
             ),
             patch.object(
-                deformation.BSk24WindowedEos,
+                reconstruction.BSk24WindowedEos,
                 "pressure_from_energy_density",
                 return_value=np.asarray([math.nan]),
             ),
             self.assertRaises(reconstruction.BSk24MechanicalStabilityError) as caught,
         ):
-            deformation.build_windowed_eos(
-                self.base, proposal, raw_gate_report=gate
-            )
+            reconstruction.build_windowed_eos(self.base, proposal, raw_gate_report=gate)
         self.assertEqual(
             "rejected_unusable_reconstruction_inversion",
             caught.exception.diagnostics["status"],
@@ -889,13 +901,13 @@ class WindowedDeformationTests(unittest.TestCase):
         proposal = deformation.BSk24WindowedDeformation(
             "finite-diagnostics", 0.05, 200.0, 50.0, 40.0
         )
-        gate, _, _ = deformation.raw_local_physics_gate(
+        gate, _, _ = assessment.raw_local_physics_gate(
             self.base,
             proposal,
             dense_lower_points=129,
             dense_upper_points=257,
         )
-        original = deformation._residual_arrays
+        original = reconstruction._residual_arrays
 
         def large_finite_residuals(*args: object, **kwargs: object):
             result = original(*args, **kwargs)
@@ -903,18 +915,17 @@ class WindowedDeformationTests(unittest.TestCase):
             return result
 
         with patch.object(
-            deformation,
+            reconstruction,
             "_residual_arrays",
             side_effect=large_finite_residuals,
         ):
-            eos = deformation.build_windowed_eos(
+            eos = reconstruction.build_windowed_eos(
                 self.base, proposal, raw_gate_report=gate
             )
         self.assertEqual(1.0e6, float(np.max(eos.residuals["r_c"])))
         self.assertEqual(
             "resolved_finite_monotone_nonextrapolating",
-            eos.diagnostics["tabulation_resolution"]
-            ["interpolation_inversion_status"],
+            eos.diagnostics["tabulation_resolution"]["interpolation_inversion_status"],
         )
 
     def test_signed_response_is_preserved_below_and_changes_above_anchor(self) -> None:
@@ -923,14 +934,16 @@ class WindowedDeformationTests(unittest.TestCase):
             proposal = deformation.BSk24WindowedDeformation(
                 str(amplitude), amplitude, 200.0, 50.0, 40.0
             )
-            gate, _, _ = deformation.raw_local_physics_gate(
+            gate, _, _ = assessment.raw_local_physics_gate(
                 self.base,
                 proposal,
                 dense_lower_points=1025,
                 dense_upper_points=4097,
             )
             results.append(
-                deformation.build_windowed_eos(self.base, proposal, raw_gate_report=gate)
+                reconstruction.build_windowed_eos(
+                    self.base, proposal, raw_gate_report=gate
+                )
             )
         for eos in results:
             self.assertTrue(
@@ -940,13 +953,9 @@ class WindowedDeformationTests(unittest.TestCase):
                 )
             )
         for eos, expected_sign in zip(results, (-1.0, 1.0)):
-            mask = (eos.epsilon > self.anchor) & (
-                eos.epsilon <= self.base.epsilon[-1]
-            )
+            mask = (eos.epsilon > self.anchor) & (eos.epsilon <= self.base.epsilon[-1])
             direct = np.asarray(
-                self.base.eos.pressure_from_energy_density(
-                    eos.epsilon[mask]
-                ),
+                self.base.eos.pressure_from_energy_density(eos.epsilon[mask]),
                 dtype=float,
             )
             response = eos.pressure[mask] - direct
@@ -959,7 +968,7 @@ class WindowedDeformationTests(unittest.TestCase):
         proposal = deformation.BSk24WindowedDeformation(
             "extended-negative", -0.08, 200.0, 150.0, 250.0
         )
-        gate, raw_epsilon, _ = deformation.raw_local_physics_gate(
+        gate, raw_epsilon, _ = assessment.raw_local_physics_gate(
             self.base,
             proposal,
             dense_lower_points=1025,
@@ -975,17 +984,13 @@ class WindowedDeformationTests(unittest.TestCase):
             "first_continuous_causal_crossing",
             retained["endpoint_reason"],
         )
-        self.assertGreater(
-            retained["epsilon_max_mev_fm3"], self.base.epsilon[-1]
-        )
-        eos = deformation.build_windowed_eos(
+        self.assertGreater(retained["epsilon_max_mev_fm3"], self.base.epsilon[-1])
+        eos = reconstruction.build_windowed_eos(
             self.base, proposal, raw_gate_report=gate
         )
         self.assertEqual(retained["epsilon_max_mev_fm3"], eos.epsilon[-1])
         self.assertLessEqual(eos.cs2[-1], 1.0)
-        frame = _thermodynamic_profile_frame(
-            self.base, {proposal.case_id: eos}
-        )
+        frame = _thermodynamic_profile_frame(self.base, {proposal.case_id: eos})
         extended = frame.loc[frame["case_id"] == proposal.case_id]
         self.assertTrue(
             np.isfinite(

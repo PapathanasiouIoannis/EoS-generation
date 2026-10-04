@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased — 2.0.0
+
+- Added analytical BSk25 selection with model-specific anchors/domains, distinct settings/case identities, saved provenance and plot labels.
+- Added an independent Decimal reference, source discrepancy record and bounded stellar validation; preserved BSk24 constants and identities.
+- Documented both model choices and anchor intervals beside the controls in the two-cell notebook.
+
+- Two-cell notebook with documented editable settings, complete option catalogues, explicit product summaries and saved diagnostic-table previews.
+- Richer saved-run selection, validation/source summaries and actionable plot-availability explanations.
+
+- Flat plans and sealed scientific data with one execution path and one baseline per stage.
+- Explicit observable requests, optional saved-data figures and source archives.
+- Read-only validation separates integrity from source equivalence; explicit v1 import retains historical evidence.
+- Consolidated scientific modules and one small passive notebook; removed duplicated reporting/export routes.
+- Scientific equations, numerical profile values and immutable reference fixtures retained.
+- One notebook settings cell with explicit plan/execute/load actions, unique new-run destinations and repeat-execution loading.
+- Automatic saved-data plot selection, readable names, geometry/mass/stage filters, explicit availability and verified image reuse/versioning.
+- Runtime diagnostics and an isolated plot-renderer probe to catch native-library startup failures.
+
+
 All notable changes to the supported package are recorded here.
 
 ## Unreleased

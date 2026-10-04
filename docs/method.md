@@ -2,9 +2,12 @@
 
 ## Baselines and conventions
 
-The supported baseline is the analytical representation of the unified cold
-BSk24 neutron-star equation of state. The optional `matter_model` field may
-only name `"bsk24"`; omission is the canonical form.
+The supported baselines are the analytical representations of the unified cold
+BSk24 and BSk25 neutron-star equations of state. Select `matter_model="bsk24"`
+(default) or `"bsk25"`. Omission remains canonical for BSk24 so its existing
+settings hashes and case IDs are preserved. BSk25 is explicitly recorded in
+settings, identities and results. See [BSk25 validation](bsk25-validation.md)
+for its independent references and source discrepancies.
 
 The independent variable used by the deformation workflow is total energy
 density, including rest-mass energy, in MeV fm^-3. Pressure
@@ -16,9 +19,9 @@ c_s^2 = dP/dε
 
 is dimensionless in units with `c = 1`.
 
-The direct BSk24 control retains its declared causal domain. For a nonzero
+The direct control for each model retains its declared causal domain. For a nonzero
 deformation, the raw analytical proposal is assessed through the documented
-upper domain of the published BSk24 fit (`rho = 10^16 g cm^-3`). This is not
+upper domain of the selected published fit (`rho = 10^16 g cm^-3`). This is not
 an extrapolation or a causal repair: the published C4 expression and its
 analytical derivative are evaluated unchanged, and causality is applied to
 the combined deformed sound speed. The implementation does not extrapolate
@@ -47,7 +50,11 @@ This quintic smootherstep has continuous first and second derivatives at
 both endpoints. It introduces the deformation smoothly above the anchor
 without a corner in `c_s^2` at activation.
 
-The anchor is the retained numeric BSk24 value or `standard`. Every requested
+The anchor is a valid numeric energy density or `standard` for the selected model.
+`standard` uses n_B=0.16 fm^-3: epsilon=152.4912472062717 for BSk24 and
+152.41651525155257 for BSk25. Numeric anchors must be strictly between that
+model's homogeneous-core entry and retained causal endpoint; see the notebook
+notes for both intervals. Every requested
 geometry must use the applicable retained anchor and positive geometry scales:
 
 ```text
@@ -128,14 +135,14 @@ dP/dε <= 1,
 with equality allowed at the included endpoint.
 
 When the combined proposal reaches `c_s^2 = 1`, the first continuously
-resolved crossing defines the case-specific BSk24 endpoint and is included in
-the retained branch. A proposal may reach it before or after the direct BSk24
+resolved crossing defines the case-specific endpoint and is included in
+the retained branch. A proposal may reach it before or after the selected direct
 endpoint without being rejected solely for that domain change. A sufficiently
 softened proposal can instead remain causal through the governed upper end of
 the published fit; its retained endpoint records
-`published_bsk24_fit_endpoint`. Values after a first crossing are outside the
+`published_bsk24_fit_endpoint` or `published_bsk25_fit_endpoint`. Values after a first crossing are outside the
 usable branch even if the raw proposal later returns below one. The complete
-raw BSk24 proposal remains saved as evidence.
+raw proposal for the selected model remains saved as evidence.
 
 Failed values are never clipped, replaced, extrapolated, or relabelled as
 accepted. A rejected or unresolved case retains its raw result and exact
@@ -178,3 +185,13 @@ result records them. Choosing a profile changes numerical effort, not the
 physical definition of the deformation. `quick` is exploratory;
 publication-level claims require reviewed convergence and independent
 scientific support.
+
+
+## V2 storage and products
+
+The scientific routines and numerical profile values above are retained. The
+public planner now expands one flat run and builds each baseline stage once per
+study. Requested observables, diagnostics and figures are separate from numerical
+precision. Historical curve-profile defaults remain available; all accepted saved
+EoS tables include the full effective one-fluid state. See `data.md` for the
+versioned output and migration contract.

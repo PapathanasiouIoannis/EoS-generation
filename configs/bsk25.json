@@ -1,0 +1,18 @@
+{
+  "$schema": "https://raw.githubusercontent.com/PapathanasiouIoannis/EoS-generation/main/configs/schema.json",
+  "amplitudes": [
+    0.0,
+    0.01
+  ],
+  "epsilon_match": "standard",
+  "center": 200.0,
+  "width": 50.0,
+  "ramp_width": 40.0,
+  "calculation": "thermodynamics",
+  "precision": "quick",
+  "fixed_masses": [
+    1.4
+  ],
+  "diagnostics": "off",
+  "matter_model": "bsk25"
+}

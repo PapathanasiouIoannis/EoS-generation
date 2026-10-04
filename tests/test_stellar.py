@@ -1,4 +1,11 @@
 from __future__ import annotations
+from eos_generation.stellar import (
+    _build_sequence_evidence,
+    _sampled_mass_secants,
+    refine_maximum_mass_from_sequence,
+    resolve_maximum_mass,
+    solve_sequence,
+)
 
 import math
 from dataclasses import replace
@@ -6,14 +13,13 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from eos_generation._internal.config import DEFAULT_CONFIG
-from eos_generation.stellar.discontinuities import (
+from eos_generation.numerics import DEFAULT_CONFIG
+from eos_generation.tov import (
     EosDiscontinuity,
     validate_discontinuity_sequence,
 )
-from eos_generation.stellar.tov import (
+from eos_generation.tov import (
     love_number_k2,
-    solve_sequence,
     solve_star,
     tidal_jump_delta_y,
 )
@@ -55,7 +61,7 @@ class StellarContracts(unittest.TestCase):
             grid_pressure_min_log=1.0,
         )
         with patch(
-            "eos_generation.stellar._tov_sequence.solve_star",
+            "eos_generation.stellar.solve_star",
             side_effect=fake_star,
         ):
             evidence = solve_sequence(
@@ -69,7 +75,10 @@ class StellarContracts(unittest.TestCase):
         self.assertEqual([False] * 5, observed_retain_flags)
         self.assertEqual(5, len(evidence.full_sequence))
         self.assertTrue(
-            all(radius == () and mass == () for radius, mass in evidence.full_dense_profiles)
+            all(
+                radius == () and mass == ()
+                for radius, mass in evidence.full_dense_profiles
+            )
         )
 
     def test_newtonian_n1_polytrope_weak_field_limit(self) -> None:
@@ -85,9 +94,7 @@ class StellarContracts(unittest.TestCase):
         )
         length = DEFAULT_CONFIG.units.solar_mass_length_km
         gravity = DEFAULT_CONFIG.units.gravity_conversion
-        expected_radius = math.pi * math.sqrt(
-            2.0 * k_value / (length * gravity)
-        )
+        expected_radius = math.pi * math.sqrt(2.0 * k_value / (length * gravity))
         expected_mass = (
             math.pi
             * gravity
@@ -138,7 +145,9 @@ class StellarContracts(unittest.TestCase):
             outer_energy_density=210.0,
             provenance="synthetic contract",
         )
-        self.assertEqual((inner, outer), validate_discontinuity_sequence((inner, outer)))
+        self.assertEqual(
+            (inner, outer), validate_discontinuity_sequence((inner, outer))
+        )
         with self.assertRaises(ValueError):
             validate_discontinuity_sequence((outer, inner))
 

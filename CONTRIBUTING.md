@@ -56,7 +56,7 @@ command from outside the checkout:
 ```powershell
 python -m pip install build
 python -m build --wheel
-python -m pip install --force-reinstall dist/eos_generation-1.2.0-py3-none-any.whl
+python -m pip install --force-reinstall dist/eos_generation-2.0.0-py3-none-any.whl
 bsk24-trial --help
 ```
 
@@ -66,7 +66,7 @@ merely to inspect imports, documentation, packaging, or notebook passivity.
 ## Configuration and provenance
 
 The public JSON fields are governed by [`configs/schema.json`](configs/schema.json)
-and explained in [`docs/parameters.md`](docs/parameters.md). Named precision
+and explained in [`docs/data.md`](docs/data.md). Named precision
 profiles expand to immutable internal numerical settings. Change those
 profiles only as a scientific change, and retain the expanded settings in the
 saved result.

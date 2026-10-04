@@ -1,4 +1,11 @@
 from __future__ import annotations
+from eos_generation.stellar import (
+    _build_sequence_evidence,
+    _sampled_mass_secants,
+    refine_maximum_mass_from_sequence,
+    resolve_maximum_mass,
+    solve_sequence,
+)
 
 import json
 import math
@@ -11,23 +18,20 @@ from unittest.mock import Mock, patch
 import numpy as np
 import pandas as pd
 
-from eos_generation._internal import lifecycle as internal_lifecycle
-from eos_generation._internal import stellar as internal_stellar
-from eos_generation._internal import summary as internal_summary
-from eos_generation._internal.execution import RunCallbacks, run_bsk24_trial
-from eos_generation._internal.planning import (
+from eos_generation import stellar as internal_stellar
+from eos_generation.numerics import (
     BSk24TOVStage,
     BSk24ThermodynamicStage,
     BSk24TrialConfig,
 )
-from eos_generation.bsk24 import deformation, reconstruction
-from eos_generation.stellar.tov import (
+from eos_generation import (
+    deformation,
+    thermodynamics as reconstruction,
+    assessment,
+    diagnostics,
+)
+from eos_generation.tov import (
     LAMBDA_FRAMEWORK_CAPABILITY,
-    _build_sequence_evidence,
-    _sampled_mass_secants,
-    refine_maximum_mass_from_sequence,
-    resolve_maximum_mass,
-    solve_sequence,
 )
 
 
@@ -49,7 +53,7 @@ class EffectiveReconstructionContracts(unittest.TestCase):
             50.0,
             40.0,
         )
-        raw_gate, _, _ = deformation.raw_local_physics_gate(
+        raw_gate, _, _ = assessment.raw_local_physics_gate(
             self.baseline,
             proposal,
             dense_lower_points=257,
@@ -58,7 +62,7 @@ class EffectiveReconstructionContracts(unittest.TestCase):
         self.assertEqual("accepted_raw_local_physics_gate", raw_gate["status"])
         self.assertFalse(raw_gate["full_retained_domain_passed"])
 
-        eos = deformation.build_windowed_eos(
+        eos = reconstruction.build_windowed_eos(
             self.baseline,
             proposal,
             raw_gate_report=raw_gate,
@@ -70,9 +74,7 @@ class EffectiveReconstructionContracts(unittest.TestCase):
             eos.diagnostics["retained_domain_thermodynamic_admissibility"]["status"],
         )
 
-        pressure_from_euler = (
-            eos.baryon_density * eos.chemical_potential - eos.epsilon
-        )
+        pressure_from_euler = eos.baryon_density * eos.chemical_potential - eos.epsilon
         mu_from_euler = (eos.epsilon + eos.pressure) / eos.baryon_density
         np.testing.assert_allclose(
             eos.pressure,
@@ -139,9 +141,7 @@ class StellarDecisionContracts(unittest.TestCase):
             pressure: float,
             **kwargs: object,
         ) -> SimpleNamespace:
-            solver_calls.append(
-                (float(pressure), bool(kwargs.get("calculate_tidal")))
-            )
+            solver_calls.append((float(pressure), bool(kwargs.get("calculate_tidal"))))
             return self._fixed_mass_star(float(pressure))
 
         with patch.object(
@@ -217,7 +217,7 @@ class StellarDecisionContracts(unittest.TestCase):
         eos = SimpleNamespace(pressure_min_mev_fm3=1.0e-9)
         settings = internal_stellar._tov_settings(eos, config, stage)
         with patch(
-            "eos_generation.stellar._tov_sequence.solve_star",
+            "eos_generation.stellar.solve_star",
             side_effect=AssertionError("solver must not run"),
         ) as forbidden_solver:
             evidence = solve_sequence(
@@ -297,7 +297,7 @@ class StellarDecisionContracts(unittest.TestCase):
             nfev=1,
         )
         with patch(
-            "eos_generation.stellar._tov_maximum.minimize_scalar",
+            "eos_generation.stellar.minimize_scalar",
             return_value=displaced_optimizer,
         ):
             retained_sample = refine_maximum_mass_from_sequence(
@@ -349,534 +349,7 @@ class StellarDecisionContracts(unittest.TestCase):
         )
         self.assertIsNone(unresolved.maximum_mass_msun)
         self.assertIsNone(unresolved.passes_maximum_mass_threshold)
-        self.assertIsNone(
-            unresolved.to_dict()["passes_maximum_mass_threshold"]
-        )
+        self.assertIsNone(unresolved.to_dict()["passes_maximum_mass_threshold"])
         self.assertEqual(1.8, max(row[1] for row in unresolved.sampled_models))
         self.assertFalse(unresolved.to_dict()["sampled_argmax_is_maximum_mass"])
         forbidden_solver.assert_not_called()
-
-
-class LifecycleAvailabilityContracts(unittest.TestCase):
-    def test_fixed_mass_success_remains_student_eligible_when_mmax_unavailable(
-        self,
-    ) -> None:
-        stage = BSk24TOVStage("reporting", 5, 1.0e-8, 1.0e-10, 3)
-        config = BSk24TrialConfig(
-            amplitudes=(0.0, 0.2),
-            fixed_masses_msun=(1.4,),
-            tov_stages=(stage,),
-            stellar_enabled=True,
-        )
-        case_table = pd.DataFrame(
-            (
-                {
-                    "case_id": "early-causal",
-                    "amplitude": 0.2,
-                    "epsilon0_mev_fm3": 200.0,
-                    "sigma_mev_fm3": 50.0,
-                    "delta_mev_fm3": 40.0,
-                },
-                {
-                    "case_id": "unresolved-case",
-                    "amplitude": -1.0,
-                    "epsilon0_mev_fm3": 200.0,
-                    "sigma_mev_fm3": 50.0,
-                    "delta_mev_fm3": 40.0,
-                },
-            )
-        )
-        plan = SimpleNamespace(config=config, case_table=case_table)
-        gate_reports = {
-            "early-causal": {
-                "status": "accepted_raw_local_physics_gate",
-                "complete_raw_proposal_causal_through_direct_endpoint": False,
-                "retained_domain": {
-                    "endpoint_reason": "first_continuous_causal_crossing",
-                    "epsilon_max_mev_fm3": 600.0,
-                    "pressure_max_mev_fm3": 250.0,
-                },
-                "first_failure": None,
-            },
-            "unresolved-case": {
-                "status": "unresolved_raw_local_physics_gate",
-                "complete_raw_proposal_causal_through_direct_endpoint": False,
-                "retained_domain": {
-                    "endpoint_reason": (
-                        "unavailable_unresolved_continuous_assessment"
-                    ),
-                    "epsilon_max_mev_fm3": None,
-                    "pressure_max_mev_fm3": None,
-                },
-                "first_failure": {"reason": "synthetic_unresolved"},
-            },
-        }
-        fixed = pd.DataFrame(
-            (
-                {
-                    "case_id": "early-causal",
-                    "stage": stage.name,
-                    "target_mass_msun": 1.4,
-                    "status": "bracketed_and_solved",
-                },
-            )
-        )
-        maximum = pd.DataFrame(
-            (
-                {
-                    "case_id": "early-causal",
-                    "stage": stage.name,
-                    "maximum_mass_availability_status": (
-                        "unavailable_unresolved_no_turning_point_before_eos_endpoint"
-                    ),
-                },
-            )
-        )
-
-        ledger = internal_lifecycle._case_lifecycle_ledger(
-            plan,
-            accepted_case_ids=("early-causal",),
-            gate_reports=gate_reports,
-            completed_stellar_case_ids={"early-causal"},
-            fixed_mass_rows=fixed,
-            maximum_mass_rows=maximum,
-        ).set_index("case_id")
-
-        accepted = ledger.loc["early-causal"]
-        self.assertEqual(
-            "through_first_continuous_causal_crossing",
-            accepted["acceptance_domain"],
-        )
-        self.assertEqual(
-            "assessed_noncausal_beyond_first_retained_crossing",
-            accepted["full_domain_gate_status"],
-        )
-        self.assertEqual(
-            "accepted_selected_retained_domain",
-            accepted["selected_domain_status"],
-        )
-        self.assertEqual(
-            "all_requested_fixed_masses_succeeded",
-            accepted["requested_fixed_masses_status"],
-        )
-        self.assertEqual(
-            "unavailable_unresolved_no_turning_point_before_eos_endpoint",
-            accepted["maximum_mass_availability_status"],
-        )
-        self.assertEqual(
-            "eligible_all_requested_fixed_masses_succeeded",
-            accepted["student_view_eligibility_status"],
-        )
-        self.assertEqual(600.0, accepted["retained_epsilon_max_mev_fm3"])
-        rejected = ledger.loc["unresolved-case"]
-        self.assertEqual("rejected", rejected["status"])
-        self.assertEqual("none", rejected["acceptance_domain"])
-        self.assertEqual(
-            "assessed_unresolved", rejected["full_domain_gate_status"]
-        )
-        self.assertEqual(
-            "unresolved_no_selected_retained_domain",
-            rejected["selected_domain_status"],
-        )
-        self.assertEqual(
-            "evidence_only_raw_gate_not_accepted",
-            rejected["student_view_eligibility_status"],
-        )
-        self.assertEqual(
-            "skipped_due_to_raw_gate_rejection",
-            rejected["stellar_calculation"],
-        )
-
-
-class SavedSummaryContracts(unittest.TestCase):
-    def test_saved_evidence_builds_and_renders_through_the_stable_facade(
-        self,
-    ) -> None:
-        with tempfile.TemporaryDirectory(
-            prefix="synthetic-summary-evidence-",
-        ) as temporary:
-            evidence = Path(temporary)
-
-            def write_json(name: str, payload: object) -> None:
-                (evidence / name).write_text(
-                    json.dumps(payload, sort_keys=True, allow_nan=False) + "\n",
-                    encoding="utf-8",
-                    newline="\n",
-                )
-
-            write_json(
-                "metadata.json",
-                {
-                    "schema_id": internal_summary.PACKET_SCHEMA_ID,
-                    "packet_status": "complete",
-                    "configuration_hash": "a" * 64,
-                    "identity_status": "pass",
-                },
-            )
-            write_json(
-                "complete_configuration.json",
-                {
-                    "amplitudes": [0.0, 0.01],
-                    "epsilon0_values_mev_fm3": [200.0],
-                    "sigma_values_mev_fm3": [50.0],
-                    "deltas_mev_fm3": [40.0],
-                    "epsilon_match_mev_fm3": None,
-                    "stellar_enabled": False,
-                },
-            )
-            write_json(
-                "raw_gate_report.json",
-                {
-                    "cases": {
-                        "accepted-case": {
-                            "status": "accepted_raw_local_physics_gate",
-                            "finite_values": True,
-                            "positive_energy_density": True,
-                            "positive_pressure": True,
-                            "strictly_monotone_pressure_implied": True,
-                            "full_retained_domain_passed": True,
-                        },
-                        "rejected-case": {
-                            "status": "rejected_raw_local_physics_gate",
-                            "finite_values": True,
-                            "positive_energy_density": True,
-                            "positive_pressure": False,
-                            "strictly_monotone_pressure_implied": False,
-                            "full_retained_domain_passed": False,
-                            "first_failure": {
-                                "quantity": "pressure",
-                                "value": -0.25,
-                            },
-                        },
-                    }
-                },
-            )
-            write_json(
-                "thermodynamic_convergence.json",
-                {
-                    "status": "complete_all_requested_stages",
-                    "uncertainty_envelope": {"pressure": 0.01},
-                },
-            )
-            write_json(
-                "reproduction.json",
-                {
-                    "portable_plan_command": "bsk24-trial plan --json",
-                    "portable_run_command": "bsk24-trial run --execute",
-                    "portable_plan_hash": "b" * 64,
-                },
-            )
-            (evidence / "case_ledger.csv").write_text(
-                "case_id,status,rejection_reason,amplitude,epsilon0_mev_fm3,"
-                "sigma_mev_fm3,delta_mev_fm3,pressure_reconstruction,"
-                "stellar_calculation,clipping_or_repair\n"
-                "accepted-case,accepted,,0.0,200.0,50.0,40.0,complete,"
-                "not_requested,none\n"
-                "rejected-case,rejected,,0.01,200.0,50.0,40.0,"
-                "skipped_due_to_raw_gate_rejection,"
-                "skipped_due_to_raw_gate_rejection,none\n",
-                encoding="utf-8",
-                newline="\n",
-            )
-
-            model = internal_summary.build_summary_model(evidence)
-            self.assertEqual("mixed", model["outcome"])
-            self.assertEqual(1, model["cases"]["accepted"])
-            self.assertEqual(1, model["cases"]["rejected"])
-            self.assertEqual(
-                '{"quantity":"pressure","value":-0.25}',
-                model["cases"]["rows"][1]["rejection_reason"],
-            )
-            self.assertTrue(
-                model["physical_assessment"][
-                    "rejected_proposals_received_no_reconstruction_or_stellar_work"
-                ]
-            )
-            self.assertEqual(
-                "available_in_saved_convergence_evidence",
-                model["numerical"]["saved_uncertainty_status"],
-            )
-
-            rendered = internal_summary.render_summary_markdown(model)
-            self.assertIn("**Outcome: MIXED.**", rendered)
-            self.assertIn("Exact rejection reason", rendered)
-            self.assertIn("bsk24-trial plan --json", rendered)
-
-            writer = Mock()
-            with patch.object(internal_summary, "_write_text_atomic", writer):
-                summary_path = internal_summary.write_packet_summary(evidence)
-            self.assertEqual(evidence / "summary.md", summary_path)
-            writer.assert_called_once_with(rendered, summary_path)
-            self.assertFalse(summary_path.exists())
-
-
-class FailClosedOrchestrationContracts(unittest.TestCase):
-    def test_deduplicated_bsk24_a0_never_reaches_stellar_generated_cases(
-        self,
-    ) -> None:
-        class StellarProbeComplete(RuntimeError):
-            pass
-
-        with tempfile.TemporaryDirectory(
-            prefix="synthetic-bsk24-a0-dedup-",
-        ) as temporary:
-            packet = Path(temporary) / "packet"
-            config = BSk24TrialConfig(
-                amplitudes=(0.0, 0.2),
-                deltas_mev_fm3=(40.0,),
-                zero_amplitude_control_owner=True,
-                thermodynamic_stages=(
-                    BSk24ThermodynamicStage("synthetic", 17, 17),
-                ),
-                tov_stages=(
-                    BSk24TOVStage("synthetic", 5, 1.0e-8, 1.0e-10, 3),
-                ),
-                raw_gate_lower_points=17,
-                raw_gate_upper_points=17,
-                stellar_enabled=True,
-            )
-            logical_zero = "logical-zero"
-            physical_zero = config.zero_amplitude_physical_case_id
-            nonzero = "nonzero"
-            case_table = pd.DataFrame(
-                (
-                    {
-                        "case_id": logical_zero,
-                        "physical_case_id": physical_zero,
-                        "amplitude": 0.0,
-                        "epsilon0_mev_fm3": 200.0,
-                        "sigma_mev_fm3": 50.0,
-                        "delta_mev_fm3": 40.0,
-                        "planned_for_execution": True,
-                    },
-                    {
-                        "case_id": nonzero,
-                        "physical_case_id": nonzero,
-                        "amplitude": 0.2,
-                        "epsilon0_mev_fm3": 200.0,
-                        "sigma_mev_fm3": 50.0,
-                        "delta_mev_fm3": 40.0,
-                        "planned_for_execution": True,
-                    },
-                )
-            )
-            plan = SimpleNamespace(
-                output_path=packet,
-                case_table=case_table,
-                logical_alias_table=case_table.iloc[0:0].copy(),
-                logical_case_table=case_table,
-                to_dict=lambda: {"schema_id": "synthetic_passive_plan"},
-            )
-            baseline = SimpleNamespace()
-
-            def raw_gate(
-                _baseline: object,
-                proposal: deformation.BSk24WindowedDeformation,
-                **_kwargs: object,
-            ) -> tuple[dict[str, object], np.ndarray, np.ndarray]:
-                return (
-                    {
-                        "case_id": proposal.case_id,
-                        "status": "accepted_raw_local_physics_gate",
-                    },
-                    np.asarray([1.0]),
-                    np.asarray([0.5]),
-                )
-
-            def build_windowed(
-                _baseline: object,
-                proposal: deformation.BSk24WindowedDeformation,
-                **_kwargs: object,
-            ) -> SimpleNamespace:
-                return SimpleNamespace(deformation=proposal)
-
-            def stellar_probe(**kwargs: object) -> None:
-                generated = kwargs["generated"]
-                self.assertEqual({nonzero}, set(generated))
-                self.assertNotIn(physical_zero, generated)
-                raise StellarProbeComplete
-
-            callbacks = RunCallbacks(
-                prepare_trial=lambda _config: plan,
-                load_trial=Mock(),
-                generate_plots=Mock(),
-                validate_packet=Mock(),
-                build_consistent_baseline=lambda *_args, **_kwargs: baseline,
-                raw_local_physics_gate=raw_gate,
-                raw_gate_frame=lambda **kwargs: pd.DataFrame(
-                    {"case_id": [kwargs["case_id"]]}
-                ),
-                build_windowed_eos=build_windowed,
-                thermodynamic_profile_frame=lambda *_args: pd.DataFrame(),
-                thermodynamic_residual_frame=lambda *_args: pd.DataFrame(),
-                window_characterization=lambda *_args: {},
-                thermodynamic_convergence=lambda *_args: {"status": "synthetic"},
-                run_stellar=stellar_probe,
-            )
-            with (
-                patch("eos_generation._internal.execution.write_json_atomic"),
-                patch("eos_generation._internal.execution.write_csv_atomic"),
-                self.assertRaises(StellarProbeComplete),
-            ):
-                run_bsk24_trial(config, callbacks=callbacks)
-
-    def test_rejected_case_never_crosses_downstream_case_boundaries(self) -> None:
-        reconstructed_case_ids: list[str] = []
-        stellar_case_ids: set[str] = set()
-
-        class DownstreamProbeComplete(RuntimeError):
-            pass
-
-        with tempfile.TemporaryDirectory(
-            prefix="synthetic-orchestration-",
-        ) as temporary:
-            packet = Path(temporary) / "packet"
-            config = BSk24TrialConfig(
-                amplitudes=(0.0, -1.0, -0.5, 0.3),
-                deltas_mev_fm3=(40.0,),
-                thermodynamic_stages=(
-                    BSk24ThermodynamicStage("synthetic", 17, 17),
-                ),
-                tov_stages=(
-                    BSk24TOVStage("synthetic", 5, 1.0e-8, 1.0e-10, 3),
-                ),
-                raw_gate_lower_points=17,
-                raw_gate_upper_points=17,
-                stellar_enabled=True,
-            )
-            case_table = pd.DataFrame(
-                (
-                    {
-                        "case_id": "accepted-case",
-                        "amplitude": 0.0,
-                        "epsilon0_mev_fm3": 200.0,
-                        "sigma_mev_fm3": 50.0,
-                        "delta_mev_fm3": 40.0,
-                    },
-                    {
-                        "case_id": "rejected-case",
-                        "amplitude": -1.0,
-                        "epsilon0_mev_fm3": 200.0,
-                        "sigma_mev_fm3": 50.0,
-                        "delta_mev_fm3": 40.0,
-                    },
-                    {
-                        "case_id": "unresolved-case",
-                        "amplitude": -0.5,
-                        "epsilon0_mev_fm3": 200.0,
-                        "sigma_mev_fm3": 50.0,
-                        "delta_mev_fm3": 40.0,
-                    },
-                    {
-                        "case_id": "tabulation-unresolved-case",
-                        "amplitude": 0.3,
-                        "epsilon0_mev_fm3": 200.0,
-                        "sigma_mev_fm3": 50.0,
-                        "delta_mev_fm3": 40.0,
-                    },
-                )
-            )
-            plan = SimpleNamespace(
-                output_path=packet,
-                case_table=case_table,
-                to_dict=lambda: {"schema_id": "synthetic_passive_plan"},
-            )
-            baseline = SimpleNamespace()
-
-            def raw_gate(
-                _baseline: object,
-                proposal: deformation.BSk24WindowedDeformation,
-                **_kwargs: object,
-            ) -> tuple[dict[str, object], np.ndarray, np.ndarray]:
-                statuses = {
-                    "accepted-case": "accepted_raw_local_physics_gate",
-                    "rejected-case": "rejected_raw_local_physics_gate",
-                    "unresolved-case": "unresolved_raw_local_physics_gate",
-                    "tabulation-unresolved-case": (
-                        "accepted_raw_local_physics_gate"
-                    ),
-                }
-                return (
-                    {
-                        "case_id": proposal.case_id,
-                        "status": statuses[proposal.case_id],
-                    },
-                    np.asarray([1.0]),
-                    np.asarray([0.5]),
-                )
-
-            def build_windowed(
-                _baseline: object,
-                proposal: deformation.BSk24WindowedDeformation,
-                **_kwargs: object,
-            ) -> SimpleNamespace:
-                if proposal.case_id == "tabulation-unresolved-case":
-                    raise deformation.BSk24MechanicalStabilityError(
-                        {
-                            "case_id": proposal.case_id,
-                            "status": "unresolved_tabulation_resolution",
-                            "failure_reason": "synthetic_resolution_gap",
-                        }
-                    )
-                reconstructed_case_ids.append(proposal.case_id)
-                return SimpleNamespace(deformation=proposal)
-
-            def stellar_probe(**kwargs: object) -> None:
-                generated = kwargs["generated"]
-                assert isinstance(generated, dict)
-                stellar_case_ids.update(generated)
-                raise DownstreamProbeComplete
-
-            callbacks = RunCallbacks(
-                prepare_trial=lambda _config: plan,
-                load_trial=Mock(),
-                generate_plots=Mock(),
-                validate_packet=Mock(),
-                build_consistent_baseline=lambda *_args, **_kwargs: baseline,
-                raw_local_physics_gate=raw_gate,
-                raw_gate_frame=lambda **kwargs: pd.DataFrame(
-                    {"case_id": [kwargs["case_id"]]}
-                ),
-                build_windowed_eos=build_windowed,
-                thermodynamic_profile_frame=lambda *_args: pd.DataFrame(),
-                thermodynamic_residual_frame=lambda *_args: pd.DataFrame(),
-                window_characterization=lambda *_args: {},
-                thermodynamic_convergence=lambda *_args: {"status": "synthetic"},
-                run_stellar=stellar_probe,
-            )
-
-            with (
-                patch(
-                    "eos_generation._internal.execution.write_json_atomic"
-                ) as write_json,
-                patch("eos_generation._internal.execution.write_csv_atomic"),
-                self.assertRaises(DownstreamProbeComplete),
-            ):
-                run_bsk24_trial(config, callbacks=callbacks)
-
-        self.assertEqual(["accepted-case"], reconstructed_case_ids)
-        self.assertEqual({"accepted-case"}, stellar_case_ids)
-        self.assertNotIn("rejected-case", reconstructed_case_ids)
-        self.assertNotIn("rejected-case", stellar_case_ids)
-        self.assertNotIn("unresolved-case", reconstructed_case_ids)
-        self.assertNotIn("unresolved-case", stellar_case_ids)
-        self.assertNotIn("tabulation-unresolved-case", reconstructed_case_ids)
-        self.assertNotIn("tabulation-unresolved-case", stellar_case_ids)
-        raw_payloads = [
-            call.args[0]
-            for call in write_json.call_args_list
-            if call.args[1].name == "raw_gate_report.json"
-        ]
-        self.assertEqual(2, len(raw_payloads))
-        self.assertEqual("eos_generation_raw_gate_v2", raw_payloads[-1]["schema_id"])
-        self.assertEqual(
-            ["unresolved-case", "tabulation-unresolved-case"],
-            raw_payloads[-1]["unresolved_case_ids"],
-        )
-        self.assertEqual(
-            ["rejected-case"], raw_payloads[-1]["hard_rejected_case_ids"]
-        )
-
-
-if __name__ == "__main__":
-    unittest.main()

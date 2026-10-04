@@ -1,993 +1,1019 @@
-"""Small public interface for controlled analytical EoS experiments.
-
-The public settings deliberately describe scientific intent rather than the
-internal numerical machinery.  ``plan_experiment`` expands ``quick`` or
-``strict`` into the governed numerical stages and remains calculation-free
-and write-free.  ``run_experiment`` accepts only an exact reviewed plan and an
-explicit execution gate.
-"""
+"""One passive plan and one explicit executor for a flat scientific run."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Mapping, Sequence
-
+import numpy as np
 import pandas as pd
-
-from ._experiment_integrity import (
-    AGGREGATE_MANIFEST,
-    _AGGREGATE_DOCUMENTS,
-    _aggregate_manifest_files,
-    _verify_aggregate_manifest,
-    _write_aggregate_manifest,
+from .settings import ExperimentSettings
+from .storage import (
+    RUN_SCHEMA,
+    archive_source,
+    environment_identity,
+    hash_payload,
+    json_clean,
+    resolve_runs_path,
+    seal,
+    source_identity,
+    write_csv_atomic,
+    write_json_atomic,
 )
-from ._experiment_io import (
-    _PLAN_DEPENDENCIES,
-    _active_runtime_identity,
-    _active_source_identity,
-    _canonical_json,
-    _finite_float,
-    _hash_payload,
-    _number_tuple,
-    _owning_repository_root,
-    _portable_path,
-    _resolve_portable_path,
-    _sha256_file,
-    _strict_json_object,
-    _write_json_atomic,
-)
-from ._experiment_planning import (
-    PLAN_SCHEMA,
-    _internal_configs,
-    _plan_child_document,
-    _plan_digest,
-    _precision_profile,
-    _saved_plan_digest,
-)
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
+from itertools import product
+from pathlib import Path
+from typing import Any
 
 
-EXPERIMENT_SCHEMA = "eos_generation_experiment_v1"
-REPRODUCTION_PLAN_SCHEMA = "eos_generation_reproduction_plan_v1"
-CONFIG_SCHEMA_URL = (
-    "https://raw.githubusercontent.com/PapathanasiouIoannis/"
-    "EoS-generation/main/configs/schema.json"
-)
-_CALCULATIONS = ("thermodynamics", "stellar")
-_MATTER_MODELS = ("bsk24",)
-_PRECISIONS = (
-    "quick",
-    "strict",
-    "dataset",
-    "dataset_10_tighter",
-    "dataset_20",
-    "dataset_40",
-    "dataset_40_curves",
-    "dataset_relaxed",
-    "dataset_relaxed_80",
-)
-_DIAGNOSTICS = ("off", "on")
-_MAX_GEOMETRIES = 256
-_MAX_EXPANDED_CASES = 4096
-_MAX_FIXED_MASSES = 32
+PLAN_SCHEMA = "eos_generation_plan_v2"
+
+_TABLE_DESCRIPTIONS = {
+    "cases": "Case identity, geometry, acceptance and exact rejection reasons",
+    "raw": "Complete raw proposals: window, Gaussian, sound-speed and pressure changes",
+    "eos": "Accepted reconstructed effective state and changes relative to the selected baseline",
+    "stars": "Stellar sequence attempts, central conditions and background/tidal statuses",
+    "fixed_mass": "Requested masses, true brackets, solved observables and failure reasons",
+    "maximum_mass": "Resolved turning points, endpoint limitations and refinement evidence",
+    "radial_profiles": "Retained fixed-mass stellar profiles at the final stage",
+    "deformation_support_fractions": "Radial and enclosed-mass support of the deformation",
+    "baryonic_observables": "Absolute baryon number, baryonic mass and binding energy",
+    "baryonic_response_across_mass": "Baryonic mass and binding-energy changes relative to the selected baseline",
+    "stellar_response_across_mass": "Radius, Love-number and tidal changes on common mass support",
+    "odd_even_response": "Paired positive/negative amplitude responses with a zero control",
+    "numerical_error_summary": "Same-case fixed-mass spreads across saved stellar stages",
+}
 
 
-@dataclass(frozen=True)
-class ExperimentSettings:
-    """User-facing scientific choices for one experiment.
+def _notebook_option_tables(settings):
+    """Build discovery tables from the governed profiles and saved-plot registry."""
+    from .numerics import precision_profile
+    from .settings import _PRECISIONS
+    from .plotting import FIGURES, LABELS
 
-    Geometry values may be scalars or small sequences.  Sequences are expanded
-    as an explicit Cartesian product during passive planning; they are not a
-    hidden campaign mode.
-    """
-
-    matter_model: str = "bsk24"
-    amplitudes: tuple[float, ...] = (0.0, 0.01)
-    epsilon_match: str | float = "standard"
-    center: tuple[float, ...] = (200.0,)
-    width: tuple[float, ...] = (50.0,)
-    ramp_width: tuple[float, ...] = (40.0,)
-    calculation: str = "thermodynamics"
-    precision: str = "quick"
-    fixed_masses: tuple[float, ...] = (1.4,)
-    diagnostics: str = "off"
-
-    def __post_init__(self) -> None:
-        if self.matter_model not in _MATTER_MODELS:
-            raise ValueError(f"matter_model must be one of {_MATTER_MODELS}")
-        object.__setattr__(self, "amplitudes", _number_tuple("amplitudes", self.amplitudes))
-        object.__setattr__(self, "center", _number_tuple("center", self.center, positive=True))
-        object.__setattr__(self, "width", _number_tuple("width", self.width, positive=True))
-        object.__setattr__(
-            self,
-            "ramp_width",
-            _number_tuple("ramp_width", self.ramp_width, positive=True),
+    purposes = {
+        "quick": "Exploratory pilot; does not establish convergence",
+        "strict": "Compare sampling and ODE refinement across three stellar stages",
+        "dataset": "61-point sequence at the governed tight ODE tolerances",
+        "dataset_10_tighter": "10-point sequence with tighter ODE tolerances",
+        "dataset_20": "20-point sequence at tight ODE tolerances",
+        "dataset_40": "40-point sequence with three thermodynamic stages",
+        "dataset_40_curves": "40-point curves with only the final thermodynamic stage",
+        "dataset_relaxed": "61-point sequence with relaxed ODE tolerances",
+        "dataset_relaxed_80": "80-point sequence with relaxed ODE tolerances",
+    }
+    profiles = []
+    for name in _PRECISIONS:
+        profile = precision_profile(name, "stellar")
+        stages = profile["tov_stages"]
+        profiles.append(
+            {
+                "precision": name,
+                "purpose": purposes[name],
+                "thermodynamic_stages": len(profile["thermodynamic_stages"]),
+                "stellar_stages": ", ".join(s.name for s in stages),
+                "sequence_attempts_per_case": sum(s.sequence_points for s in stages),
+                "ODE_tolerances": "; ".join(
+                    f"{s.name}: rtol={s.rtol:g}, atol={s.atol:g}" for s in stages
+                ),
+                "default_products": ", ".join(
+                    ExperimentSettings.from_values(
+                        calculation="stellar", precision=name
+                    ).requested_observables
+                ),
+            }
         )
-        masses = _number_tuple("fixed_masses", self.fixed_masses, positive=True)
-        if any(value >= 10.0 for value in masses):
-            raise ValueError("fixed_masses must be below 10 solar masses")
-        if len(masses) > _MAX_FIXED_MASSES:
-            raise ValueError(
-                f"fixed_masses may contain at most {_MAX_FIXED_MASSES} targets"
+    requirements = {
+        "eos": "Thermodynamics; accepted reconstructed EoS",
+        "stars": "stellar + sequence; successful points and validated tides where needed",
+        "fixed_mass": "stellar + fixed_mass; solved brackets and validated tides where needed",
+        "maximum_mass": "stellar + maximum_mass; resolved turning point",
+        "radial_profiles": "diagnostics on; retained final-stage fixed-mass profiles",
+        "deformation_support_fractions": "diagnostics on; retained final-stage fixed-mass profiles",
+        "baryonic_response_across_mass": "diagnostics on; common successful fixed masses with baseline",
+        "stellar_response_across_mass": "diagnostics on; common successful mass support with baseline",
+    }
+    plots = pd.DataFrame(
+        [
+            {
+                "key": key,
+                "plot": LABELS[key],
+                "requires": requirements[spec[0]],
+                "horizontal_axis": spec[3],
+                "vertical_axis": spec[4],
+            }
+            for key, spec in FIGURES.items()
+        ]
+    )
+    products = pd.DataFrame(
+        [
+            {"product": label, "requested": enabled, "meaning": meaning}
+            for label, enabled, meaning in (
+                (
+                    "thermodynamics",
+                    True,
+                    "Assess raw proposals and reconstruct accepted EoS",
+                ),
+                (
+                    "sequence",
+                    "sequence" in settings.requested_observables,
+                    "M-R and available tidal curves",
+                ),
+                (
+                    "fixed_mass",
+                    "fixed_mass" in settings.requested_observables,
+                    "Solve the requested gravitational masses",
+                ),
+                (
+                    "maximum_mass",
+                    "maximum_mass" in settings.requested_observables,
+                    "Bracket and refine a turning point",
+                ),
+                (
+                    "diagnostics",
+                    settings.diagnostics == "on",
+                    "Retain governed radial, baryonic and response evidence",
+                ),
             )
-        object.__setattr__(self, "fixed_masses", masses)
-        geometry_count = len(self.center) * len(self.width) * len(self.ramp_width)
-        if geometry_count > _MAX_GEOMETRIES:
-            raise ValueError(
-                f"settings expand to {geometry_count} geometries; the public "
-                f"planning limit is {_MAX_GEOMETRIES}"
-            )
-        amplitude_count = len(self.amplitudes) + (
-            0 if any(value == 0.0 for value in self.amplitudes) else 1
-        )
-        expanded_cases = geometry_count * amplitude_count
-        if expanded_cases > _MAX_EXPANDED_CASES:
-            raise ValueError(
-                f"settings expand to {expanded_cases} cases including the zero "
-                f"control; the public planning limit is {_MAX_EXPANDED_CASES}"
-            )
-        if self.epsilon_match != "standard":
-            object.__setattr__(
-                self,
-                "epsilon_match",
-                _finite_float("epsilon_match", self.epsilon_match, positive=True),
-            )
-        if self.calculation not in _CALCULATIONS:
-            raise ValueError(f"calculation must be one of {_CALCULATIONS}")
-        if self.precision not in _PRECISIONS:
-            raise ValueError(f"precision must be one of {_PRECISIONS}")
-        if self.diagnostics not in _DIAGNOSTICS:
-            raise ValueError(f"diagnostics must be one of {_DIAGNOSTICS}")
-        if self.diagnostics == "on" and self.calculation != "stellar":
-            raise ValueError("diagnostics='on' requires calculation='stellar'")
-        if self.precision in {"dataset", "dataset_10_tighter", "dataset_20", "dataset_40", "dataset_40_curves", "dataset_relaxed", "dataset_relaxed_80"} and (
-            self.calculation != "stellar" or self.diagnostics != "off"
-        ):
-            raise ValueError(f"precision={self.precision!r} requires stellar calculation and diagnostics='off'")
+        ]
+    )
+    return {
+        "profiles": pd.DataFrame(profiles),
+        "plots": plots,
+        "products": products,
+        "tables": pd.DataFrame(
+            [
+                {"table": name, "meaning": description}
+                for name, description in _TABLE_DESCRIPTIONS.items()
+            ]
+        ),
+    }
 
-    @classmethod
-    def from_values(
-        cls,
-        *,
-        matter_model: str = "bsk24",
-        amplitudes: float | Sequence[float] = (0.0, 0.01),
-        epsilon_match: str | float = "standard",
-        center: float | Sequence[float] = 200.0,
-        width: float | Sequence[float] = 50.0,
-        ramp_width: float | Sequence[float] = 40.0,
-        calculation: str = "thermodynamics",
-        fixed_masses: float | Sequence[float] = (1.4,),
-        precision: str = "quick",
-        diagnostics: str = "off",
-    ) -> "ExperimentSettings":
-        return cls(
-            matter_model=matter_model,
-            amplitudes=_number_tuple("amplitudes", amplitudes),
-            epsilon_match=epsilon_match,
-            center=_number_tuple("center", center, positive=True),
-            width=_number_tuple("width", width, positive=True),
-            ramp_width=_number_tuple("ramp_width", ramp_width, positive=True),
-            calculation=calculation,
-            fixed_masses=_number_tuple("fixed_masses", fixed_masses, positive=True),
-            precision=precision,
-            diagnostics=diagnostics,
-        )
 
-    @classmethod
-    def from_dict(cls, payload: Mapping[str, Any]) -> "ExperimentSettings":
-        if not isinstance(payload, Mapping):
-            raise TypeError("settings payload must be a mapping")
-        values = dict(payload)
-        values.pop("$schema", None)
-        allowed = {
+def _notebook_details(title, frame):
+    """Keep the discovery catalogues compact in the single-cell output."""
+    from html import escape
+    from IPython.display import HTML, display
+
+    display(
+        HTML(
+            f"<details><summary>{escape(title)}</summary>"
+            f"{frame.to_html(index=False, escape=True)}</details>"
+        )
+    )
+
+
+def _notebook_display_options(plots, tables, table_rows, *, view=None):
+    """Validate presentation controls before any requested execution."""
+    from .plotting import _names, _view_options
+
+    _view_options(**(view or {}))
+
+    if not (isinstance(plots, str) and plots in ("auto", "none")):
+        _names(plots)
+    if (
+        isinstance(table_rows, bool)
+        or not isinstance(table_rows, int)
+        or not 1 <= table_rows <= 200
+    ):
+        raise ValueError("TABLE_ROWS must be an integer from 1 to 200")
+    if isinstance(tables, str) and tables not in ("auto", "all", "none"):
+        raise ValueError(
+            "TABLES must be 'auto', 'all', 'none', or a list of table names"
+        )
+    names = (
+        list(_TABLE_DESCRIPTIONS)
+        if tables == "all"
+        else (
+            ["cases", "fixed_mass", "maximum_mass", *list(_TABLE_DESCRIPTIONS)[6:]]
+            if tables == "auto"
+            else [] if tables == "none" else list(tables)
+        )
+    )
+    if any(name not in _TABLE_DESCRIPTIONS for name in names):
+        raise ValueError("Choose TABLES from " + ", ".join(_TABLE_DESCRIPTIONS))
+    return names
+
+
+def _notebook_inspect(
+    result, *, selection, plots="auto", tables="auto", table_rows=12, regenerate=False,
+    view=None,
+):
+    """Display saved evidence, selections and figures without scientific work."""
+    from IPython.display import Image, display
+    from .storage import strict_json
+
+    names = _notebook_display_options(plots, tables, table_rows, view=view)
+    report = validate_experiment(result.experiment_path)
+    if not report["passed"]:
+        raise ValueError("Saved run failed validation: " + "; ".join(report["errors"]))
+    print("Viewing saved run:", result.experiment_path)
+    print("Saved settings are authoritative for this view:")
+    display(result.settings.to_dict())
+    display(
+        pd.DataFrame(
+            [
+                {
+                    "validation": "passed",
+                    "source_equivalence": report["source_equivalence"],
+                    "source_archive_available": report[
+                        "scientific_output_availability"
+                    ].get("source_archive_available", False),
+                }
+            ]
+        )
+    )
+    if report["source_equivalence"] != "equivalent":
+        print(
+            "Saved evidence is intact; current source differs. Exact replay requires the recorded source archive and runtime."
+        )
+    print("Saved output status counts:")
+    display(report["scientific_output_availability"])
+    cases = result.case_table
+    geometries = cases[
+        [
+            "geometry_index",
+            "epsilon0_mev_fm3",
+            "sigma_mev_fm3",
+            "delta_mev_fm3",
+            "epsilon_match_mev_fm3",
+        ]
+    ].drop_duplicates()
+    print("Available geometry indices (energy-density parameters in MeV fm^-3):")
+    display(geometries)
+    stages = [
+        s["name"] for s in result.metadata["numerical_profile"].get("tov_stages", [])
+    ]
+    print("Saved amplitudes:", sorted(cases.amplitude.unique().tolist()))
+    print("Saved fixed-mass targets (M_sun):", list(result.settings.fixed_masses))
+    print("Valid STAGE choices:", ["final", *stages])
+    print("Diagnostic scope:", result.metadata.get("diagnostics", "off"))
+    inventory = []
+    frames = {}
+    for name, meaning in _TABLE_DESCRIPTIONS.items():
+        saved = (result.data_path / (name + ".csv")).is_file()
+        inventory.append({"table": name, "saved": saved, "meaning": meaning})
+        if name in names and saved:
+            frame = result.table(name)
+            frames[name] = frame
+            print(
+                f"{name}: showing the first {min(table_rows, len(frame))} of {len(frame)} saved rows"
+            )
+            print("Columns:", ", ".join(frame.columns))
+            display(frame.head(table_rows))
+    _notebook_details(
+        "Saved table inventory; use TABLES to choose previews", pd.DataFrame(inventory)
+    )
+    availability = result.available_plots(**selection)
+    print("Plot availability for the selected saved values:")
+    display(pd.DataFrame(availability["plots"]))
+    if plots == "none":
+        print("Plotting disabled. No scientific calculation was requested.")
+        return frames
+    folder = result.generate_plots(
+        figures=plots, regenerate=regenerate, **selection, **(view or {})
+    )
+    record = strict_json(folder / "figures.json")
+    print("Figure folder:", folder)
+    print("Combined plots: geometry colors; line styles distinguish curve variants. Shared zero control is black.")
+    print("Λ display settings:", record["request"]["view"])
+    color_key = geometries.loc[
+        geometries.geometry_index.astype(str).isin(record["geometry_colors"])
+    ].copy()
+    color_key["plot_color"] = color_key.geometry_index.astype(str).map(record["geometry_colors"])
+    _notebook_details("Geometry color key for these figures", color_key)
+    if record["skipped"]:
+        display(record["skipped"])
+    for name in record["figures"]:
+        display(Image(filename=str(folder / name)))
+    return frames
+
+
+def _new_run_destination(settings, runs_directory, study="study") -> Path:
+    """Choose a fresh destination without creating anything; bind it in a plan."""
+    import re
+    from uuid import uuid4
+
+    if not isinstance(study, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,60}", study):
+        raise ValueError(
+            "study name must contain 1–60 letters, numbers, underscores or hyphens"
+        )
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    return resolve_runs_path(
+        Path(runs_directory)
+        / f"run-{study}-{stamp}-{settings.deterministic_hash()[:8]}-{uuid4().hex[:6]}"
+    )
+
+
+def _saved_runs(runs_directory) -> pd.DataFrame:
+    """List complete, failed and interrupted run folders without calculation."""
+    from .storage import strict_json
+
+    rows = []
+    for folder in sorted(Path(runs_directory).glob("*")):
+        if not folder.is_dir() or folder.name.startswith("_"):
+            continue
+        try:
+            metadata = strict_json(folder / "data/run.json")
+            settings = metadata.get("settings", {})
+            status = metadata.get("status", "incomplete")
+            detail = metadata.get("failure", {}).get("message", "")
+            changed = (folder / "data/run.json").stat().st_mtime
+        except (OSError, ValueError, TypeError, AttributeError):
+            metadata = {}
+            settings, status, detail, changed = (
+                {},
+                "incomplete",
+                "Saved run metadata is missing or unreadable",
+                folder.stat().st_mtime,
+            )
+        rows.append(
+            {
+                "run": folder.name,
+                "path": str(folder.resolve()),
+                "status": status,
+                "matter_model": settings.get("matter_model", "bsk24") if settings else "unknown",
+                "calculation": settings.get("calculation", "unknown"),
+                "precision": settings.get("precision", "unknown"),
+                "amplitudes": str(settings.get("amplitudes", "unknown")),
+                "geometry": "; ".join(
+                    f"{key}={settings.get(key, '?')}"
+                    for key in ("center", "width", "ramp_width")
+                ),
+                "observables": ", ".join(metadata.get("requested_observables", [])),
+                "diagnostics": settings.get("diagnostics", "unknown"),
+                "detail": detail,
+                "modified": changed,
+            }
+        )
+    return pd.DataFrame(
+        rows,
+        columns=[
+            "run",
+            "path",
+            "status",
             "matter_model",
-            "amplitudes",
-            "epsilon_match",
-            "center",
-            "width",
-            "ramp_width",
             "calculation",
             "precision",
-            "fixed_masses",
+            "amplitudes",
+            "geometry",
+            "observables",
             "diagnostics",
-        }
-        unknown = sorted(set(values) - allowed)
-        if unknown:
-            raise ValueError(f"unknown experiment setting {unknown[0]!r}")
-        return cls.from_values(**values)
+            "detail",
+            "modified",
+        ],
+    )
 
-    @classmethod
-    def from_json(cls, path: str | Path) -> "ExperimentSettings":
-        payload = _strict_json_object(path)
-        required = {
-            "$schema",
-            "amplitudes",
-            "epsilon_match",
-            "center",
-            "width",
-            "ramp_width",
-            "calculation",
-            "precision",
-            "fixed_masses",
-            "diagnostics",
-        }
-        missing = sorted(required - set(payload))
-        if missing:
+
+def _load_saved_run(runs_directory, selection="latest"):
+    """Load a selected saved run; a missing/corrupt run never falls back silently."""
+    root = Path(runs_directory).resolve()
+    if selection == "latest":
+        candidates = _saved_runs(root)
+        candidates = candidates.loc[candidates.status.eq("complete")]
+        if candidates.empty:
             raise ValueError(
-                f"experiment configuration is missing required field {missing[0]!r}"
+                "No completed saved runs are available. Review a new plan and execute it first; failed/incomplete runs cannot be plotted."
             )
-        schema = payload.get("$schema")
-        if not isinstance(schema, str) or not schema.strip():
-            raise ValueError("experiment configuration $schema must be a non-empty string")
-        for name in ("amplitudes", "fixed_masses"):
-            if not isinstance(payload.get(name), list):
-                raise ValueError(f"experiment configuration {name} must be an array")
-        return cls.from_dict(payload)
+        path = Path(candidates.sort_values("modified").iloc[-1].path)
+    else:
+        path = (root / selection).resolve()
+        if path.parent != root:
+            raise ValueError("Select a run folder name from the saved-run list")
+    try:
+        return load_experiment(path)
+    except ValueError as exc:
+        raise ValueError(
+            f"Cannot load {path.name}: {exc}. Select another completed run or execute a new reviewed plan; no calculation was started."
+        ) from exc
 
-    def to_dict(self) -> dict[str, Any]:
-        data = {
-            "amplitudes": list(self.amplitudes),
-            "epsilon_match": self.epsilon_match,
-            "center": list(self.center) if len(self.center) > 1 else self.center[0],
-            "width": list(self.width) if len(self.width) > 1 else self.width[0],
-            "ramp_width": (
-                list(self.ramp_width)
-                if len(self.ramp_width) > 1
-                else self.ramp_width[0]
-            ),
-            "calculation": self.calculation,
-            "precision": self.precision,
-            "fixed_masses": list(self.fixed_masses),
-            "diagnostics": self.diagnostics,
-        }
-        return data
 
-    def deterministic_hash(self) -> str:
-        return _hash_payload(self.to_dict())
+def _notebook_environment() -> dict:
+    """Read the installed runtime contract; render checks belong to plotting."""
+    import sys
+    import tomllib
+    from importlib.metadata import version
+
+    contract = Path(__file__).parent / "runtime_contracts/pyproject.toml"
+    expected = tomllib.loads(contract.read_text(encoding="utf-8"))["project"]
+    installed = environment_identity()
+    issues = []
+    for dependency in expected["dependencies"]:
+        if "==" in dependency:
+            name, pin = dependency.split("==", 1)
+            if installed.get(name) != pin:
+                issues.append(f"{name}: expected {pin}, found {installed.get(name)}")
+    if not installed["python"].startswith("3.12."):
+        issues.append("The declared runtime requires Python 3.12")
+    return {
+        "python": sys.executable,
+        "package_version": version("eos-generation"),
+        "package_source": str(Path(__file__).parent),
+        "runtime_issues": issues,
+    }
+
+
+def _execute_notebook_plan(plan, settings):
+    """Execute a reviewed plan once; repeating its cell loads its intact result."""
+    if not isinstance(plan, ExperimentPlan):
+        raise ValueError(
+            "Choose ACTION='plan' and review its output before choosing 'execute'"
+        )
+    fresh = plan_experiment(settings, output_path=plan.experiment_path)
+    if fresh.to_dict() != plan.to_dict():
+        raise ValueError(
+            "Settings, source, environment or workers changed. Choose ACTION='plan' and review a fresh plan before execution."
+        )
+    if plan.experiment_path.exists():
+        try:
+            result = load_experiment(plan.experiment_path)
+        except ValueError as exc:
+            raise ValueError(
+                "This destination contains an incomplete, failed or changed run. Choose ACTION='plan' for a new destination; existing evidence was preserved."
+            ) from exc
+        if result.metadata.get("plan_hash") != plan.plan_hash:
+            raise ValueError(
+                "This destination belongs to another plan. Choose ACTION='plan' to start a new run."
+            )
+        return result
+    return run_experiment(plan, execute=True)
+
+
+def _configs(settings: ExperimentSettings):
+    from .numerics import BSk24TrialConfig, precision_profile
+
+    profile = precision_profile(settings.precision, settings.calculation)
+    anchor = None if settings.epsilon_match == "standard" else settings.epsilon_match
+    geometries = list(product(settings.center, settings.width, settings.ramp_width))
+    owner = min(geometries)
+    return tuple(
+        BSk24TrialConfig(
+            matter_model=settings.matter_model,
+            amplitudes=settings.amplitudes,
+            epsilon_match_mev_fm3=anchor,
+            epsilon0_mev_fm3=center,
+            sigma_mev_fm3=width,
+            deltas_mev_fm3=(ramp,),
+            fixed_masses_msun=settings.fixed_masses,
+            thermodynamic_stages=profile["thermodynamic_stages"],
+            tov_stages=profile["tov_stages"],
+            raw_gate_lower_points=profile["raw_gate_lower_points"],
+            raw_gate_upper_points=profile["raw_gate_upper_points"],
+            maximum_mass_initial_points=profile["maximum_mass_initial_points"],
+            stellar_enabled=settings.calculation == "stellar",
+            requested_observables=settings.requested_observables,
+            extended_stellar_diagnostics_enabled=settings.diagnostics == "on",
+            diagnostic_delta_mev_fm3=ramp,
+            zero_amplitude_control_owner=(center, width, ramp) == owner,
+        )
+        for center, width, ramp in geometries
+    )
+
+
+def _cases(configs) -> list[dict[str, Any]]:
+    from .numerics import deterministic_case_id
+
+    rows = []
+    seen = set()
+    for index, config in enumerate(configs, 1):
+        for amplitude in config.logical_amplitudes:
+            logical_id = deterministic_case_id(
+                amplitude=amplitude,
+                delta_mev_fm3=config.deltas_mev_fm3[0],
+                epsilon0_mev_fm3=config.epsilon0_mev_fm3,
+                sigma_mev_fm3=config.sigma_mev_fm3,
+                epsilon_match_mev_fm3=config.epsilon_match_mev_fm3,
+                matter_model=config.matter_model,
+            )
+            physical_id = (
+                config.zero_amplitude_physical_case_id if amplitude == 0 else logical_id
+            )
+            execute = physical_id not in seen and (
+                amplitude != 0 or config.zero_amplitude_control_owner
+            )
+            if execute:
+                seen.add(physical_id)
+            rows.append(
+                {
+                    "geometry_index": index,
+                    "case_id": logical_id,
+                    "physical_case_id": physical_id,
+                    "amplitude": amplitude,
+                    "epsilon0_mev_fm3": config.epsilon0_mev_fm3,
+                    "sigma_mev_fm3": config.sigma_mev_fm3,
+                    "delta_mev_fm3": config.deltas_mev_fm3[0],
+                    "epsilon_match_mev_fm3": config.effective_epsilon_match_mev_fm3,
+                    "planned_for_execution": execute,
+                    "is_alias": amplitude == 0 and not execute,
+                }
+            )
+    return rows
 
 
 @dataclass(frozen=True)
 class ExperimentPlan:
-    """Calculation-free, write-free expansion of reviewed settings."""
-
     settings: ExperimentSettings
-    child_plans: tuple[Any, ...]
     experiment_path: Path
-    source_inventory_id: str
-    source_digest: str
-    source_file_count: int
-    source_contracts: tuple[tuple[str, str], ...]
-    runtime_identity: tuple[tuple[str, str], ...]
-    runtime_digest: str
     plan_hash: str
+    _document: str
+
+    def to_dict(self) -> dict[str, Any]:
+        import json
+
+        return json.loads(self._document)
 
     @property
     def case_table(self) -> pd.DataFrame:
-        frames: list[pd.DataFrame] = []
-        for index, child in enumerate(self.child_plans, start=1):
-            frame = getattr(child, "logical_case_table", child.case_table).copy()
-            frame.insert(0, "geometry_index", index)
-            frames.append(frame)
-        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+        return pd.DataFrame(self.to_dict()["cases"])
 
     @property
     def estimates(self) -> dict[str, int]:
-        result: dict[str, int] = {"geometry_count": len(self.child_plans)}
-        for child in self.child_plans:
-            for key, value in child.estimates.items():
-                result[key] = result.get(key, 0) + int(value)
-        return result
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "schema_id": PLAN_SCHEMA,
-            "settings": self.settings.to_dict(),
-            "settings_hash": self.settings.deterministic_hash(),
-            "experiment_path": _portable_path(self.experiment_path),
-            "source_identity": {
-                "inventory_id": self.source_inventory_id,
-                "file_count": self.source_file_count,
-                "sha256": self.source_digest,
-                "project_contract_sha256": dict(self.source_contracts),
-            },
-            "runtime_identity": {
-                "values": dict(self.runtime_identity),
-                "sha256": self.runtime_digest,
-            },
-            "children": [_plan_child_document(child) for child in self.child_plans],
-            "estimates": self.estimates,
-            "planning_is_passive": True,
-            "scientific_solver_calls": 0,
-            "filesystem_writes": 0,
-            "plan_hash": self.plan_hash,
-        }
+        return self.to_dict()["estimates"]
 
     def summary_text(self) -> str:
-        estimates = self.estimates
+        d = self.to_dict()
         lines = [
-            "BSk24 experiment plan",
+            f"BSk{self.settings.matter_model[-2:]} experiment plan",
             f"Plan hash: {self.plan_hash}",
-            f"Calculation: {self.settings.calculation}",
-            f"Precision: {self.settings.precision}",
-            f"Geometries: {len(self.child_plans)}",
-            f"Cases: {len(self.case_table)}",
             f"Destination: {self.experiment_path}",
-            "Planning is passive: yes (0 solver calls, 0 filesystem writes)",
+            f"Calculation: {self.settings.calculation}; precision: {self.settings.precision}",
+            "Requested observables: "
+            + (", ".join(self.settings.requested_observables) or "thermodynamics"),
+            "Planning is passive: 0 solver calls, 0 filesystem writes",
         ]
-        if self.settings.precision == "dataset":
-            lines.append("Experimental dataset profile: single stellar stage; no per-case stellar refinement envelope; not STRICT certification.")
-        if self.settings.precision in {"dataset_10_tighter", "dataset_20", "dataset_40", "dataset_40_curves", "dataset_relaxed", "dataset_relaxed_80"}:
-            lines.append(f"Experimental {self.settings.precision} profile: single stellar stage; no per-case stellar refinement envelope; not STRICT certification.")
-        for key in sorted(estimates):
-            if key != "geometry_count":
-                lines.append(f"{key.replace('_', ' ').capitalize()}: {estimates[key]}")
-        for index, child in enumerate(self.child_plans, start=1):
-            config = child.config
-            thermo = ", ".join(
-                f"{stage.name} ({stage.lower_points}/{stage.upper_points})"
-                for stage in config.thermodynamic_stages
+        lines.extend(f"{name}: {value}" for name, value in d["estimates"].items())
+        lines.append(
+            "Thermodynamic stages: "
+            + ", ".join(
+                f"{x['name']} ({x['lower_points']}/{x['upper_points']})"
+                for x in d["numerical_profile"]["thermodynamic_stages"]
             )
-            stellar = ", ".join(
-                f"{stage.name} ({stage.sequence_points} pressures, "
-                f"rtol={stage.rtol:.0e}, atol={stage.atol:.0e})"
-                for stage in config.tov_stages
-            )
-            lines.extend(
-                (
-                    "",
-                    f"Geometry {index}: center={config.epsilon0_mev_fm3:g}, "
-                    f"width={config.sigma_mev_fm3:g}, "
-                    f"ramp={config.deltas_mev_fm3[0]:g} MeV fm^-3",
-                    f"  Thermodynamic stages: {thermo}",
-                    f"  Stellar stages: {stellar or 'disabled'}",
-                    f"  Raw-gate grids: {config.raw_gate_lower_points}/"
-                    f"{config.raw_gate_upper_points} points",
-                    f"  Central-pressure floor: "
-                    f"{config.central_pressure_min_mev_fm3:g} MeV fm^-3",
-                    (
-                        "  Fixed-mass roots: not requested"
-                        if not config.fixed_mass_background_requested
-                        else f"  Fixed-mass root tolerance: "
-                        f"{config.fixed_mass_root_xtol_mev_fm3:.0e} MeV fm^-3"
-                    ),
-                    (
-                        "  Maximum-mass refinement: not requested"
-                        if not getattr(
-                            config,
-                            "maximum_mass_requested",
-                            config.background_tov_requested,
-                        )
-                        else f"  Maximum-mass screen: "
-                        f"{config.maximum_mass_initial_points} initial points; "
-                        f"threshold {config.maximum_mass_threshold_msun:g} M_sun"
-                    ),
-                    "  Cases: " + ", ".join(child.case_table["case_id"].astype(str)),
+        )
+        profile = d["numerical_profile"]
+        lines.append(
+            "Stellar stages: "
+            + (
+                ", ".join(
+                    f"{stage['name']} ({stage['sequence_points']} pressures, rtol={stage['rtol']:g}, atol={stage['atol']:g}, radial points={stage['radial_profile_points']})"
+                    for stage in profile["tov_stages"]
                 )
+                or "disabled"
             )
-        if (
-            self.settings.calculation == "stellar"
-            and self.settings.precision != "dataset_40_curves"
-        ):
-            lines.append(
-                "Maximum-mass refinement calls after the declared local screens "
-                "are adaptive and are not included in the fixed target totals."
-            )
+        )
+        lines.append(
+            f"Raw-gate grids: {profile['raw_gate_lower_points']}/{profile['raw_gate_upper_points']}"
+        )
+        lines.append("Execution controls: " + str(d["execution_controls"]))
+        lines.append(
+            "Stellar root and maximum-mass calls are adaptive; the declared pressure count is not a total-call budget."
+        )
         return "\n".join(lines)
 
 
-@dataclass
-class ExperimentResult:
-    """Loaded handle to one completed experiment and its child packets."""
+def plan_experiment(
+    settings: ExperimentSettings, *, output_path: str | Path | None = None
+) -> ExperimentPlan:
+    """Validate and expand settings without scientific calls or writes."""
+    import json
+    from .numerics import precision_profile
+    from .stellar import (
+        _automatic_stellar_worker_count,
+        _automatic_sequence_worker_count,
+    )
 
-    experiment_path: Path
-    settings: ExperimentSettings
-    child_results: tuple[Any, ...]
-    metadata: dict[str, Any]
-    repository_root: Path
-
-    @property
-    def completed(self) -> bool:
-        return bool(self.child_results) and self.metadata.get("status") == "complete"
-
-    @property
-    def packet_paths(self) -> tuple[Path, ...]:
-        return tuple(Path(item.packet_path) for item in self.child_results)
-
-    @property
-    def accepted_cases(self) -> pd.DataFrame:
-        return _combined_result_frame(self.child_results, "accepted_cases")
-
-    @property
-    def rejected_cases(self) -> pd.DataFrame:
-        return _combined_result_frame(self.child_results, "rejected_cases")
-
-    @property
-    def figures(self) -> tuple[Path, ...]:
-        return tuple(path for item in self.child_results for path in item.figures)
-
-    @property
-    def plot_inventory(self) -> pd.DataFrame:
-        frames: list[pd.DataFrame] = []
-        for index, item in enumerate(self.child_results, start=1):
-            frame = item.figure_inventory()
-            if "relative_path" in frame.columns:
-                for value in frame["relative_path"].dropna():
-                    item._packet_artifact(value)
-            frame.insert(0, "geometry_index", index)
-            frame.insert(1, "packet", Path(item.packet_path).name)
-            frames.append(frame)
-        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
-
-    def table(self, relative_path: str, *, geometry_index: int = 1) -> pd.DataFrame:
-        if geometry_index < 1 or geometry_index > len(self.child_results):
-            raise IndexError("geometry_index is outside the completed experiment")
-        return self.child_results[geometry_index - 1].table(relative_path)
-
-    def plot(
-        self,
-        *,
-        overwrite: bool = False,
-        groups: Sequence[str] = ("all-applicable",),
-    ) -> "ExperimentResult":
-        from ._internal.runtime import generate_trial_plots
-
-        for packet in self.packet_paths:
-            generate_trial_plots(
-                packet,
-                groups=groups,
-                authorize_plot_overwrite=overwrite,
-                repository_root=self.repository_root,
-            )
-        _write_aggregate_manifest(
-            self.experiment_path,
-            tuple(path.name for path in self.packet_paths),
-        )
-        return load_experiment(self.experiment_path)
-
-    def show_gallery(self) -> tuple[Path, ...]:
-        for item in self.child_results:
-            item.show_gallery()
-        return self.figures
-
-    def summary_text(self) -> str:
-        identity = sorted(
-            {str(getattr(item, "identity_status", "unavailable")) for item in self.child_results}
-        )
-        convergence = sorted(
-            {
-                str(getattr(item, "convergence_status", "unavailable"))
-                for item in self.child_results
-            }
-        )
-        rejected = self.rejected_cases
-        reason_column = next(
-            (
-                name
-                for name in ("reason", "failure_reason", "status_reason")
-                if name in rejected.columns
+    if not isinstance(settings, ExperimentSettings):
+        raise TypeError("settings must be ExperimentSettings")
+    destination = resolve_runs_path(
+        output_path
+        or Path.cwd() / "runs" / ("experiment_" + settings.deterministic_hash()[:12])
+    )
+    configs = _configs(settings)
+    cases = _cases(configs)
+    profile = json_clean(precision_profile(settings.precision, settings.calculation))
+    # Dataclasses in profiles have one serialization authority.
+    for key in ("thermodynamic_stages", "tov_stages"):
+        profile[key] = [asdict(stage) for stage in getattr(configs[0], key)]
+    physical_count = sum(row["planned_for_execution"] for row in cases)
+    stellar = settings.calculation == "stellar"
+    case_workers = _automatic_stellar_worker_count(physical_count) if stellar else 1
+    document = {
+        "schema_id": PLAN_SCHEMA,
+        "settings": settings.to_dict(),
+        "settings_hash": settings.deterministic_hash(),
+        "experiment_path": destination.as_posix(),
+        "numerical_profile": profile,
+        "requested_observables": list(settings.requested_observables),
+        "diagnostics": settings.diagnostics,
+        "execution_controls": {
+            "central_pressure_min_mev_fm3": configs[0].central_pressure_min_mev_fm3,
+            "fixed_mass_root_xtol_mev_fm3": configs[0].fixed_mass_root_xtol_mev_fm3,
+            "maximum_mass_threshold_msun": configs[0].maximum_mass_threshold_msun,
+            "diagnostics_case_policy": configs[
+                0
+            ].extended_stellar_diagnostics_case_policy,
+            "worker_count": case_workers,
+            "standalone_sequence_workers_by_stage": {
+                stage.name: (
+                    _automatic_sequence_worker_count(stage.sequence_points)
+                    if case_workers == 1
+                    else 1
+                )
+                for stage in configs[0].tov_stages
+            },
+        },
+        "cases": cases,
+        "source_identity": source_identity(),
+        "environment_identity": environment_identity(),
+        "estimates": {
+            "geometry_count": len(configs),
+            "logical_case_count": len(cases),
+            "physical_case_count": physical_count,
+            "baseline_constructions": len(configs[0].thermodynamic_stages),
+            "raw_gate_cases": physical_count,
+            "maximum_sequence_pressure_attempts": physical_count
+            * sum(s.sequence_points for s in configs[0].tov_stages),
+            "fixed_mass_targets": (
+                physical_count * len(configs[0].tov_stages) * len(settings.fixed_masses)
+                if "fixed_mass" in settings.requested_observables
+                else 0
             ),
-            None,
+        },
+        "planning_is_passive": True,
+        "scientific_solver_calls": 0,
+        "filesystem_writes": 0,
+    }
+    document["environment_sha256"] = hash_payload(document["environment_identity"])
+    digest = hash_payload(document)
+    document["plan_hash"] = digest
+    return ExperimentPlan(
+        settings,
+        destination,
+        digest,
+        json.dumps(document, sort_keys=True, allow_nan=False),
+    )
+
+
+@dataclass(frozen=True)
+class ExperimentResult:
+    experiment_path: Path
+    metadata: dict[str, Any]
+
+    @property
+    def data_path(self) -> Path:
+        return self.experiment_path / "data"
+
+    @property
+    def settings(self) -> ExperimentSettings:
+        return ExperimentSettings.from_dict(self.metadata["settings"])
+
+    def table(self, name: str) -> pd.DataFrame:
+        if name not in _TABLE_DESCRIPTIONS:
+            raise ValueError(f"unknown table {name!r}")
+        path = self.data_path / (name + ".csv")
+        return (
+            pd.read_csv(path, float_precision="round_trip")
+            if path.is_file()
+            else pd.DataFrame()
         )
-        lines = [
-            "BSk24 experiment: "
-            + ("COMPLETE" if self.completed else "INCOMPLETE"),
-            f"Path: {self.experiment_path}",
-            f"Calculation: {self.settings.calculation}",
-            f"Precision: {self.settings.precision}",
-            f"Geometries / child packets: {len(self.child_results)}",
-            f"Accepted cases: {len(self.accepted_cases)}",
-            f"Rejected cases: {len(rejected)}",
-            f"A=0 identity status: {', '.join(identity)}",
-            f"Numerical convergence status: {', '.join(convergence)}",
-            f"Stellar capability: {'requested' if self.settings.calculation == 'stellar' else 'not requested'}",
-            f"Figures: {len(self.figures)}",
-        ]
-        if reason_column is not None and not rejected.empty:
-            counts = rejected[reason_column].fillna("unspecified").astype(str).value_counts()
-            lines.append(
-                "Rejection reasons: "
-                + "; ".join(f"{reason} ({count})" for reason, count in counts.items())
-            )
-        return "\n".join(lines)
+
+    @property
+    def case_table(self):
+        return self.table("cases")
+
+    @property
+    def thermodynamic_profiles(self):
+        return self.table("eos")
+
+    @property
+    def stellar_sequences(self):
+        return self.table("stars")
+
+    @property
+    def fixed_mass_results(self):
+        return self.table("fixed_mass")
+
+    def available_plots(self, **selection):
+        from .plotting import available_figures
+
+        return available_figures(self.experiment_path, **selection)
+
+    def generate_plots(
+        self, *, figures="auto", output_path=None, regenerate=False, **selection
+    ):
+        from .plotting import plot_experiment
+
+        return plot_experiment(
+            self.experiment_path,
+            figures=figures,
+            output_path=output_path,
+            regenerate=regenerate,
+            **selection,
+        )
 
 
 @dataclass(frozen=True)
 class Experiment:
-    """Convenient stateful front door around one immutable settings object."""
-
     settings: ExperimentSettings
 
-    def __post_init__(self) -> None:
-        if not isinstance(self.settings, ExperimentSettings):
-            raise TypeError("settings must be ExperimentSettings")
-
-    @classmethod
-    def from_json(cls, path: str | Path) -> "Experiment":
-        return cls(ExperimentSettings.from_json(path))
-
-    def plan(self, output_root: str | Path | None = None) -> ExperimentPlan:
-        return plan_experiment(self.settings, output_root=output_root)
-
-    def run(self, plan: ExperimentPlan, *, execute: bool = False) -> ExperimentResult:
-        if plan.settings != self.settings:
-            raise ValueError("the reviewed plan belongs to different settings")
-        return run_experiment(plan, execute=execute)
-
-    @staticmethod
-    def load(path: str | Path) -> ExperimentResult:
-        return load_experiment(path)
+    def plan(self, *, output_path=None):
+        return plan_experiment(self.settings, output_path=output_path)
 
 
-def _combined_result_frame(results: Sequence[Any], attribute: str) -> pd.DataFrame:
-    frames: list[pd.DataFrame] = []
-    for index, item in enumerate(results, start=1):
-        frame = getattr(item, attribute).copy()
-        if not frame.empty:
-            frame.insert(0, "geometry_index", index)
-            frames.append(frame)
-    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
-
-
-def plan_experiment(
-    settings: ExperimentSettings,
-    output_root: str | Path | None = None,
-) -> ExperimentPlan:
-    """Expand and validate settings with zero calculations and zero writes."""
-
-    if not isinstance(settings, ExperimentSettings):
-        raise TypeError("settings must be ExperimentSettings")
-    from ._internal.planning import prepare_bsk24_trial as prepare_trial
-
-    from ._internal.artifacts import project_root, runs_root
-
-    if output_root is None:
-        root = runs_root().resolve(strict=False)
-    else:
-        raw_root = Path(output_root).expanduser()
-        if raw_root.is_absolute():
-            root = raw_root.resolve(strict=False)
-        elif raw_root.parts and raw_root.parts[0] == "runs":
-            root = (project_root() / raw_root).resolve(strict=False)
-        else:
-            root = (Path.cwd() / raw_root).resolve(strict=False)
-    experiment_path = root / f"experiment_{settings.deterministic_hash()[:12]}"
-    configs = _internal_configs(settings, experiment_path)
-    children = tuple(prepare_trial(config) for config in configs)
-    (
-        source_inventory_id,
-        source_digest,
-        source_file_count,
-        source_contracts,
-    ) = _active_source_identity()
-    runtime_identity = _active_runtime_identity()
-    runtime_digest = _hash_payload(dict(runtime_identity))
-    digest = _plan_digest(
-        settings,
-        experiment_path,
-        children,
-        source_inventory_id=source_inventory_id,
-        source_digest=source_digest,
-        source_file_count=source_file_count,
-        source_contracts=source_contracts,
-        runtime_identity=runtime_identity,
-        runtime_digest=runtime_digest,
-    )
-    return ExperimentPlan(
-        settings,
-        children,
-        experiment_path,
-        source_inventory_id,
-        source_digest,
-        source_file_count,
-        source_contracts,
-        runtime_identity,
-        runtime_digest,
-        digest,
-    )
-
-
-def _reproduction_plan_record(plan: ExperimentPlan) -> dict[str, Any]:
-    from ._internal.artifacts import project_root
-
-    root = project_root().resolve(strict=False)
-    output_root = root / "runs" / "reproductions"
-    reproduction = plan_experiment(plan.settings, output_root=output_root)
-    configuration_file = (
-        plan.experiment_path / "experiment_config.json"
-    ).resolve(strict=False).relative_to(root).as_posix()
-    portable_output_root = output_root.relative_to(root).as_posix()
-    plan_command = (
-        "bsk24-trial plan "
-        f'--config "{configuration_file}" '
-        f'--output-root "{portable_output_root}" --json'
-    )
-    run_command = (
-        "bsk24-trial run "
-        f'--config "{configuration_file}" '
-        f'--output-root "{portable_output_root}" '
-        f"--plan-hash {reproduction.plan_hash} --execute"
-    )
-    return {
-        "schema_id": REPRODUCTION_PLAN_SCHEMA,
-        "configuration_file": configuration_file,
-        "output_root": portable_output_root,
-        "plan_hash": reproduction.plan_hash,
-        "plan": reproduction.to_dict(),
-        "plan_command": plan_command,
-        "run_command": run_command,
-    }
+def _outcomes(rows, reports):
+    result = []
+    for row in rows:
+        report = reports.get(row["physical_case_id"], {})
+        status = report.get("status", "pending")
+        label = {
+            "accepted_raw_local_physics_gate": "accepted",
+            "rejected_raw_local_physics_gate": "rejected",
+            "unresolved_raw_local_physics_gate": "unresolved",
+        }.get(status, "pending")
+        failure = report.get("first_failure") or {}
+        result.append(
+            {
+                **row,
+                "status": label,
+                "failure_reason": failure.get("reason", ""),
+                "retained_endpoint_epsilon_mev_fm3": (
+                    report.get("retained_domain") or {}
+                ).get("epsilon_max_mev_fm3"),
+            }
+        )
+    return pd.DataFrame(result)
 
 
 def run_experiment(plan: ExperimentPlan, *, execute: bool = False) -> ExperimentResult:
-    """Execute an exact reviewed plan after an explicit authorization gate."""
-
+    """Execute exactly a fresh reviewed plan into a new, no-overwrite run."""
     if not isinstance(plan, ExperimentPlan):
-        raise TypeError("run_experiment requires an ExperimentPlan, not raw settings")
+        raise TypeError("execution requires an ExperimentPlan")
     if execute is not True:
-        raise PermissionError("execution requires execute=True after reviewing the plan")
-    if plan.experiment_path.exists():
-        raise FileExistsError(f"experiment destination already exists: {plan.experiment_path}")
-    reviewed = plan_experiment(plan.settings, output_root=plan.experiment_path.parent)
-    if reviewed.plan_hash != plan.plan_hash or reviewed.to_dict() != plan.to_dict():
-        raise RuntimeError("reviewed plan is stale or has changed; preview it again")
-
-    from ._internal.runtime import execute_trial
-
-    # These two small public documents are written before the first child so a
-    # failed calculation remains reproducible without being mislabeled as a
-    # completed experiment.
-    config_document = {"$schema": CONFIG_SCHEMA_URL, **plan.settings.to_dict()}
-    reproduction_document = _reproduction_plan_record(plan)
-    config_path = plan.experiment_path / "experiment_config.json"
-    reviewed_plan_path = plan.experiment_path / "reviewed_plan.json"
-    reproduction_plan_path = plan.experiment_path / "reproduction_plan.json"
-    _write_json_atomic(config_path, config_document)
-    _write_json_atomic(reviewed_plan_path, plan.to_dict())
-    _write_json_atomic(reproduction_plan_path, reproduction_document)
-
-    results: list[Any] = []
-    try:
-        for child in plan.child_plans:
-            results.append(execute_trial(child.config))
-    except Exception:
-        # Child packets deliberately retain fail-closed evidence.  The absence
-        # of experiment.json makes the aggregate status unambiguously incomplete.
-        raise
-
-    metadata = {
-        "schema_id": EXPERIMENT_SCHEMA,
-        "status": "complete",
+        raise ValueError("execution requires execute=True after reviewing the plan")
+    fresh = plan_experiment(plan.settings, output_path=plan.experiment_path)
+    if fresh.plan_hash != plan.plan_hash or fresh.to_dict() != plan.to_dict():
+        raise ValueError(
+            "settings, source, environment, workers or destination changed; review a fresh plan"
+        )
+    document = plan.to_dict()
+    destination = plan.experiment_path
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.mkdir(exist_ok=False)
+    data = destination / "data"
+    data.mkdir()
+    record = {
+        "schema_id": RUN_SCHEMA,
+        "status": "running",
+        "started_utc": datetime.now(timezone.utc).isoformat(),
         "settings": plan.settings.to_dict(),
-        "settings_hash": plan.settings.deterministic_hash(),
+        "settings_hash": document["settings_hash"],
         "plan_hash": plan.plan_hash,
-        "child_packets": [
-            Path(item.packet_path).relative_to(plan.experiment_path).as_posix()
-            for item in results
-        ],
-        "child_configuration_hashes": [
-            child.config.deterministic_hash() for child in plan.child_plans
-        ],
-        "document_sha256": {
-            "experiment_config.json": _sha256_file(config_path),
-            "reviewed_plan.json": _sha256_file(reviewed_plan_path),
-            "reproduction_plan.json": _sha256_file(reproduction_plan_path),
+        "numerical_profile": document["numerical_profile"],
+        "execution_controls": document["execution_controls"],
+        "requested_observables": document["requested_observables"],
+        "source_identity": document["source_identity"],
+        "environment_identity": document["environment_identity"],
+        "environment_sha256": document["environment_sha256"],
+        "units": {
+            "epsilon": "MeV fm^-3 including rest mass",
+            "pressure": "MeV fm^-3",
+            "cs2": "dimensionless, c=1",
+            "mass": "gravitational solar masses",
+            "n_B": "fm^-3",
+            "mu_B": "MeV",
+        },
+        "interpretation": "effective one-fluid cold barotrope; microscopic composition and beta equilibrium are not established",
+        "certificates": {},
+        "raw_gate_before_downstream": True,
+        "reproduction": {
+            "settings_file": "data/run.json (settings field)",
+            "plan": "bsk24-trial plan --config data/run.json --output runs/reproduction",
+            "run": "bsk24-trial run --config data/run.json --output runs/reproduction --plan-hash <fresh reviewed plan hash> --execute",
         },
     }
-    _write_json_atomic(plan.experiment_path / "experiment.json", metadata)
-    _write_aggregate_manifest(
-        plan.experiment_path,
-        tuple(Path(item.packet_path).name for item in results),
-    )
-    from ._internal.artifacts import project_root
-
-    return ExperimentResult(
-        plan.experiment_path,
-        plan.settings,
-        tuple(results),
-        metadata,
-        project_root().resolve(strict=False),
-    )
-
-
-def _child_validation_allows_loading(
-    validation: Mapping[str, Any],
-) -> bool:
-    """Require integrity, source equivalence, and hard scientific validity."""
-
-    top_status = validation.get("status", validation.get("overall_status"))
-    if top_status not in {"pass", "complete", "validated"}:
-        return False
-    layered_keys = {
-        "internal_packet_integrity",
-        "current_source_equivalence",
-        "scientific_output_validity",
-        "scientific_output_completeness",
-    }
-    if not layered_keys.intersection(validation):
-        # Narrow compatibility for injected validators using the historical
-        # top-level pass/fail contract.
-        return True
-    internal = validation.get("internal_packet_integrity")
-    source = validation.get("current_source_equivalence")
-    scientific = validation.get("scientific_output_completeness")
-    validity = validation.get("scientific_output_validity")
-    if not isinstance(validity, Mapping) and isinstance(scientific, Mapping):
-        validity = scientific.get("hard_validity")
-    if not isinstance(validity, Mapping) and isinstance(scientific, Mapping):
-        validity = {
-            "status": (
-                "pass" if scientific.get("status") == "complete" else "fail"
-            )
-        }
-    return bool(
-        isinstance(internal, Mapping)
-        and internal.get("status") == "pass"
-        and isinstance(source, Mapping)
-        and source.get("status") == "equivalent"
-        and isinstance(validity, Mapping)
-        and validity.get("status") == "pass"
-    )
-
-
-def _child_scientific_availability_status(
-    validation: Mapping[str, Any],
-) -> str:
-    availability = validation.get("scientific_output_availability")
-    scientific = validation.get("scientific_output_completeness")
-    if not isinstance(availability, Mapping) and isinstance(scientific, Mapping):
-        availability = scientific.get("availability")
-    if isinstance(availability, Mapping):
-        status = availability.get("status")
-        if status in {"complete", "partial"}:
-            return str(status)
-    if isinstance(scientific, Mapping):
-        status = scientific.get("status")
-        if status in {"complete", "partial"}:
-            return str(status)
-    return "not_assessed"
-
-
-def load_experiment(
-    path: str | Path,
-    *,
-    _require_child_validation: bool = True,
-) -> ExperimentResult:
-    """Load completed saved results without rerunning any calculation."""
-
-    experiment_path = Path(path).expanduser().resolve(strict=False)
-    metadata_path = experiment_path / "experiment.json"
-    if not metadata_path.is_file():
-        raise FileNotFoundError(f"completed experiment metadata not found: {metadata_path}")
-    metadata = _strict_json_object(metadata_path)
-    if metadata.get("schema_id") != EXPERIMENT_SCHEMA:
-        raise ValueError("unsupported experiment schema")
-    if metadata.get("status") != "complete":
-        raise ValueError("saved experiment is not complete")
-    document_hashes = metadata.get("document_sha256")
-    expected_documents = {
-        "experiment_config.json",
-        "reviewed_plan.json",
-        "reproduction_plan.json",
-    }
-    if not isinstance(document_hashes, Mapping) or set(document_hashes) != expected_documents:
-        raise ValueError("saved experiment document inventory is incomplete")
-    for name in sorted(expected_documents):
-        document = experiment_path / name
-        if not document.is_file() or _sha256_file(document) != document_hashes[name]:
-            raise ValueError(f"saved experiment document hash mismatch: {name}")
-
-    config_path = experiment_path / "experiment_config.json"
-    settings = ExperimentSettings.from_json(config_path)
-    if settings.to_dict() != metadata.get("settings"):
-        raise ValueError("saved experiment config and metadata disagree")
-    if settings.deterministic_hash() != metadata.get("settings_hash"):
-        raise ValueError("saved experiment settings hash mismatch")
-
-    reviewed = _strict_json_object(experiment_path / "reviewed_plan.json")
-    if reviewed.get("schema_id") != PLAN_SCHEMA:
-        raise ValueError("unsupported reviewed-plan schema")
-    if reviewed.get("settings") != settings.to_dict():
-        raise ValueError("reviewed plan settings disagree with the saved config")
-    if reviewed.get("settings_hash") != settings.deterministic_hash():
-        raise ValueError("reviewed plan settings hash mismatch")
-    if reviewed.get("plan_hash") != metadata.get("plan_hash"):
-        raise ValueError("saved experiment plan hash mismatch")
-    if _saved_plan_digest(reviewed) != reviewed.get("plan_hash"):
-        raise ValueError("reviewed plan contents do not match its hash")
-    source_identity = reviewed.get("source_identity")
-    runtime_identity = reviewed.get("runtime_identity")
-    if (
-        not isinstance(source_identity, Mapping)
-        or not isinstance(source_identity.get("inventory_id"), str)
-        or not isinstance(source_identity.get("file_count"), int)
-        or not isinstance(source_identity.get("sha256"), str)
-        or len(source_identity["sha256"]) != 64
-        or not isinstance(source_identity.get("project_contract_sha256"), Mapping)
-        or set(source_identity["project_contract_sha256"])
-        != {"environment.yml", "pyproject.toml"}
-        or any(
-            value != "unavailable"
-            and (not isinstance(value, str) or len(value) != 64)
-            for value in source_identity["project_contract_sha256"].values()
+    write_json_atomic(record, data / "run.json")
+    reports = {}
+    try:
+        from .baseline import make_baseline_eos
+        from .assessment import raw_local_physics_gate
+        from .deformation import BSk24WindowedDeformation
+        from .diagnostics import (
+            _raw_gate_frame,
+            _thermodynamic_profile_frame,
+            _thermodynamic_convergence,
+            windowed_a0_identity_report,
+            write_diagnostics,
         )
-    ):
-        raise ValueError("reviewed plan source identity is malformed")
-    if (
-        not isinstance(runtime_identity, Mapping)
-        or not isinstance(runtime_identity.get("values"), Mapping)
-        or runtime_identity.get("sha256")
-        != _hash_payload(dict(runtime_identity.get("values", {})))
-    ):
-        raise ValueError("reviewed plan runtime identity is malformed")
+        from .thermodynamics import (
+            build_consistent_baseline,
+            build_windowed_eos,
+            BSk24MechanicalStabilityError,
+        )
+        from .stellar import _run_stellar
 
-    reproduction = _strict_json_object(experiment_path / "reproduction_plan.json")
-    if reproduction.get("schema_id") != REPRODUCTION_PLAN_SCHEMA:
-        raise ValueError("unsupported reproduction-plan schema")
-    for name in (
-        "configuration_file",
-        "output_root",
-        "plan_hash",
-        "plan_command",
-        "run_command",
-    ):
-        if not isinstance(reproduction.get(name), str) or not reproduction[name]:
-            raise ValueError(f"reproduction plan field {name!r} is malformed")
-    reproduction_plan = reproduction.get("plan")
-    if not isinstance(reproduction_plan, Mapping):
-        raise ValueError("reproduction plan payload is malformed")
-    if reproduction_plan.get("plan_hash") != reproduction["plan_hash"]:
-        raise ValueError("reproduction plan payload/hash mismatch")
-    if _saved_plan_digest(reproduction_plan) != reproduction["plan_hash"]:
-        raise ValueError("reproduction plan contents do not match its hash")
-    if reproduction_plan.get("settings") != settings.to_dict():
-        raise ValueError("reproduction plan settings mismatch")
-    root = _owning_repository_root(
-        experiment_path,
-        reviewed.get("experiment_path"),
-    )
-    expected_configuration = config_path.resolve(strict=False).relative_to(root).as_posix()
-    expected_output_root = "runs/reproductions"
-    expected_experiment_path = (
-        root / expected_output_root / f"experiment_{settings.deterministic_hash()[:12]}"
-    ).resolve(strict=False)
-    if reproduction["configuration_file"] != expected_configuration:
-        raise ValueError("reproduction configuration path mismatch")
-    if reproduction["output_root"] != expected_output_root:
-        raise ValueError("reproduction output root mismatch")
-    if _resolve_portable_path(
-        reproduction_plan.get("experiment_path"), root
-    ) != expected_experiment_path:
-        raise ValueError("reproduction experiment path mismatch")
-    expected_plan_command = (
-        "bsk24-trial plan "
-        f'--config "{expected_configuration}" '
-        f'--output-root "{expected_output_root}" --json'
-    )
-    expected_run_command = (
-        "bsk24-trial run "
-        f'--config "{expected_configuration}" '
-        f'--output-root "{expected_output_root}" '
-        f'--plan-hash {reproduction["plan_hash"]} --execute'
-    )
-    if reproduction["plan_command"] != expected_plan_command:
-        raise ValueError("reproduction plan command mismatch")
-    if reproduction["run_command"] != expected_run_command:
-        raise ValueError("reproduction run command mismatch")
+        record["source_archive"] = archive_source(
+            destination, document["source_identity"]
+        )
+        configs = _configs(plan.settings)
+        config = configs[0]
+        stages = {
+            stage.name: build_consistent_baseline(
+                stage.grid_settings(),
+                eos=make_baseline_eos(plan.settings.matter_model),
+                **(
+                    {"anchor_energy_density_mev_fm3": config.epsilon_match_mev_fm3}
+                    if config.epsilon_match_mev_fm3 is not None
+                    else {}
+                ),
+            )
+            for stage in config.thermodynamic_stages
+        }
+        baseline = stages[config.thermodynamic_stages[-1].name]
+        record["baseline"] = {
+            "anchor": baseline.anchor.to_dict(),
+            "diagnostics": baseline.diagnostics,
+            **({"provenance": baseline.eos.provenance()} if plan.settings.matter_model == "bsk25" else {}),
+        }
+        rows = document["cases"]
+        deformations = {
+            row["physical_case_id"]: BSk24WindowedDeformation(
+                row["physical_case_id"],
+                row["amplitude"],
+                row["epsilon0_mev_fm3"],
+                row["sigma_mev_fm3"],
+                row["delta_mev_fm3"],
+            )
+            for row in rows
+            if row["planned_for_execution"]
+        }
+        raw = []
+        # Complete raw evidence for every proposal precedes all reconstruction.
+        for case_id, deformation in deformations.items():
+            report, epsilon, cs2 = raw_local_physics_gate(
+                baseline,
+                deformation,
+                dense_lower_points=config.raw_gate_lower_points,
+                dense_upper_points=config.raw_gate_upper_points,
+            )
+            if report.get("status") not in {
+                "accepted_raw_local_physics_gate",
+                "rejected_raw_local_physics_gate",
+                "unresolved_raw_local_physics_gate",
+            }:
+                raise ValueError("unknown raw-gate status")
+            reports[case_id] = report
+            raw.append(
+                _raw_gate_frame(
+                    case_id=case_id,
+                    deformation=deformation,
+                    baseline=baseline,
+                    epsilon=np.asarray(epsilon),
+                    raw_cs2=np.asarray(cs2),
+                    status=report["status"],
+                )
+            )
+        raw_frame = pd.concat(raw, ignore_index=True)
+        record["certificates"]["raw_gate"] = reports
+        write_csv_atomic(raw_frame, data / "raw.csv")
+        write_csv_atomic(_outcomes(rows, reports), data / "cases.csv")
+        write_json_atomic(record, data / "run.json")
+        stage_cases = {name: {} for name in stages}
+        for case_id, deformation in deformations.items():
+            if reports[case_id]["status"] != "accepted_raw_local_physics_gate":
+                continue
+            try:
+                built = {
+                    name: build_windowed_eos(
+                        base, deformation, raw_gate_report=reports[case_id]
+                    )
+                    for name, base in stages.items()
+                }
+            except BSk24MechanicalStabilityError as exc:
+                if exc.diagnostics.get("status") != "unresolved_tabulation_resolution":
+                    raise
+                report = reports[case_id]
+                report.update(
+                    status="unresolved_raw_local_physics_gate",
+                    selected_retained_domain_passed=False,
+                    pre_reconstruction_tabulation_resolution=exc.diagnostics,
+                    first_failure={
+                        "reason": "unresolved_tabulation_resolution",
+                        "detail": exc.diagnostics,
+                    },
+                )
+                report["retained_domain"].update(
+                    passed=False, resolution_certified=False
+                )
+                raw_frame.loc[raw_frame.case_id.eq(case_id), "gate_status"] = report[
+                    "status"
+                ]
+                continue
+            for name, eos in built.items():
+                stage_cases[name][case_id] = eos
+        generated = stage_cases[config.thermodynamic_stages[-1].name]
+        a0 = config.zero_amplitude_physical_case_id
+        if a0 not in generated:
+            raise ValueError("the zero-amplitude identity control was not accepted")
+        record["certificates"]["a0_identity"] = windowed_a0_identity_report(
+            baseline, {generated[a0].deformation.delta_mev_fm3: generated[a0]}
+        )
+        if record["certificates"]["a0_identity"]["status"] != "pass":
+            raise ValueError("zero-amplitude identity failed")
+        record["certificates"]["thermodynamic_convergence"] = (
+            _thermodynamic_convergence(stage_cases)
+        )
+        record["certificates"]["reconstruction"] = {
+            case_id: {
+                name: {
+                    key: value
+                    for key, value in eos.diagnostics.items()
+                    if key != "raw_gate_report"
+                }
+                for name, eos in (
+                    (stage, stage_cases[stage][case_id]) for stage in stages
+                )
+            }
+            for case_id in generated
+        }
+        eos_frame = _thermodynamic_profile_frame(baseline, generated)
+        eos_frame = eos_frame.loc[~eos_frame.case_id.eq("direct")].reset_index(
+            drop=True
+        )
+        write_csv_atomic(eos_frame, data / "eos.csv")
+        write_csv_atomic(raw_frame, data / "raw.csv")
+        write_csv_atomic(_outcomes(rows, reports), data / "cases.csv")
+        write_json_atomic(record, data / "run.json")
+        if config.stellar_enabled:
+            from dataclasses import replace
 
-    children = metadata.get("child_packets")
-    if not isinstance(children, list) or not children:
-        raise ValueError("saved experiment has no child packets")
-    for value in children:
-        if (
-            not isinstance(value, str)
-            or not value
-            or "/" in value
-            or "\\" in value
-            or value in {".", ".."}
-            or not value.startswith("geometry_")
-        ):
-            raise ValueError(f"unsafe saved child packet path: {value!r}")
-        child_path = (experiment_path / value).resolve(strict=False)
-        if child_path.parent != experiment_path:
-            raise ValueError(f"saved child packet escapes the experiment: {value!r}")
-    reviewed_children = reviewed.get("children")
-    if not isinstance(reviewed_children, list) or len(reviewed_children) != len(children):
-        raise ValueError("saved child packets disagree with the reviewed plan")
-    expected_children: list[str] = []
-    expected_hashes: list[str] = []
-    for child in reviewed_children:
-        if not isinstance(child, Mapping):
-            raise ValueError("reviewed child plan is malformed")
-        output_path = child.get("output_path")
-        configuration_hash = child.get("configuration_hash")
-        if not isinstance(output_path, str) or not output_path:
-            raise ValueError("reviewed child output path is malformed")
-        reviewed_child_path = _resolve_portable_path(output_path, root)
-        expected_child = reviewed_child_path.name
-        if reviewed_child_path != (experiment_path / expected_child).resolve(
-            strict=False
-        ):
-            raise ValueError("reviewed child output path escapes its experiment")
-        expected_children.append(expected_child)
-        if not isinstance(configuration_hash, str) or len(configuration_hash) != 64:
-            raise ValueError("reviewed child configuration hash is malformed")
-        expected_hashes.append(configuration_hash)
-    if children != expected_children or len(set(children)) != len(children):
-        raise ValueError("saved child packet paths disagree with the reviewed plan")
-    if metadata.get("child_configuration_hashes") != expected_hashes:
-        raise ValueError("saved child configuration hashes disagree with the plan")
-    _verify_aggregate_manifest(experiment_path, children)
+            # The direct analytical control supplies the historical stellar
+            # baseline path once; logical controls reference its physical ID.
+            stellar_config = replace(config, zero_amplitude_control_owner=True)
+            sequences, fixed, convergence, stars = _run_stellar(
+                config=stellar_config,
+                baseline=baseline,
+                generated={key: eos for key, eos in generated.items() if key != a0},
+            )
+            maximum = pd.DataFrame(convergence.pop("maximum_mass_rows"))
+            for frame in (sequences, fixed, maximum):
+                if "case_id" in frame:
+                    frame.loc[frame.case_id.eq("direct"), "case_id"] = a0
+            reports_max = convergence.get("maximum_mass_reports", {})
+            convergence["maximum_mass_reports"] = {
+                key.replace("direct:", a0 + ":", 1): value
+                for key, value in reports_max.items()
+            }
+            convergence["sequence_evidence"] = {
+                key.replace("direct:", a0 + ":", 1): value
+                for key, value in convergence.get("sequence_evidence", {}).items()
+            }
+            for key in ("worker_process_ids", "case_worker_wall_seconds"):
+                convergence.get("parallel_execution", {}).pop(key, None)
+            record["certificates"]["stellar"] = convergence
+            write_csv_atomic(sequences, data / "stars.csv")
+            if "fixed_mass" in plan.settings.requested_observables:
+                write_csv_atomic(fixed, data / "fixed_mass.csv")
+            if "maximum_mass" in plan.settings.requested_observables:
+                write_csv_atomic(maximum, data / "maximum_mass.csv")
+            if plan.settings.diagnostics == "on":
+                record["certificates"]["diagnostics"] = write_diagnostics(
+                    packet=data,
+                    configs=configs,
+                    baseline=baseline,
+                    generated=generated,
+                    sequences=sequences,
+                    fixed=fixed,
+                    stars=stars,
+                    baseline_id=a0,
+                )
+        record.update(
+            status="complete", completed_utc=datetime.now(timezone.utc).isoformat()
+        )
+        write_json_atomic(record, data / "run.json")
+        seal(data)
+        # Integrity/scientific validation remains read-only and source drift
+        # does not prevent loading an intact saved run.
+        return load_experiment(destination)
+    except BaseException as exc:
+        record.update(
+            status="failed",
+            failure={"type": type(exc).__name__, "message": str(exc)},
+            completed_utc=datetime.now(timezone.utc).isoformat(),
+        )
+        record["certificates"]["raw_gate"] = reports
+        write_json_atomic(record, data / "run.json")
+        seal(data)
+        raise
 
-    from ._internal.runtime import load_trial, validate_trial
 
-    results_list: list[Any] = []
-    for value, configuration_hash in zip(children, expected_hashes):
-        child_path = (experiment_path / value).resolve(strict=False)
-        if _require_child_validation:
-            validation = validate_trial(child_path, repository_root=root)
-            if not _child_validation_allows_loading(validation):
-                failures = validation.get("failures", [])
-                detail = failures[0] if failures else "unspecified validation failure"
-                raise ValueError(f"saved child packet failed validation: {detail}")
-        result = load_trial(child_path, repository_root=root)
-        if Path(result.packet_path).resolve(strict=False) != child_path:
-            raise ValueError("loaded child packet path mismatch")
-        if result.config.deterministic_hash() != configuration_hash:
-            raise ValueError("loaded child configuration disagrees with the reviewed plan")
-        results_list.append(result)
-    results = tuple(results_list)
-    return ExperimentResult(experiment_path, settings, results, metadata, root)
+def load_experiment(path: str | Path) -> ExperimentResult:
+    from .storage import strict_json, validate_run
+
+    destination = Path(path).resolve()
+    report = validate_run(destination)
+    if not report["passed"]:
+        raise ValueError("invalid run: " + "; ".join(report["errors"]))
+    return ExperimentResult(destination, strict_json(destination / "data/run.json"))
 
 
 def validate_experiment(path: str | Path) -> dict[str, Any]:
-    """Read-only integrity/scientific validation of every saved child packet."""
+    from .storage import validate_run
 
-    try:
-        result = load_experiment(path, _require_child_validation=False)
-    except Exception as exc:
-        return {
-            "schema_id": "eos_generation_validation_v1",
-            "status": "fail",
-            "experiment_path": str(Path(path).expanduser().resolve(strict=False)),
-            "child_packet_count": 0,
-            "failures": [f"aggregate_load:{type(exc).__name__}:{exc}"],
-            "children": [],
-        }
-    from ._internal.runtime import validate_trial
-
-    children = [
-        validate_trial(packet, repository_root=result.repository_root)
-        for packet in result.packet_paths
-    ]
-    passed = all(_child_validation_allows_loading(item) for item in children)
-    availability_statuses = [
-        _child_scientific_availability_status(item) for item in children
-    ]
-    availability_status = (
-        "partial"
-        if "partial" in availability_statuses
-        else "complete"
-        if availability_statuses
-        and all(status == "complete" for status in availability_statuses)
-        else "not_assessed"
-    )
-    return {
-        "schema_id": "eos_generation_validation_v1",
-        "status": "pass" if passed else "fail",
-        "scientific_availability_status": availability_status,
-        "experiment_path": str(result.experiment_path),
-        "child_packet_count": len(children),
-        "children": children,
-    }
-
-
-__all__ = [
-    "Experiment",
-    "ExperimentPlan",
-    "ExperimentResult",
-    "ExperimentSettings",
-    "load_experiment",
-    "plan_experiment",
-    "run_experiment",
-    "validate_experiment",
-]
+    return validate_run(Path(path).resolve())

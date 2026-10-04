@@ -1,237 +1,98 @@
-# Developer guide
+# Development
 
-## Architecture
+The package has fourteen modules with one workflow: `settings` normalizes public
+choices; `numerics` governs constants/profiles; `baseline`, `deformation`,
+`assessment` and `thermodynamics` implement the cold EoS; `tov` contains coupled
+background/tidal integration and discontinuities; `stellar` resolves sequences,
+stable-prefix fixed masses and maximum mass; `diagnostics` computes explicit
+scientific evidence; `experiment` plans/executes; `storage` writes, loads,
+validates and imports historical data; `plotting` reads saved tables; `cli` adapts
+the API; `__init__` preserves public identity.
 
-The package follows a narrow public shell around the scientific
-implementation:
+Planning must write nothing and perform no scientific calculation. Execution
+rechecks its source/environment/settings/destination/worker binding, exclusively
+creates the destination, builds baselines once per stage for the whole sweep,
+persists complete raw evidence before reconstruction and sends only accepted
+retained barotropes to stellar work. Rejected and unresolved cases keep their
+values and exact reasons. Exceptions seal a failed record and propagate.
+Each data write uses a same-directory temporary file and atomic replacement;
+existing run/figure destinations are never overwritten.
 
-| Path | Responsibility |
-|---|---|
-| `src/eos_generation/__init__.py` | Stable public imports and version |
-| `src/eos_generation/experiment.py` | Public settings, planning, execution, loading, and validation facade |
-| `src/eos_generation/cli.py` | `bsk24-trial` command adapter |
-| `src/eos_generation/notebook.py` | Passive-by-default notebook adapter |
-| `src/eos_generation/bsk24/` | Analytical BSk24, smooth deformation, and effective reconstruction |
-| `src/eos_generation/stellar/` | TOV, tidal, discontinuity, and stellar diagnostics logic |
-| `src/eos_generation/reporting/` | Saved-table plotting and plot orchestration |
-| `src/eos_generation/_internal/` | Configuration expansion, execution lifecycle, packet integrity, provenance, and validation details |
+Notebook actions are plan, execute and load. Unique notebook destinations are
+chosen passively; repeat execution validates and loads a matching complete run.
+Saved-run listing and plot availability perform no solver calls or writes.
+Plotting checks scientific capability statuses before selecting valid rows,
+probes the renderer in a child process, and reuses only matching manifest,
+plotter and image hashes. Incomplete or damaged figures require a fresh version.
+The notebook contains exactly one Markdown cell and one code cell. Discovery
+tables derive numerical counts from the governed profiles and plot choices from
+the saved-plot registry. The editable dictionary is authoritative by default;
+JSON is an explicit alternative. Presentation helpers remain lazy and scientific
+execution still needs a reviewed plan. Tests exercise repeated runs of the same
+cell, restart loading, unreviewed refusal and passive execution from both working
+directories. Saved diagnostic previews perform only CSV reads.
 
-Users should not need private modules. Private modules must not import back
-through `experiment.py` or the package facade in a way that creates a cycle.
+Scientific equations, coefficients, constants, causal root policies, pressure
+floors, stable-branch brackets, surface/jump corrections and acceptance predicates
+are unchanged from v1.2.0. The immutable fixture files remain byte-identical.
+Scientific tests moved with their defining routines; workflow/reporting tests now
+exercise v2. Never regenerate reference fixtures or weaken a scientific tolerance.
 
-## Public API
+Use the narrowest regression while editing, then run:
 
-The supported objects are:
-
-```python
-Experiment
-ExperimentSettings
-ExperimentPlan
-ExperimentResult
-plan_experiment
-run_experiment
-load_experiment
-validate_experiment
-```
-
-The command and two BSk24 notebooks are adapters to this API, not
-independent scientific implementations. Preserve object import identity and
-keep all planning paths passive.
-
-The CLI execution gate is deliberately two-part: `run` requires both the
-hash from the exact reviewed passive plan and the explicit `--execute` flag.
-Any settings, source, environment, or destination change requires a new plan.
-
-The public configuration has the required `$schema` annotation, the nine
-scientific settings, and an optional `matter_model` field limited to `"bsk24"`
-in `configs/schema.json`. Omission continues to serialize exactly as the
-canonical BSk24 form. Normalize scalar/list geometry deterministically,
-expand `quick` or `strict` to complete internal settings, and hash the resolved
-scientific configuration canonically. Destination and execution authorization
-are operational controls rather than hidden scientific settings.
-
-## Scientific separation
-
-Keep these layers explicit:
-
-1. passive settings validation and work planning;
-2. baseline and raw windowed proposal construction;
-3. complete raw-evidence assessment, continuous-extremum search, and
-   resolution certification;
-4. certified first-crossing prefix selection and effective thermodynamic
-   reconstruction;
-5. optional stellar and tidal work;
-6. deterministic serialization and manifest sealing;
-7. read-only loading, validation, status, and saved-table plotting.
-
-A rejected raw proposal must not leak into downstream layers. Debug-only
-transformations must retain the original arrays and cannot change acceptance.
-For BSk24, do not infer a causal endpoint from an ordinary output-grid sample:
-locate and refine the first continuous `c_s^2 = 1` crossing, include it in the
-retained table, and treat later values as raw evidence outside the usable
-branch. Geometry-aware discovery must cover every relevant extremum basin
-and fail closed when the analytical
-deformation cannot be resolved.
-
-Do not split tightly coupled TOV/tidal equations merely for cosmetic file
-size. Refactor only across boundaries that preserve units, interpolation and
-inversion authorities, jump corrections, surface conditions, root brackets,
-stable-branch logic, and error semantics.
-
-For every public BSk24 Cartesian sweep, exactly one lexicographically first
-geometry owns the physical `A = 0` baseline; non-owner logical controls are
-stable nonexecuting aliases. The physical ID includes its effective matching
-anchor. Estimates and executors count physical work, while public case tables
-retain logical traceability. Directly constructed `BSk24TrialConfig` objects
-with no owner flag retain their established local identity-control behavior
-and serialization.
-
-## Numerical profiles
-
-`quick` and `strict` are governed names, not informal presets. The `quick`
-expansion selects the retained thermodynamic quickstart or relaxed stellar
-profile according to `calculation`; `strict` selects the retained strict
-profile. Their exact grids, tolerances, refinement stages, and diagnostics
-settings live in one internal authority. They must be:
-
-- expanded during passive planning;
-- included in deterministic configuration identity;
-- unchanged between reviewed plan and execution;
-- serialized with every result;
-- protected by regression tests.
-
-Changing either profile is a scientific change. Do not add source-level or
-environment-variable overrides that bypass the public settings contract.
-
-The separately named experimental dataset-profile family is documented in
-`docs/dataset.md`. Never change QUICK/STRICT to implement its optimizations.
-Protect the retained thermodynamic settings/tolerances and historical STRICT
-configuration hash with regression tests. The focused notebook must remain
-passive by default and its five-figure adapter must consume validated saved
-data, preserve failure gaps, and perform zero solver calls.
-
-The focused BSk24 dataset notebook selects `dataset_40_curves`; the general
-BSk24 experiment notebook selects `dataset_40`. Neither redefines `strict`.
-The shared production case-worker cap and notebook preview budget are six,
-bounded by case count and half the logical CPU count.
-This shared executor policy also applies to CLI/API runs; do not introduce a
-hidden notebook-only override. Nested pools remain disabled inside case
-workers. The standalone sequence-worker fallback is unchanged. Bind the new
-budget to a fresh preview, preserve deterministic merge order, and regression
-test preview/production budget agreement. The six-worker, 40-point benchmark
-preserved scientific values and statuses; operational timing/PID metadata
-naturally differs. Historical source archives and packets must remain intact.
-
-## Result integrity
-
-Writes belong below a user-selected new path under `runs/`. Use atomic writes,
-strict finite JSON, deterministic table order, exact manifest coverage, and
-stable case IDs. Preserve accepted/rejected status and exact failure reason
-for every declared case.
-
-Loading and validation are passive. Keep hard packet/scientific validity
-separate from observable availability so a well-formed endpoint-limited
-packet remains loadable with explicit partial statuses. Finite auxiliary
-thermodynamic diagnostics remain evidence rather than acceptance predicates;
-non-finite reconstruction and broken matching, interpolation, or inversion
-remain hard failures. Plotting reads saved tables only. Source provenance must
-include every active calculation and reporting module; update the inventory
-and its test when a source path changes.
-
-The layered report names these scientific sections
-`scientific_output_validity` and `scientific_output_availability`; only the
-former participates in the packet pass/fail gate. Aggregate validation carries
-the child availability result forward as `scientific_availability_status`.
-
-The notebook may create a derived student presentation view only after the
-authoritative aggregate and every child packet pass validation. That view must
-remain outside the sealed experiment, copy saved CSV/PNG artifacts only, have
-its own exact checksum manifest, reject overwrite, and never become part of
-the canonical packet or public API. Publish it with an atomic same-volume
-rename. Bounded Windows `PermissionError` retries may accommodate transient
-share violations, but every attempt must recheck no-overwrite and any failed
-stage must be cleaned up.
-
-Routine notebook tests use synthetic saved tables and guarded passive kernels
-from repository-root and notebook working directories. Real quick/strict
-acceptance runs require separately reviewed cost and authorization and do not
-belong in the routine CI suite.
-
-## Tests
-
-Friendly IDs are a notebook presentation concern, implemented in
-`notebooks/eos_catalogue.py`. They must never enter scientific settings hashes,
-canonical case IDs, acceptance gates, or authoritative packets. The notebook
-preview binds both presentation builders' source hashes; derived outputs also
-record their builder hashes and consumed source manifests. Registry identity
-excludes precision, stellar solver and reporting source, but conservatively
-includes the saved BSk24 EoS/config source signatures. Registration uses an
-OS lock, append-only checksum-chained transactions and atomic no-clobber
-publication.
-All labelled primary columns preserve their source values; only provenance
-and friendly-ID columns are added. Keep student-view copies byte-identical.
-
-Test this reporting path with synthetic sealed tables, never new stellar
-calculations. Cover mixed signs, QUICK/STRICT reuse, A=0 geometry collapse,
-physics-version separation, rejected/unresolved semantics, concurrent writers,
-corrupt inputs/registrations, no overwrite, value preservation, and passive
-notebook execution. A failed derived export must not trigger a solver rerun.
-
-Install the declared environment and editable package, then run the focused
-suite:
-
-```powershell
-conda env create -f environment.yml
-conda activate eos-generation
-python -m pip install -e ".[notebook]" pytest jsonschema
+```text
 python -m pytest -q
-```
-
-During development, select the narrowest relevant test. The suite should
-cover at least:
-
-- public config normalization, hash stability, and passive planning;
-- BSk24 analytical values and zero-amplitude identity;
-- smooth-window geometry and raw-gate behavior;
-- first continuous causal crossing, narrow-pocket/island detection, retained
-  tabulation resolution, and below-anchor four-sigma support overlap;
-- compact independent continuous-star TOV/tidal regression;
-- retained-domain central-pressure bounds and fixed-mass/maximum-mass partial
-  availability;
-- uniform-density and discontinuity jump regressions;
-- result integrity and read-only validation;
-- student-view eligibility and transient Windows publication recovery;
-- notebook passivity, `../runs/...` result links, and delegation to the
-  production API.
-
-Do not regenerate a reference fixture with the implementation it checks. Do
-not weaken a tolerance, gate, or expected status to obtain a pass.
-
-Repository-hygiene and provenance tests must also work from a source archive
-that has no `.git` directory. When Git metadata is present, first verify that
-the discovered top level is this checkout before using tracked-file output;
-otherwise apply the explicit archive/file-tree policy. CI should exercise the
-Git-free archive path directly rather than skipping it.
-
-## Installed-wheel check
-
-Before publishing a release, test the built artifact rather than relying only
-on editable imports:
-
-```powershell
-python -m pip install build
 python -m build --wheel
-python -m pip install --force-reinstall dist/eos_generation-1.2.0-py3-none-any.whl
 ```
 
-From outside the checkout, import the public objects, run `bsk24-trial
---help`, and make a passive BSk24 plan with an absolute config path. The plan
-must leave its working directory empty. Confirm the wheel includes the BSk24
-source manifest.
+CI installs the built wheel and runs tests from outside the checkout. It also
+checks passive notebook execution from both working directories, passive planning,
+Git-free source archives, package-data inclusion and repository hygiene. Hygiene
+rejects results, caches and large generated files without an exact source-file
+whitelist. `.github/workflows/ci.yml` is the authority. Routine verification uses
+compact scientific regressions and synthetic stellar orchestration; do not launch
+large stellar campaigns.
 
-## Change review
+Source identity includes every active package module and the source manifest;
+runtime/package contracts, build README and license are included. Installed wheels
+package these files too, so a restored source archive can build an equivalent
+wheel. A plan's hash changes after
+any source change. Result loading distinguishes scientific integrity from current
+source equivalence. Historical import is an interpretation of saved evidence,
+never a scientific recalculation.
 
-Report software behavior, numerical behavior, and physical interpretation as
-separate concerns. Include exact commands, test results, units, tolerances,
-and unresolved scientific decisions. Do not launch an expensive stellar
-calculation for routine packaging, documentation, import, or passivity checks.
+The default bounded case-worker policy remains six, half logical CPU count and
+case count, with deterministic parent merge and no nested process pools. Preserve
+this reviewed budget in every interface. Timing/PID details are development
+metrics, not independent numerical evidence.
+
+Keep generated runs and source archives ignored. Work on one focused branch from
+current main, preserve unrelated edits, inspect the full diff, and do not publish
+without the user's explicit instruction.
+
+## Selecting a baseline
+
+`baseline_definition` selects source-pinned coefficients, domains and phase
+metadata without evaluations. `make_baseline_eos` instantiates that selection
+only during explicit execution. Every anchor, grid, raw gate, reconstruction and
+diagnostic uses that same model. BSk24 literal constants and arithmetic are
+preserved. BSk25 follows paper C1/C4 with its documented discrepancies; its
+compact reference generator has no production imports. Never substitute
+CompOSE interpolation or silently move an invalid anchor.
+
+## Retained boundary evaluation
+
+NumPy scalar and vector arithmetic may differ in their last bits on different
+CPU kernels (see [NumPy issue 25269](https://github.com/numpy/numpy/issues/25269)).
+Nonzero retained endpoints and adjacent noncausal evidence use the same scalar
+analytical evaluation as causal-root refinement. Retained grids evaluate their
+interior and boundary separately from the outset, before physical assessment;
+no failed sampled value is replaced. The complete raw vectors are still saved
+unchanged. The zero control uses its original full-vector baseline evaluation,
+including its endpoint metadata, to preserve exact identity. Causal predicates,
+root tolerances, equations, grids and fixture bytes remain unchanged.
+
+The scalar/vector rounding regression injects a one-ULP scalar pressure
+difference for both models and both amplitude signs, and requires exact boundary
+agreement, admissibility and zero-control identity. Linux and Windows installed
+wheel CI exercise the actual NumPy runtime too.

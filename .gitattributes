@@ -15,3 +15,7 @@ LICENSE text eol=lf
 *.png binary
 *.jpg binary
 *.jpeg binary
+
+# Preserve independently sealed reference fixture bytes on every platform.
+tests/fixtures/bsk24_contract_v1/** -text
+tests/fixtures/bsk25_contract_v1/** -text
