@@ -1,97 +1,65 @@
 # AGENTS.md
 
-## Scope
+This repository implements controlled smooth BSk24/BSk25 sound-speed deformation,
+fail-closed raw assessment, effective one-fluid reconstruction, and optional
+TOV/tidal work. The workflow is configs, passive planning, explicit reviewed
+execution, read-only loading/validation/status, saved-table plotting, and the
+single passive `notebooks/bsk24_experiment.ipynb`. Local results belong below
+ignored `runs/`; never add generated results, caches or large data to Git.
 
-This repository implements controlled smooth sound-speed deformations of
-analytical BSk24, fail-closed thermodynamic assessment, effective one-fluid
-reconstruction, and optional TOV/tidal calculations. Supported user surfaces
-are settings under `configs/`, passive `bsk24-trial plan` or
-`plan_experiment`, explicit `bsk24-trial run ... --execute` or
-`run_experiment`, passive loading/validation/status, saved-table plotting, and
-the BSk24 notebooks `notebooks/bsk24_experiment.ipynb` and
-`notebooks/bsk24_dataset.ipynb`. The first supports the full `dataset_40`
-campaign with fixed-mass and maximum-mass outputs; the second supports the
-focused `dataset_40_curves` campaign and five saved-table figures.
+Before significant changes, read relevant docs, trace the public and scientific
+execution paths, inspect expansion/tests/provenance/result shape and run the
+narrowest relevant checks. Reviews perform no edits or scientific calculations.
+Implement the smallest coherent change while preserving scientific behavior.
 
-Local packets belong under ignored `runs/`. Never commit results, caches, or
-large generated data.
+Package/dependency authority is `pyproject.toml`; scientific runtime authority is
+`environment.yml`. Names are `eos-generation`, `eos_generation`, `bsk24-trial`.
+Preserve the eight public exports, deterministic settings hashes, stable case
+IDs, versioned schemas/manifests and reproduction commands. Private modules must
+not import through the public facade and create cycles. Public JSON fields are
+governed by `configs/schema.json`; expanded numerical profiles participate in
+planning, identity and results. No undocumented numerical overrides.
 
-## Before changes
+Planning makes zero solver calls and writes zero files. Execution is a separate
+operation requiring explicit reviewed authorization. Notebook execution stays
+passive with `EXECUTE_REVIEWED_PLAN = False`. No expensive stellar work for
+routine verification, packaging, documentation or import checks. Validation is
+read-only; plotting consumes saved tables. Writes are atomic and refuse existing
+destinations without a separately declared policy.
 
-Read relevant `docs/`, trace the public entry point and private execution
-path, inspect configuration expansion, provenance, focused tests, and a
-representative result shape. Distinguish demonstrated facts, inference,
-assumptions, and open scientific questions. For reviews, make no edits and run
-no scientific calculations. For implementation, make the smallest coherent
-change and preserve scientific behavior unless explicitly in scope.
+Preserve physical meaning, units, total energy/rest-mass convention, valid domains,
+equations, coefficients, anchors, constants, solver grids, root brackets,
+tolerances, surface conditions, jump corrections and acceptance predicates.
+Require epsilon>0, P>=0, 0<dP/depsilon<=1 on every accepted continuous cold phase;
+retain d epsilon=mu_B d n_B, P=n_B mu_B-epsilon, mu_B=(epsilon+P)/n_B where
+available. Energy/pressure use MeV fm^-3 and fixed masses are gravitational solar
+masses. Assess the complete raw domain first. Rejected/unresolved proposals get
+no reconstruction or stellar work; preserve raw values and exact reasons. Never
+clip, repair or smooth a failed raw value into acceptance. A=0 obeys the exact
+governed baseline identity. Effective one-fluid reconstruction does not establish
+composition, species chemical potentials or beta equilibrium.
 
-## Public contract
+Distinguish numerical fitting seams, composition thresholds, physical transitions,
+self-bound surfaces and unknown discontinuities; physical labels require support.
+Apply required stellar/tidal jump corrections exactly once and fail closed for
+unestablished capabilities. Fixed masses require a true bracket on the successful
+stable prefix. Maximum mass requires a bracketed and refined turning point.
 
-`pyproject.toml` defines packaging and dependencies; `environment.yml` pins
-the scientific runtime. The distribution, import, and command names are
-`eos-generation`, `eos_generation`, and `bsk24-trial`. Top-level Python
-exports are `Experiment`, `ExperimentSettings`, `ExperimentPlan`,
-`ExperimentResult`, `plan_experiment`, `run_experiment`, `load_experiment`, and
-`validate_experiment`. Preserve import identity, deterministic settings
-hashes, case IDs, schemas, manifests, and reproduction commands. Private
-modules must not import through the public facade and create a cycle.
+Executed runs retain canonical settings/hash, expanded profile, stable logical and
+physical identities/statuses, exact failures, capability statuses, actual source
+and environment identities, source archive availability, calculation/reporting
+provenance, strict JSON, exact manifests and portable commands. Source equivalence
+is distinct from saved scientific integrity. Historical imports never infer
+missing certificates or recalculate science. Preserve immutable fixtures; never
+regenerate them from the implementation, weaken scientific tests/tolerances,
+convert failure to skip or use finiteness alone as physical proof. Prefer published
+values, independent solvers and convergence studies for scientific changes.
+Record exact commands, results and justified tolerances for scientific changes.
 
-Public JSON fields are limited to `configs/schema.json`. `quick` and `strict`
-expand to governed numerical profiles; expanded settings participate in
-planning, hashing, and saved results. Preserve the BSk24 dataset profiles and
-large-run routes. Do not expose hidden numerical overrides.
-
-## Execution safety and science
-
-Planning must call no scientific solver and write no files. A run requires a
-separate operation and explicit authorization. Notebooks remain passive when
-`EXECUTE_REVIEWED_PLAN = False`. Do not run expensive stellar calculations for
-routine verification; review planned cost and destination first. Validation
-is read-only, plotting uses saved tables, and writes are atomic without silent
-overwrite.
-
-Energy density includes rest-mass energy and pressure is in MeV fm^-3;
-`dP/dε = c_s^2` is dimensionless with `c = 1`; fixed masses are gravitational
-solar masses. Preserve coefficients, equations, constants, conversions,
-domains, anchors, solvers, grids, tolerances, and acceptance predicates without
-direct scientific scope and independent support. On every assessed continuous
-cold phase, require `ε > 0`, `P >= 0`, and `0 < dP/dε <= 1` on the accepted
-domain. Where available, preserve `dε = μ_B dn_B`, `P = n_B μ_B - ε`, and
-`μ_B = (ε + P) / n_B`.
-
-Assess the raw proposal over its complete declared domain before
-reconstruction. Rejected proposals receive no reconstruction or stellar
-work; retain raw values and exact reasons. Never clip, clamp, smooth, or
-repair a failed raw value into acceptance. Zero amplitude reproduces direct
-BSk24 under the governed floating-point identity policy. Reconstruction is
-an effective one-fluid barotrope, not a microscopic composition claim.
-
-Distinguish fitting seams, composition thresholds, physical transitions,
-self-bound surfaces, and unknown discontinuities. Require physical support
-for a physical label, apply each required jump correction exactly once, and
-fail closed when capability is unestablished. Fixed-mass observables need a
-true bracket on the successful stable prefix. A sampled peak is not a
-resolved maximum mass without a bracketed and refined turning point.
-
-## Reproducibility and verification
-
-Executed results retain canonical settings and hash, expanded profile, stable
-case identities and statuses, exact failures and capability statuses,
-source/environment hashes, calculation/reporting provenance, strict JSON,
-exact manifest, and portable reproduction commands. Never regenerate a
-reference fixture from the implementation under test, weaken a scientific
-tolerance or predicate, or turn failure into a skip. Use independent published
-values, source tables, solvers, convergence studies, and benchmarks for
-scientific changes. Record commands, results, and justified tolerances.
-
-Run narrow passive or regression checks while developing, then
-`python -m pytest -q` before publication. `.github/workflows/ci.yml` governs
-clean installed-wheel, passivity, notebook, regression, and hygiene checks.
-
-## Git
-
-Begin implementation from clean, current `main` on one focused branch.
-Preserve unrelated changes, stage only intended paths, and inspect the full
-diff before publication. Do not rewrite history, force-push, bypass CI, use
-destructive Git commands, commit, or mutate a remote without the user's
-explicit publication request.
+Use narrow checks while developing and `python -m pytest -q` before publication.
+CI governs installed-wheel, passivity, notebook, regression, archive and hygiene
+checks. Begin implementation from clean current main on one focused branch.
+Preserve unrelated changes, stage only intended paths and inspect the full diff.
+Never rewrite history, force-push, bypass CI or use destructive Git commands.
+Do not commit, publish or mutate remotes without explicit user authorization.
+Nested instructions may strengthen these protections.

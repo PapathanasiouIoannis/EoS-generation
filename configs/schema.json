@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/PapathanasiouIoannis/EoS-generation/main/configs/schema.json",
-  "title": "BSk24 experiment settings",
-  "description": "Public settings for a controlled BSk24 sound-speed deformation experiment. Runtime semantic validation remains authoritative.",
+  "title": "BSk24 / BSk25 experiment settings",
+  "description": "Public settings for controlled BSk24 or BSk25 sound-speed deformation experiments. Runtime semantic validation remains authoritative.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -46,9 +46,12 @@
     },
     "matter_model": {
       "type": "string",
-      "enum": ["bsk24"],
+      "enum": [
+        "bsk24",
+        "bsk25"
+      ],
       "default": "bsk24",
-      "description": "Optional compatibility field for explicitly named BSk24 configurations."
+      "description": "Analytical baseline: bsk24 (default) or bsk25, from Pearson 2018 corrected 2019. BSk25 follows paper Table C1 p8=2.54; see docs/bsk25-validation.md."
     },
     "amplitudes": {
       "type": "array",
@@ -62,7 +65,9 @@
     },
     "epsilon_match": {
       "oneOf": [
-        {"const": "standard"},
+        {
+          "const": "standard"
+        },
         {
           "type": "number",
           "exclusiveMinimum": 76.5591451931,
@@ -129,13 +134,21 @@
         "on"
       ],
       "description": "When on, retain the governed endpoint extended stellar diagnostics."
+    },
+    "observables": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "sequence",
+          "fixed_mass",
+          "maximum_mass"
+        ]
+      },
+      "description": "Optional explicit stellar products. Sequence is required for stellar work. Omission preserves the historical profile defaults."
     }
   },
   "allOf": [
-    {
-      "if": {"properties": {"precision": {"enum": ["dataset", "dataset_10_tighter", "dataset_20", "dataset_40", "dataset_40_curves", "dataset_relaxed", "dataset_relaxed_80"]}}, "required": ["precision"]},
-      "then": {"properties": {"calculation": {"const": "stellar"}, "diagnostics": {"const": "off"}}}
-    },
     {
       "if": {
         "properties": {
@@ -153,6 +166,88 @@
             "const": "stellar"
           }
         }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "calculation": {
+            "const": "thermodynamics"
+          }
+        },
+        "required": [
+          "calculation"
+        ]
+      },
+      "then": {
+        "properties": {
+          "observables": {
+            "maxItems": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "calculation": {
+            "const": "stellar"
+          }
+        },
+        "required": [
+          "calculation"
+        ]
+      },
+      "then": {
+        "properties": {
+          "observables": {
+            "contains": {
+              "const": "sequence"
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "diagnostics": {
+            "const": "on"
+          }
+        },
+        "required": [
+          "diagnostics"
+        ]
+      },
+      "then": {
+        "properties": {
+          "observables": {
+            "contains": {
+              "const": "fixed_mass"
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "diagnostics": {
+            "const": "on"
+          },
+          "precision": {
+            "const": "dataset_40_curves"
+          }
+        },
+        "required": [
+          "diagnostics",
+          "precision"
+        ]
+      },
+      "then": {
+        "required": [
+          "observables"
+        ]
       }
     }
   ]

@@ -1,10 +1,10 @@
 cff-version: 1.2.0
 message: >-
   If you use this software, please cite the software release.
-title: "EoS Generation: controlled BSk24 sound-speed deformations"
+title: "EoS Generation: controlled BSk24 and BSk25 sound-speed deformations"
 type: software
-version: 1.2.0
-date-released: 2026-08-30
+version: 2.0.0
+date-released: "2026-10-04"
 license: MIT
 authors:
   - family-names: Papathanasiou
@@ -16,6 +16,5 @@ keywords:
   - neutron stars
   - equation of state
   - BSk24
-  - color-flavor locking
-  - self-bound quark stars
+  - BSk25
   - sound speed

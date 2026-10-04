@@ -1,0 +1,270 @@
+{
+  "authority": "Pearson 2018 corrected 2019, Appendix C, Tables C1/C2",
+  "implementation": "independent Decimal 60-digit paper equations; numerical C4 derivative",
+  "c1_paper_parameter_order": [
+    641100000.0,
+    87600000000.0,
+    74000000.0,
+    6310000.0,
+    713000.0,
+    22.11,
+    0.1217,
+    2.54,
+    8317.0,
+    25.63,
+    2.507,
+    7.92,
+    3.92,
+    2.06
+  ],
+  "c2_parameter_order": [
+    7.21,
+    5.196,
+    0.00328,
+    0.12516,
+    4.624,
+    12.16,
+    9.348,
+    1.6624,
+    4.66,
+    -28.232,
+    2.0638,
+    5.27,
+    14.365,
+    29.1,
+    -2.13,
+    0.865,
+    14.66,
+    0.069,
+    11.65,
+    6.3,
+    -0.172,
+    14.18,
+    8.6
+  ],
+  "conversion_g_cm3_per_mev_fm3": 1782661921627.8977,
+  "pressure_rows": [
+    {
+      "rho_g_cm3": 1000000.0,
+      "pressure_mev_fm3": 1.354809057275254e-11,
+      "dlogp_dlogrho": 1.5805357378074523,
+      "cs2": 3.8172569936349796e-05
+    },
+    {
+      "rho_g_cm3": 100000000.0,
+      "pressure_mev_fm3": 1.1111236252637342e-08,
+      "dlogp_dlogrho": 1.360228424516713,
+      "cs2": 0.00026942830303291066
+    },
+    {
+      "rho_g_cm3": 10000000000.0,
+      "pressure_mev_fm3": 4.651144557796359e-06,
+      "dlogp_dlogrho": 1.281428700715711,
+      "cs2": 0.0010624861373070677
+    },
+    {
+      "rho_g_cm3": 1000000000000.0,
+      "pressure_mev_fm3": 0.000815564896768666,
+      "dlogp_dlogrho": 0.6980713837980577,
+      "cs2": 0.0010149095705134336
+    },
+    {
+      "rho_g_cm3": 100000000000000.0,
+      "pressure_mev_fm3": 0.15533553527387498,
+      "dlogp_dlogrho": 1.0015214818688727,
+      "cs2": 0.0027733205848442465
+    },
+    {
+      "rho_g_cm3": 746000000000000.0,
+      "pressure_mev_fm3": 57.433618215904964,
+      "dlogp_dlogrho": 2.6727096943250186,
+      "cs2": 0.3668158779620795
+    },
+    {
+      "rho_g_cm3": 1000000000000000.0,
+      "pressure_mev_fm3": 118.94292098648927,
+      "dlogp_dlogrho": 2.3121552006530846,
+      "cs2": 0.490257865172615
+    },
+    {
+      "rho_g_cm3": 2260000000000000.0,
+      "pressure_mev_fm3": 597.1342683570834,
+      "dlogp_dlogrho": 1.7272656512213669,
+      "cs2": 0.8135639206579572
+    },
+    {
+      "rho_g_cm3": 3810000000000000.0,
+      "pressure_mev_fm3": 1393.8441894104328,
+      "dlogp_dlogrho": 1.5330243238588181,
+      "cs2": 0.9997865428384274
+    },
+    {
+      "rho_g_cm3": 1e+16,
+      "pressure_mev_fm3": 5475.239931141086,
+      "dlogp_dlogrho": 1.3267279949203894,
+      "cs2": 1.2949530898975867
+    }
+  ],
+  "c1_rows": [
+    {
+      "n_b_fm3": 1e-09,
+      "energy_above_iron_mev": 0.047511088180278556,
+      "epsilon_mev_fm3": 9.304593110881803e-07
+    },
+    {
+      "n_b_fm3": 0.00025,
+      "energy_above_iron_mev": 7.1416031663616115,
+      "epsilon_mev_fm3": 0.2343883507915904
+    },
+    {
+      "n_b_fm3": 0.0855534,
+      "energy_above_iron_mev": 18.45468111163078,
+      "epsilon_mev_fm3": 81.1787536051358
+    },
+    {
+      "n_b_fm3": 0.16,
+      "energy_above_iron_mev": 22.191420322203587,
+      "epsilon_mev_fm3": 152.41651525155257
+    },
+    {
+      "n_b_fm3": 0.416,
+      "energy_above_iron_mev": 75.30344398903779,
+      "epsilon_mev_fm3": 418.3775414994397
+    },
+    {
+      "n_b_fm3": 0.987,
+      "energy_above_iron_mev": 356.21995453729573,
+      "epsilon_mev_fm3": 1269.905541728311
+    },
+    {
+      "n_b_fm3": 1.378,
+      "energy_above_iron_mev": 621.8874145934647,
+      "epsilon_mev_fm3": 2139.0683177097944
+    }
+  ],
+  "standard_anchor_epsilon_mev_fm3": 152.41651525155257,
+  "core_entry": {
+    "index": 297,
+    "n_b_fm3": 0.0855534,
+    "epsilon_mev_fm3": 81.14923220504647,
+    "pressure_mev_fm3": 0.21056243678676,
+    "phase": 0
+  },
+  "outer_inner_boundary": {
+    "index": 166,
+    "n_b_fm3": 0.00027,
+    "epsilon_mev_fm3": 0.2532200704511586,
+    "pressure_mev_fm3": 0.000514234008,
+    "phase": 2
+  },
+  "muon_onset_n_b_fm3": 0.12993982,
+  "compose_rows": [
+    {
+      "index": 1,
+      "n_b_fm3": 4.67962e-10,
+      "epsilon_mev_fm3": 4.3541083602842645e-07,
+      "pressure_mev_fm3": 9.000000079422e-12,
+      "phase": 1
+    },
+    {
+      "index": 165,
+      "n_b_fm3": 0.000250158,
+      "epsilon_mev_fm3": 0.23455722224429695,
+      "pressure_mev_fm3": 0.0004820430087636,
+      "phase": 1
+    },
+    {
+      "index": 166,
+      "n_b_fm3": 0.00027,
+      "epsilon_mev_fm3": 0.2532200704511586,
+      "pressure_mev_fm3": 0.000514234008,
+      "phase": 2
+    },
+    {
+      "index": 297,
+      "n_b_fm3": 0.0855534,
+      "epsilon_mev_fm3": 81.14923220504647,
+      "pressure_mev_fm3": 0.21056243678676,
+      "phase": 0
+    },
+    {
+      "index": 321,
+      "n_b_fm3": 0.1095534,
+      "epsilon_mev_fm3": 104.00089373804822,
+      "pressure_mev_fm3": 0.4657069021572,
+      "phase": 0
+    },
+    {
+      "index": 361,
+      "n_b_fm3": 0.31993982,
+      "epsilon_mev_fm3": 312.58854317918366,
+      "pressure_mev_fm3": 24.49461853432542,
+      "phase": 0
+    },
+    {
+      "index": 401,
+      "n_b_fm3": 0.71993982,
+      "epsilon_mev_fm3": 818.7812338000967,
+      "pressure_mev_fm3": 265.5523511939628,
+      "phase": 0
+    },
+    {
+      "index": 451,
+      "n_b_fm3": 1.2199398,
+      "epsilon_mev_fm3": 1752.010822358872,
+      "pressure_mev_fm3": 1011.443133821868,
+      "phase": 0
+    },
+    {
+      "index": 479,
+      "n_b_fm3": 1.4999398,
+      "epsilon_mev_fm3": 2458.2284092685522,
+      "pressure_mev_fm3": 1727.45246879176,
+      "phase": 0
+    }
+  ],
+  "source_hashes": {
+    "bskfit18.f": "4bd3b716f04e40c69165fa83b5cd8ecb03c30aa1f2b45342fb070cef09a3a99c",
+    "eos.zip": "c72690daa670f91390382f22400417cc9302dd724b1aa7d70529f1dd000894b1",
+    "eos.zip_checksum.txt": "cc542ec0faa2d9ae82b9892da716e377bfb4ab325c6403bdbe25458d4ede617b"
+  },
+  "archive_members_sha256": {
+    "eos.init": "c7abb9ae122f8c433ca314036e555196b55cfe93ccf18356bfad6ae2fd98c889",
+    "eos.nb": "d380734a1d57a278c8fe3ffbe06c25f295a62957c276d6d248b194e09f748453",
+    "eos.t": "5fa22f861097c3aa7becf2480adfe981726144c8e4029df34751e2802e7e3835",
+    "eos.yq": "6d94b4b46e6a9ce1c02b581166cda0e13681bbdc31d7ab340bba5cec53075554",
+    "eos.thermo": "388508926df86f1233323f085209775942b1677deb6fea2275a91d5e47d9ef6e",
+    "eos.compo": "3fbd301a0107fce42f23ccd77165a89ab2010cf9a2f166d23480a28b5925bba0",
+    "eos.micro": "a8c37ae50d6066b8f2e7c0d3befcdac964a3ab281a1dcf39ae1c6e6f833d43a3",
+    "eos.mr": "692b76d5d5b9eb339fc4786197de476a3b08a6daf1b960251831690f599af95c",
+    "README": "6b63e224d372e714acb601c72719ece7bf61e2184c199be8524d4c53bac453b9",
+    "eos.pdf": "98f6979a46dd1cc937f164773f58a0dfc57795c653362ed0d0c70f29b7535e07"
+  },
+  "source_discrepancies": {
+    "C1_p8": {
+      "paper": 2.54,
+      "ioffe_2023": 2.31,
+      "production_authority": "paper"
+    },
+    "C1_low_exponent": {
+      "paper": "7/6",
+      "ioffe_2023": "1.16667",
+      "production_authority": "paper"
+    },
+    "conversion": {
+      "ioffe_g_cm3_per_mev_fm3": 1782662000000.0,
+      "production_authority": "existing governed exact unit conversion"
+    },
+    "compose_zip_checksum": {
+      "matches": false,
+      "advertised": "c42d3bf857db09a77e6f626ac58e59f7fec8d82b716bcf13694807b9af7e63c5",
+      "verification": "eos.nb, eos.thermo, eos.compo and eos.mr match separately fetched files"
+    }
+  },
+  "stellar_benchmarks": {
+    "mass_max_msun": 2.224,
+    "radius_at_mass_max_km": 11.05,
+    "radius_at_1p4_msun_km": 12.37,
+    "authority": "Pearson Tables 16/17; CompOSE eos.mr"
+  }
+}

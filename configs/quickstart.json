@@ -2,14 +2,14 @@
   "$schema": "./schema.json",
   "amplitudes": [
     0.0,
-    0.01
+    -0.20
   ],
-  "epsilon_match": "standard",
-  "center": 200.0,
-  "width": 50.0,
-  "ramp_width": 40.0,
-  "calculation": "thermodynamics",
-  "precision": "quick",
+  "epsilon_match": 80.0,
+  "center": 300.0,
+  "width": 100.0,
+  "ramp_width": 300.0,
+  "calculation": "stellar",
+  "precision": "dataset_40_curves",
   "fixed_masses": [
     1.4
   ],
